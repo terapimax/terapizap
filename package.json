@@ -1,0 +1,8 @@
+{
+  "name": "leadzap",
+  "version": "1.0.0",
+  "description": "Leadzap SaaS Dashboard",
+  "scripts": {
+    "build": "node -e \"const fs=require('fs'); const content = `window.SUPABASE_URL = '${process.env.SUPABASE_URL || ''}';\\nwindow.SUPABASE_KEY = '${process.env.SUPABASE_KEY || ''}';`; fs.writeFileSync('config.js', content); console.log('✅ config.js generated from environment variables');\""
+  }
+}
