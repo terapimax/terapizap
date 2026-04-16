@@ -1,0 +1,22 @@
+{
+  "messages": [],
+  "kanban_columns": [
+    {
+      "id": 1,
+      "title": "Novos Leads",
+      "position": 1
+    },
+    {
+      "id": 2,
+      "title": "Em Negociação",
+      "position": 2
+    },
+    {
+      "id": 3,
+      "title": "Fechado",
+      "position": 3
+    }
+  ],
+  "leads": [],
+  "midias": []
+}

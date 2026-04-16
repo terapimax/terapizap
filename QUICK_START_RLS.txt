@@ -1,0 +1,203 @@
+╔════════════════════════════════════════════════════════════════════════╗
+║                                                                        ║
+║  🔒 RLS SUPABASE - QUICK START (3 PASSOS)                            ║
+║                                                                        ║
+║  Tempo: ~1 hora  │  Risco: Baixo  │  Impacto: Alto ✅                ║
+║                                                                        ║
+╚════════════════════════════════════════════════════════════════════════╝
+
+
+OS 3 PASSOS:
+
+
+█████████████████████████████████████████████████████████████████████████
+█                                                                       █
+█  PASSO 1️⃣: SUPABASE (5 minutos)                                      █
+█                                                                       █
+█████████████████████████████████████████████████████████████████████████
+
+  1. Abra browser:
+     https://supabase.com/dashboard
+
+  2. Clique em projeto:
+     ezphizbbgjrfwbucaoun
+
+  3. SQL Editor (lado esquerdo)
+
+  4. Clique "+" para novo query
+
+  5. Abra arquivo local:
+     backend/rls_setup.sql
+
+  6. COPIE TUDO (Ctrl+A, Ctrl+C)
+
+  7. Cole no Supabase:
+     Ctrl+V
+
+  8. Clique "Execute" (ou Ctrl+Enter)
+
+  9. Aguarde "Success" ✅
+
+
+█████████████████████████████████████████████████████████████████████████
+█                                                                       █
+█  PASSO 2️⃣: APP.JS (45 minutos)                                       █
+█                                                                       █
+█████████████████████████████████████████████████████████████████████████
+
+  A) ADICIONE FUNÇÃO (BEGIN):
+     ────────────────────────
+
+     Abra: app.js
+     Vá para: linha ~50 (depois de SUPABASE_KEY)
+     Adicione isto:
+
+     ┌─────────────────────────────────────────┐
+     │ async function getCurrentUserId() {     │
+     │     if (!supabase) return null;         │
+     │     const { data: { user } } =          │
+     │         await supabase.auth.getUser();  │
+     │     return user?.id || null;            │
+     │ }                                       │
+     └─────────────────────────────────────────┘
+
+  B) ENCONTRE E CORRIJA (6 locais):
+     ────────────────────────────────
+
+     Use Ctrl+F para buscar: .insert([
+
+     ANTES (❌ INSEGURO):
+     ─────────────────────
+     const { data, error } = await supabase
+         .from('messages')
+         .insert([{ title, content }])
+     
+     DEPOIS (✅ SEGURO):
+     ──────────────────
+     const userId = await getCurrentUserId();
+     if (!userId) {
+         showToast('Erro: Não autenticado', 'error');
+         return;
+     }
+     
+     const { data, error } = await supabase
+         .from('messages')
+         .insert([{ 
+             user_id: userId,  ← ADICIONE ISTO
+             title,
+             content
+         }])
+
+     LOCAIS A CORRIGIR:
+     └─ 1. Mensagens    (linha ~449)
+     └─ 2. Áudio        (linha ~748)
+     └─ 3. Mídia        (linha ~1041)
+     └─ 4. Kanban       (procure por novo coluna)
+     └─ 5. Funis        (procure por novo funil)
+     └─ 6. Leads        (procure por novo lead)
+
+  C) SALVE:
+     ────
+     Ctrl+S (app.js)
+
+
+█████████████████████████████████████████████████████████████████████████
+█                                                                       █
+█  PASSO 3️⃣: TESTAR (10 minutos)                                       █
+█                                                                       █
+█████████████████████████████████████████████████████████████████████████
+
+  TESTE 1: Criar dados e validar user_id
+  ──────────────────────────────────────
+  
+  1. No app, faça LOGIN
+  
+  2. Crie uma MENSAGEM
+  
+  3. Abra DevTools:   F12
+  
+  4. Vá em Console
+  
+  5. Digite:
+     const { data } = 
+       await supabase.from('messages').select();
+     console.log(data);
+  
+  6. Pressione ENTER
+  
+  7. ✅ ESPERADO:
+     Array com 1 mensagem
+     DEVE ter user_id preenchido
+
+
+  TESTE 2: Isolamento de dados
+  ─────────────────────────────
+  
+  1. Crie 2ª conta no Supabase:
+     - Email: teste2@email.com
+     - Senha: senha123
+  
+  2. Faça LOGOUT
+  
+  3. Faça LOGIN com segunda conta
+  
+  4. No Console, digite:
+     const { data } = 
+       await supabase.from('messages').select();
+     console.log(data);
+  
+  5. ✅ ESPERADO:
+     Array VAZIO
+     (user 2 não vê mensagens de user 1)
+
+
+  TESTE 3: Segurança (tentativa de violação)
+  ───────────────────────────────────────────
+  
+  1. Continue como USER 2
+  
+  2. No Console, tente:
+     const { error } = await supabase
+       .from('leads')
+       .update({ name: 'HACKED' })
+       .eq('id', 1);
+  
+  3. ✅ ESPERADO:
+     Error: "new row violates row-level security"
+     (user 2 foi BLOQUEADO!)
+
+
+█████████████████████████████████████████████████████████████████████████
+
+  ✅ PRONTO!
+
+  Seus dados estão agora:
+  ├─ Seguros ✅
+  ├─ Isolados ✅
+  └─ Prontos para Produção ✅
+
+
+█████████████████████████████████████████████████████████████████████████
+
+DOCUMENTAÇÃO DISPONÍVEL:
+
+  START_HERE_RLS.md ................ Resumo 5 min
+  RLS_VISAO_GERAL.md ............... Visão geral com diagramas
+  RLS_SUPABASE_SETUP.md ............ Guidha completo com detalhes
+  APP_JS_RLS_FIXES.md .............. Exemplos de correção (use copy/paste)
+  RLS_CHECKLIST.md ................. Checklist completo + testes
+  RLS_INDEX.md ..................... Índice de navegação
+  RESUMO_RLS.txt ................... Este sumário
+
+ARQUIVO SQL:
+  backend/rls_setup.sql ............ Script pronto para copiar/colar
+
+
+═════════════════════════════════════════════════════════════════════════
+
+  ⏱️ TEMPO: ~1 hora
+  🎯 PRÓXIMAS TAREFAS: Agendamentos → Gatilhos → CI/CD
+
+  Qualquer dúvida? Veja RLS_INDEX.md para encontrar a resposta!
+
+═════════════════════════════════════════════════════════════════════════

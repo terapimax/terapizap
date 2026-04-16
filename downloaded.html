@@ -1,0 +1,1785 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZapFlow - Painel de Controle</title>
+    <!-- Incluindo o Tailwind CSS para estilização -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Biblioteca SortableJS para Drag and Drop -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
+    <style>
+        /* Definindo a fonte principal do projeto */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Estilo para a barra de rolagem, combinando com o design */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #2B2C40;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #4A4B68;
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #5A5B78;
+        }
+        /* Estilo para arrastar os cards do Kanban */
+        .kanban-card {
+            cursor: grab;
+        }
+        .kanban-card:active {
+            cursor: grabbing;
+        }
+        .sortable-ghost {
+            opacity: 0.4;
+            background: #4A4B68;
+        }
+        /* Estilo para as barras do gráfico do dashboard */
+        .chart-bar {
+            transition: height 0.3s ease-in-out;
+        }
+    </style>
+    <script>
+        // Configuração customizada para o Tailwind CSS para usar as cores do projeto
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'zap-dark': '#2B2C40',
+                        'zap-sidebar': '#3A3B54',
+                        'zap-card': '#4A4B68',
+                        'zap-primary': '#E13584',
+                        'zap-secondary': '#8A6CFF',
+                        'zap-text': '#E0E0E0',
+                        'zap-text-secondary': '#A0A0A0',
+                        'zap-blue': '#3B82F6',
+                        'zap-green': '#10B981',
+                        'zap-yellow': '#F59E0B',
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-zap-dark text-zap-text">
+
+    <!-- Container principal da aplicação -->
+    <div class="flex h-screen overflow-hidden">
+
+        <!-- Sidebar (Menu Lateral) -->
+        <aside class="w-64 bg-zap-sidebar flex flex-col p-4 flex-shrink-0">
+            <!-- Logo -->
+            <div class="flex items-center mb-8">
+                 <!-- Logotipo Oficial ZapFlow (Usando arquivo local) -->
+                 <img src="zapflow.png" alt="ZapFlow Logo" class="h-10">
+            </div>
+
+            <!-- Itens do Menu -->
+            <nav class="flex-grow">
+                <ul id="main-menu">
+                    <!-- Item de Menu: Início -->
+                    <li class="mb-2">
+                        <a href="#" data-target="page-inicio" class="menu-item flex items-center p-3 rounded-lg bg-zap-dark border-l-4 border-zap-primary text-white font-semibold">
+                            <svg class="h-6 w-6 mr-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+                            Início
+                        </a>
+                    </li>
+                     <!-- Item de Menu: Kanban -->
+                    <li class="mb-2">
+                        <a href="#" data-target="page-kanban" class="menu-item flex items-center p-3 rounded-lg text-zap-text-secondary hover:bg-zap-dark hover:text-white transition-colors duration-200">
+                            <svg class="h-6 w-6 mr-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25A2.25 2.25 0 015.25 3h13.5A2.25 2.25 0 0121 5.25z" /></svg>
+                            Kanban
+                        </a>
+                    </li>
+                     <!-- Item de Menu: Mensagens -->
+                    <li class="mb-2">
+                        <a href="#" data-target="page-mensagens" class="menu-item flex items-center p-3 rounded-lg text-zap-text-secondary hover:bg-zap-dark hover:text-white transition-colors duration-200">
+                            <svg class="h-6 w-6 mr-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+                            Mensagens
+                        </a>
+                    </li>
+                    <li class="mb-2">
+                        <a href="#" data-target="page-audios" class="menu-item flex items-center p-3 rounded-lg text-zap-text-secondary hover:bg-zap-dark hover:text-white transition-colors duration-200">
+                            <svg class="h-6 w-6 mr-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
+                            Áudios
+                        </a>
+                    </li>
+                    <li class="mb-2">
+                        <a href="#" data-target="page-midias" class="menu-item flex items-center p-3 rounded-lg text-zap-text-secondary hover:bg-zap-dark hover:text-white transition-colors duration-200">
+                             <svg class="h-6 w-6 mr-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                            Mídias
+                        </a>
+                    </li>
+                    <li class="mb-2">
+                        <a href="#" data-target="page-documentos" class="menu-item flex items-center p-3 rounded-lg text-zap-text-secondary hover:bg-zap-dark hover:text-white transition-colors duration-200">
+                            <svg class="h-6 w-6 mr-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
+                            Documentos
+                        </a>
+                    </li>
+                    <li class="mb-2">
+                        <a href="#" data-target="page-funis" class="menu-item flex items-center p-3 rounded-lg text-zap-text-secondary hover:bg-zap-dark hover:text-white transition-colors duration-200">
+                             <svg class="h-6 w-6 mr-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"> <path stroke-linecap="round" stroke-linejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 01-.659 1.591l-5.432 5.432a2.25 2.25 0 00-.659 1.591v2.927a2.25 2.25 0 01-1.244 2.013L9.75 21v-6.572a2.25 2.25 0 00-.659-1.591L3.659 7.409A2.25 2.25 0 013 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0112 3z" /> </svg>
+                            Funis
+                        </a>
+                    </li>
+                     <li class="mb-2">
+                        <a href="#" data-target="page-gatilhos" class="menu-item flex items-center p-3 rounded-lg text-zap-text-secondary hover:bg-zap-dark hover:text-white transition-colors duration-200">
+                            <svg class="h-6 w-6 mr-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                            Gatilhos
+                        </a>
+                    </li>
+                </ul>
+            </nav>
+
+            <!-- Menu Inferior da Sidebar -->
+            <div>
+                 <a href="#" data-target="page-backups" class="menu-item flex items-center p-3 rounded-lg text-zap-text-secondary hover:bg-zap-dark hover:text-white transition-colors duration-200">
+                    <svg class="h-6 w-6 mr-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h5M5 5a7 7 0 0110 0h3l-3 3-3-3h3a4 4 0 00-8 0" /></svg>
+                    Backups
+                </a>
+            </div>
+        </aside>
+
+        <!-- Conteúdo Principal -->
+        <main class="flex-1 flex flex-col bg-zap-dark">
+            <!-- Barra Superior -->
+            <header class="bg-zap-sidebar flex justify-end items-center p-4 flex-shrink-0 relative">
+                <div class="flex items-center">
+                    <button id="settings-btn" class="mr-6 p-2 rounded-full hover:bg-zap-card">
+                        <svg class="h-6 w-6 text-zap-text-secondary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                    </button>
+                    <div class="flex items-center">
+                        <span class="mr-4 text-sm text-zap-text-secondary">Usuário</span>
+                        <div class="w-10 h-10 rounded-full bg-zap-secondary flex items-center justify-center font-bold text-white">
+                            U
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Menu de Configurações Dropdown -->
+                <div id="settings-menu" class="hidden absolute top-16 right-4 bg-zap-sidebar rounded-lg shadow-lg w-64 p-4 z-50">
+                    <div class="border-b border-zap-card pb-2 mb-2">
+                        <p class="text-white">Corrija backups</p>
+                        <p class="text-white">Converta tipo de áudios</p>
+                    </div>
+                    <div class="py-2">
+                        <p class="text-xs text-zap-text-secondary uppercase mb-2">Opções</p>
+                        <label class="flex items-center justify-between cursor-pointer mb-2">
+                            <span class="text-white">Perguntar ao enviar itens únicos</span>
+                            <div class="relative"><input type="checkbox" class="sr-only toggle-checkbox" checked><div class="w-10 h-4 bg-gray-400 rounded-full shadow-inner"></div><div class="dot absolute w-6 h-6 bg-white rounded-full shadow -left-1 -top-1 transition"></div></div>
+                        </label>
+                        <label class="flex items-center justify-between cursor-pointer">
+                            <span class="text-white">Perguntar ao enviar funis</span>
+                            <div class="relative"><input type="checkbox" class="sr-only toggle-checkbox" checked><div class="w-10 h-4 bg-gray-400 rounded-full shadow-inner"></div><div class="dot absolute w-6 h-6 bg-white rounded-full shadow -left-1 -top-1 transition"></div></div>
+                        </label>
+                    </div>
+                     <div class="py-2">
+                        <p class="text-xs text-zap-text-secondary uppercase mb-2">Aparência</p>
+                         <label class="flex items-center justify-between cursor-pointer">
+                            <span class="text-white">Modo escuro</span>
+                            <div class="relative"><input type="checkbox" class="sr-only toggle-checkbox"><div class="w-10 h-4 bg-gray-400 rounded-full shadow-inner"></div><div class="dot absolute w-6 h-6 bg-white rounded-full shadow -left-1 -top-1 transition"></div></div>
+                        </label>
+                    </div>
+                    <div class="pt-2 mt-2 border-t border-zap-card">
+                         <p class="text-xs text-zap-text-secondary uppercase mb-2">Avançado</p>
+                         <button class="w-full bg-red-500 text-white py-2 rounded-lg hover:bg-red-600">Limpar ZapFlow</button>
+                    </div>
+                </div>
+                <style>.toggle-checkbox:checked ~ .dot { transform: translateX(100%); background-color: #8A6CFF; } .toggle-checkbox:checked ~ div:first-of-type { background-color: #6a4ada; }</style>
+
+            </header>
+
+            <!-- Área de Conteúdo da Página -->
+            <div class="flex-1 p-8 overflow-y-auto">
+                
+                <!-- Página de Início (visível por padrão) -->
+                <div id="page-inicio" class="page-content">
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="text-3xl font-bold text-white">Dashboard</h2>
+                    </div>
+                    
+                    <h3 class="text-xl font-semibold text-white mb-4">Progresso dos Leads</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+                        <div class="bg-zap-sidebar p-5 rounded-lg">
+                            <h4 class="text-zap-text-secondary text-sm">Total de Leads no Funil</h4>
+                            <p class="text-3xl font-bold text-white">3</p>
+                        </div>
+                        <div class="bg-zap-sidebar p-5 rounded-lg">
+                            <h4 class="text-zap-text-secondary text-sm">Valor Total em Negociação</h4>
+                            <p class="text-3xl font-bold text-white">R$ 9.750,00</p>
+                        </div>
+                        <div class="bg-zap-sidebar p-5 rounded-lg">
+                            <h4 class="text-zap-text-secondary text-sm">Taxa de Conversão</h4>
+                            <p class="text-3xl font-bold text-green-400">0%</p>
+                        </div>
+                    </div>
+
+                    <div class="bg-zap-sidebar p-6 rounded-lg mb-8">
+                         <h4 class="text-lg font-semibold text-white mb-4">Leads por Etapa</h4>
+                         <div class="flex items-end justify-around h-48 space-x-4">
+                             <div class="flex flex-col items-center w-1/4">
+                                 <div class="chart-bar w-12 bg-zap-blue rounded-t-md" style="height: 100%;"></div>
+                                 <span class="text-xs text-zap-text-secondary mt-2">Novos (2)</span>
+                             </div>
+                              <div class="flex flex-col items-center w-1/4">
+                                 <div class="chart-bar w-12 bg-zap-yellow rounded-t-md" style="height: 50%;"></div>
+                                 <span class="text-xs text-zap-text-secondary mt-2">Negociação (1)</span>
+                             </div>
+                              <div class="flex flex-col items-center w-1/4">
+                                 <div class="chart-bar w-12 bg-zap-green rounded-t-md" style="height: 5%;"></div>
+                                 <span class="text-xs text-zap-text-secondary mt-2">Fechado (0)</span>
+                             </div>
+                         </div>
+                    </div>
+
+                    <!-- Seção Total de Itens Cadastrados -->
+                    <h3 class="text-xl font-semibold text-white mb-4">Total de Itens Cadastrados</h3>
+                    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                        <div class="bg-zap-sidebar p-4 rounded-lg flex flex-col items-center justify-center">
+                           <h4 class="text-zap-text-secondary text-sm font-semibold mb-2">Mensagens</h4>
+                           <p id="dashboard-mensagens-count" class="text-2xl font-bold text-white">0</p>
+                        </div>
+                        <div class="bg-zap-sidebar p-4 rounded-lg flex flex-col items-center justify-center">
+                           <h4 class="text-zap-text-secondary text-sm font-semibold mb-2">Áudios</h4>
+                           <p id="dashboard-audios-count" class="text-2xl font-bold text-white">0</p>
+                        </div>
+                        <div class="bg-zap-sidebar p-4 rounded-lg flex flex-col items-center justify-center">
+                           <h4 class="text-zap-text-secondary text-sm font-semibold mb-2">Mídias</h4>
+                           <p id="dashboard-midias-count" class="text-2xl font-bold text-white">0</p>
+                        </div>
+                        <div class="bg-zap-sidebar p-4 rounded-lg flex flex-col items-center justify-center">
+                           <h4 class="text-zap-text-secondary text-sm font-semibold mb-2">Documentos</h4>
+                           <p id="dashboard-documentos-count" class="text-2xl font-bold text-white">0</p>
+                        </div>
+                        <div class="bg-zap-sidebar p-4 rounded-lg flex flex-col items-center justify-center">
+                           <h4 class="text-zap-text-secondary text-sm font-semibold mb-2">Funis</h4>
+                           <p id="dashboard-funis-count" class="text-2xl font-bold text-white">0</p>
+                        </div>
+                        <div class="bg-zap-sidebar p-4 rounded-lg flex flex-col items-center justify-center">
+                           <h4 class="text-zap-text-secondary text-sm font-semibold mb-2">Gatilhos</h4>
+                           <p id="dashboard-gatilhos-count" class="text-2xl font-bold text-white">0</p>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- Página do Kanban (oculta por padrão) -->
+                <div id="page-kanban" class="page-content hidden">
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="text-3xl font-bold text-white">Kanban de Vendas</h2>
+                        <div class="flex space-x-4">
+                             <button id="add-kanban-column-btn" class="bg-zap-card text-white font-semibold py-2 px-4 rounded-lg flex items-center">
+                                <svg class="h-5 w-5 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                                Nova Coluna
+                            </button>
+                            <button id="add-lead-btn" class="bg-zap-secondary text-white font-semibold py-2 px-4 rounded-lg flex items-center">
+                                <svg class="h-5 w-5 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                                Adicionar Lead
+                            </button>
+                        </div>
+                    </div>
+                    <!-- Container das colunas do Kanban -->
+                    <div id="kanban-board" class="flex space-x-6 overflow-x-auto pb-4">
+                        <!-- As colunas do Kanban serão renderizadas aqui pelo JavaScript -->
+                    </div>
+                </div>
+
+                <!-- Página de Mensagens -->
+                <div id="page-mensagens" class="page-content hidden">
+                    <h2 class="text-3xl font-bold text-white mb-6">Mensagens</h2>
+                    <div class="flex h-[calc(100vh-12rem)] space-x-6">
+                        <!-- Coluna da Esquerda: Lista e Ações -->
+                        <div class="w-1/3 bg-zap-sidebar rounded-lg p-4 flex flex-col">
+                            <div class="flex space-x-2 mb-4">
+                                <input id="search-message-input" type="text" placeholder="Buscar..." class="w-full bg-zap-card rounded-md px-3 py-2 text-white placeholder-zap-text-secondary border-transparent focus:border-zap-secondary focus:ring-0">
+                                <button id="add-message-btn" class="bg-zap-secondary text-white p-2 rounded-md hover:bg-purple-500 transition-colors">
+                                    <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                                </button>
+                            </div>
+                            <div id="message-list" class="flex-grow overflow-y-auto"></div>
+                        </div>
+                        <!-- Coluna da Direita: Detalhes da Mensagem -->
+                        <div id="message-details-panel" class="w-2/3 bg-zap-sidebar rounded-lg p-6 flex-col hidden">
+                            <div class="flex justify-between items-center mb-4">
+                                <input id="message-title-display" readonly class="text-xl font-bold text-white bg-transparent w-full focus:ring-0 border-0 border-b-2 border-transparent focus:border-zap-secondary transition-all" type="text" value="">
+                                <div class="flex space-x-2">
+                                    <button id="save-message-btn" class="p-2 rounded-md text-green-400 hover:bg-zap-card hidden"><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg></button>
+                                    <button id="delete-message-btn" class="p-2 rounded-md text-red-400 hover:bg-zap-card"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg></button>
+                                    <button id="edit-message-btn" class="p-2 rounded-md text-zap-secondary hover:bg-zap-card"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.5L15.232 5.232z"></path></svg></button>
+                                    <button id="favorite-message-btn" class="p-2 rounded-md text-yellow-400 hover:bg-zap-card"><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" id="star-outline"><path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.783-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" /></svg><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 hidden" viewBox="0 0 20 20" fill="currentColor" id="star-solid"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg></button>
+                                </div>
+                            </div>
+                            <div class="flex-grow bg-zap-dark rounded-md p-4"><label class="text-sm font-semibold text-zap-text-secondary mb-2 block">Texto da mensagem:</label><textarea id="message-content-display" readonly class="w-full h-full bg-transparent text-white resize-none border-none focus:ring-0 transition-all"></textarea></div>
+                        </div>
+                        <div id="message-welcome-panel" class="w-2/3 bg-zap-sidebar rounded-lg p-6 flex flex-col items-center justify-center"><svg class="h-16 w-16 text-zap-secondary mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg><h3 class="text-xl font-bold text-white">Selecione uma mensagem</h3><p class="text-zap-text-secondary">Escolha uma mensagem na lista para ver os detalhes ou crie uma nova.</p></div>
+                    </div>
+                </div>
+                
+                <!-- Página de Áudios -->
+                <div id="page-audios" class="page-content hidden">
+                    <h2 class="text-3xl font-bold text-white mb-6">Áudios</h2>
+                    <div class="flex h-[calc(100vh-12rem)] space-x-6">
+                        <!-- Coluna da Esquerda: Lista e Ações -->
+                        <div class="w-1/3 bg-zap-sidebar rounded-lg p-4 flex flex-col">
+                            <div class="flex space-x-2 mb-4">
+                                <input id="search-audio-input" type="text" placeholder="Buscar..." class="w-full bg-zap-card rounded-md px-3 py-2 text-white placeholder-zap-text-secondary border-transparent focus:border-zap-secondary focus:ring-0">
+                                <button id="add-audio-btn" class="bg-zap-secondary text-white p-2 rounded-md hover:bg-purple-500 transition-colors">
+                                    <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                                </button>
+                            </div>
+                            <div id="audio-list" class="flex-grow overflow-y-auto"></div>
+                        </div>
+                        <!-- Coluna da Direita: Detalhes do Áudio -->
+                        <div id="audio-details-panel" class="w-2/3 bg-zap-sidebar rounded-lg p-6 flex-col hidden">
+                            <div class="flex justify-between items-center mb-4">
+                                <input id="audio-title-display" readonly class="text-xl font-bold text-white bg-transparent w-full focus:ring-0 border-0 border-b-2 border-transparent focus:border-zap-secondary transition-all" type="text" value="">
+                                <div class="flex space-x-2">
+                                     <button id="download-audio-btn" class="p-2 rounded-md text-blue-400 hover:bg-zap-card"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg></button>
+                                    <button id="save-audio-btn" class="p-2 rounded-md text-green-400 hover:bg-zap-card hidden"><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg></button>
+                                    <button id="delete-audio-btn" class="p-2 rounded-md text-red-400 hover:bg-zap-card"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg></button>
+                                    <button id="edit-audio-btn" class="p-2 rounded-md text-zap-secondary hover:bg-zap-card"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.5L15.232 5.232z"></path></svg></button>
+                                    <button id="favorite-audio-btn" class="p-2 rounded-md text-yellow-400 hover:bg-zap-card"><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" id="audio-star-outline"><path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.783-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" /></svg><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 hidden" viewBox="0 0 20 20" fill="currentColor" id="audio-star-solid"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg></button>
+                                </div>
+                            </div>
+                            <div class="flex-grow bg-zap-dark rounded-md p-4 flex items-center justify-center">
+                                <audio id="audio-player" controls class="w-full"></audio>
+                            </div>
+                        </div>
+                         <!-- Painel de Boas-vindas -->
+                        <div id="audio-welcome-panel" class="w-2/3 bg-zap-sidebar rounded-lg p-6 flex flex-col items-center justify-center">
+                            <svg class="h-16 w-16 text-zap-secondary mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
+                            <h3 class="text-xl font-bold text-white">Selecione um áudio</h3>
+                            <p class="text-zap-text-secondary">Escolha um áudio na lista para ouvir ou adicione um novo.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Página de Mídias (FUNCIONAL) -->
+                <div id="page-midias" class="page-content hidden">
+                    <h2 class="text-3xl font-bold text-white mb-6">Mídias</h2>
+                     <div class="flex h-[calc(100vh-12rem)] space-x-6">
+                        <!-- Coluna da Esquerda: Lista e Ações -->
+                        <div class="w-1/3 bg-zap-sidebar rounded-lg p-4 flex flex-col">
+                            <div class="flex space-x-2 mb-4">
+                                <input id="search-midia-input" type="text" placeholder="Buscar..." class="w-full bg-zap-card rounded-md px-3 py-2 text-white placeholder-zap-text-secondary border-transparent focus:border-zap-secondary focus:ring-0">
+                                <button id="add-midia-btn" class="bg-zap-secondary text-white p-2 rounded-md hover:bg-purple-500 transition-colors">
+                                    <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                                </button>
+                            </div>
+                            <div id="midia-list" class="flex-grow overflow-y-auto"></div>
+                        </div>
+                        <!-- Coluna da Direita: Detalhes da Mídia -->
+                        <div id="midia-details-panel" class="w-2/3 bg-zap-sidebar rounded-lg p-6 flex-col hidden">
+                            <div class="flex justify-between items-center mb-4">
+                                <input id="midia-title-display" readonly class="text-xl font-bold text-white bg-transparent w-full focus:ring-0 border-0 border-b-2 border-transparent focus:border-zap-secondary transition-all" type="text" value="">
+                                <div class="flex space-x-2">
+                                     <button id="download-midia-btn" class="p-2 rounded-md text-blue-400 hover:bg-zap-card"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg></button>
+                                    <button id="save-midia-btn" class="p-2 rounded-md text-green-400 hover:bg-zap-card hidden"><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg></button>
+                                    <button id="delete-midia-btn" class="p-2 rounded-md text-red-400 hover:bg-zap-card"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg></button>
+                                    <button id="edit-midia-btn" class="p-2 rounded-md text-zap-secondary hover:bg-zap-card"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.5L15.232 5.232z"></path></svg></button>
+                                    <button id="favorite-midia-btn" class="p-2 rounded-md text-yellow-400 hover:bg-zap-card"><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" id="midia-star-outline"><path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.783-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" /></svg><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 hidden" viewBox="0 0 20 20" fill="currentColor" id="midia-star-solid"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg></button>
+                                </div>
+                            </div>
+                            <div class="flex-grow bg-zap-dark rounded-md p-4 flex flex-col items-center justify-center">
+                                <div id="midia-preview" class="w-full h-full flex items-center justify-center">
+                                    <img id="midia-image-preview" class="hidden max-w-full max-h-full object-contain">
+                                    <video id="midia-video-preview" class="hidden max-w-full max-h-full object-contain" controls></video>
+                                </div>
+                                <textarea id="midia-caption-display" readonly placeholder="Sem legenda" class="w-full mt-4 h-20 bg-transparent text-white resize-none border-none focus:ring-0"></textarea>
+                            </div>
+                        </div>
+                         <!-- Painel de Boas-vindas -->
+                        <div id="midia-welcome-panel" class="w-2/3 bg-zap-sidebar rounded-lg p-6 flex flex-col items-center justify-center">
+                            <svg class="h-16 w-16 text-zap-secondary mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                            <h3 class="text-xl font-bold text-white">Selecione uma mídia</h3>
+                            <p class="text-zap-text-secondary">Escolha uma imagem ou vídeo na lista ou adicione um novo.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Página de Documentos (FUNCIONAL) -->
+                <div id="page-documentos" class="page-content hidden">
+                    <h2 class="text-3xl font-bold text-white mb-6">Documentos</h2>
+                    <div class="flex h-[calc(100vh-12rem)] space-x-6">
+                        <input type="file" id="documento-file-input" class="hidden">
+                        <!-- Coluna da Esquerda: Lista e Ações -->
+                        <div class="w-1/3 bg-zap-sidebar rounded-lg p-4 flex flex-col">
+                            <div class="flex space-x-2 mb-4">
+                                <input id="search-documento-input" type="text" placeholder="Buscar..." class="w-full bg-zap-card rounded-md px-3 py-2 text-white placeholder-zap-text-secondary border-transparent focus:border-zap-secondary focus:ring-0">
+                                <button id="add-documento-btn" class="bg-zap-secondary text-white p-2 rounded-md hover:bg-purple-500 transition-colors">
+                                    <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                                </button>
+                            </div>
+                            <div id="documento-list" class="flex-grow overflow-y-auto"></div>
+                        </div>
+                        <!-- Coluna da Direita: Detalhes do Documento -->
+                        <div id="documento-details-panel" class="w-2/3 bg-zap-sidebar rounded-lg p-6 flex-col hidden">
+                            <div class="flex justify-between items-center mb-4">
+                                <input id="documento-title-display" readonly class="text-xl font-bold text-white bg-transparent w-full focus:ring-0 border-0 border-b-2 border-transparent focus:border-zap-secondary transition-all" type="text" value="">
+                                <div class="flex space-x-2">
+                                     <button id="download-documento-btn" class="p-2 rounded-md text-blue-400 hover:bg-zap-card"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg></button>
+                                    <button id="save-documento-btn" class="p-2 rounded-md text-green-400 hover:bg-zap-card hidden"><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg></button>
+                                    <button id="delete-documento-btn" class="p-2 rounded-md text-red-400 hover:bg-zap-card"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg></button>
+                                    <button id="edit-documento-btn" class="p-2 rounded-md text-zap-secondary hover:bg-zap-card"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.5L15.232 5.232z"></path></svg></button>
+                                    <button id="favorite-documento-btn" class="p-2 rounded-md text-yellow-400 hover:bg-zap-card"><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" id="documento-star-outline"><path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.783-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" /></svg><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 hidden" viewBox="0 0 20 20" fill="currentColor" id="documento-star-solid"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg></button>
+                                </div>
+                            </div>
+                            <div class="flex-grow bg-zap-dark rounded-md p-4 flex flex-col items-center justify-center text-center">
+                                 <div id="documento-icon-preview" class="hidden flex-col items-center">
+                                     <svg class="h-24 w-24 text-zap-secondary mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
+                                     <p id="documento-info" class="text-zap-text-secondary"></p>
+                                 </div>
+                                 <iframe id="documento-pdf-preview" class="hidden w-full h-full" src=""></iframe>
+                            </div>
+                        </div>
+                         <!-- Painel de Boas-vindas -->
+                        <div id="documento-welcome-panel" class="w-2/3 bg-zap-sidebar rounded-lg p-6 flex flex-col items-center justify-center">
+                            <svg class="h-16 w-16 text-zap-secondary mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
+                            <h3 class="text-xl font-bold text-white">Selecione um documento</h3>
+                            <p class="text-zap-text-secondary">Escolha um documento na lista ou adicione um novo.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Página de Funis (FUNCIONAL) -->
+                <div id="page-funis" class="page-content hidden">
+                     <h2 class="text-3xl font-bold text-white mb-6">Funis</h2>
+                    <div class="flex h-[calc(100vh-12rem)] space-x-6">
+                        <!-- Coluna da Esquerda: Lista e Ações -->
+                        <div class="w-1/3 bg-zap-sidebar rounded-lg p-4 flex flex-col">
+                            <div class="flex space-x-2 mb-4">
+                                <input id="search-funil-input" type="text" placeholder="Buscar..." class="w-full bg-zap-card rounded-md px-3 py-2 text-white placeholder-zap-text-secondary border-transparent focus:border-zap-secondary focus:ring-0">
+                                <button id="add-funil-btn" class="bg-zap-secondary text-white p-2 rounded-md hover:bg-purple-500 transition-colors">
+                                    <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                                </button>
+                            </div>
+                            <div id="funil-list" class="flex-grow overflow-y-auto"></div>
+                        </div>
+                        <!-- Coluna da Direita: Detalhes do Funil -->
+                        <div id="funil-details-panel" class="w-2/3 bg-zap-sidebar rounded-lg p-6 flex-col hidden">
+                            <div class="flex justify-between items-center mb-4">
+                                <input id="funil-title-display" readonly class="text-xl font-bold text-white bg-transparent w-full focus:ring-0 border-0 border-b-2 border-transparent focus:border-zap-secondary transition-all" type="text" value="">
+                                <div class="flex items-center space-x-2">
+                                    <button id="delete-funil-btn" class="p-2 rounded-md text-red-400 hover:bg-zap-card"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg></button>
+                                    <button id="duplicate-funil-btn" class="p-2 rounded-md text-blue-400 hover:bg-zap-card"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg></button>
+                                    <button id="save-funil-btn" class="p-2 rounded-md text-green-400 hover:bg-zap-card hidden"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg></button>
+                                    <button id="edit-funil-btn" class="p-2 rounded-md text-zap-secondary hover:bg-zap-card"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.5L15.232 5.232z"></path></svg></button>
+                                    <button id="favorite-funil-btn" class="p-2 rounded-md text-yellow-400 hover:bg-zap-card"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" id="funil-star-outline"><path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.783-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" /></svg><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 hidden" viewBox="0 0 20 20" fill="currentColor" id="funil-star-solid"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg></button>
+                                    <button id="add-funil-item-btn" class="bg-zap-secondary text-white font-semibold py-2 px-4 rounded-lg flex items-center text-sm ml-4">Adicionar Item</button>
+                                </div>
+                            </div>
+                            <div id="funil-item-list" class="flex-grow bg-zap-dark rounded-md p-4 overflow-y-auto">
+                                <!-- Itens do funil serão renderizados aqui -->
+                            </div>
+                        </div>
+                         <!-- Painel de Boas-vindas -->
+                        <div id="funil-welcome-panel" class="w-2/3 bg-zap-sidebar rounded-lg p-6 flex flex-col items-center justify-center">
+                             <svg class="h-16 w-16 text-zap-secondary mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"> <path stroke-linecap="round" stroke-linejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 01-.659 1.591l-5.432 5.432a2.25 2.25 0 00-.659 1.591v2.927a2.25 2.25 0 01-1.244 2.013L9.75 21v-6.572a2.25 2.25 0 00-.659-1.591L3.659 7.409A2.25 2.25 0 013 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0112 3z" /> </svg>
+                            <h3 class="text-xl font-bold text-white">Selecione um Funil</h3>
+                            <p class="text-zap-text-secondary">Escolha um funil na lista para ver os detalhes ou crie um novo.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="page-gatilhos" class="page-content hidden"><h2 class="text-3xl font-bold text-white mb-6">Gatilhos</h2></div>
+                <div id="page-backups" class="page-content hidden"><h2 class="text-3xl font-bold text-white mb-6">Backups</h2></div>
+
+            </div>
+        </main>
+    </div>
+
+    <!-- MODAL DE ADICIONAR ÁUDIO -->
+    <div id="add-audio-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-xl p-8 w-full max-w-lg text-gray-800">
+            <h2 class="text-2xl font-bold mb-6">Adicionar Áudio</h2>
+            <form id="add-audio-form">
+                <div class="mb-4">
+                    <label for="audio-name-input" class="block text-sm font-medium text-gray-700 mb-1">Nome</label>
+                    <input type="text" id="audio-name-input" required class="w-full border-gray-300 rounded-md shadow-sm focus:border-indigo-500 focus:ring-indigo-500" placeholder="Nome do áudio">
+                    <p class="text-xs text-red-500 mt-1">Campo obrigatório</p>
+                </div>
+                <div class="mb-4 space-y-2">
+                    <label class="flex items-center justify-between">
+                        <span class="text-sm font-medium text-gray-700">Enviar áudio como encaminhado</span>
+                        <div class="relative inline-block w-10 mr-2 align-middle select-none transition duration-200 ease-in">
+                            <input type="checkbox" id="audio-forwarded-toggle" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer"/>
+                            <label for="audio-forwarded-toggle" class="toggle-label block overflow-hidden h-6 rounded-full bg-gray-300 cursor-pointer"></label>
+                        </div>
+                    </label>
+                    <label class="flex items-center justify-between">
+                        <span class="text-sm font-medium text-gray-700">Enviar áudio como visualização única</span>
+                        <div class="relative inline-block w-10 mr-2 align-middle select-none transition duration-200 ease-in">
+                            <input type="checkbox" id="audio-view-once-toggle" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer"/>
+                            <label for="audio-view-once-toggle" class="toggle-label block overflow-hidden h-6 rounded-full bg-gray-300 cursor-pointer"></label>
+                        </div>
+                    </label>
+                </div>
+                <div class="mb-6">
+                     <label for="audio-dropzone-file" id="audio-dropzone" class="flex flex-col items-center justify-center w-full h-32 px-4 transition bg-white border-2 border-gray-300 border-dashed rounded-md appearance-none cursor-pointer hover:border-gray-400 focus:outline-none">
+                        <span class="flex items-center space-x-2">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+                            <span id="dropzone-text" class="font-medium text-gray-600">Arraste o áudio ou <span class="text-blue-600 underline">clique aqui</span></span>
+                        </span>
+                        <input type="file" id="audio-dropzone-file" name="file-upload" class="hidden" accept=".ogg,.mp3,.wav">
+                    </label>
+                    <p class="text-xs text-red-500 mt-1">Campo obrigatório</p>
+                </div>
+                <div class="flex justify-end space-x-4">
+                    <button type="button" id="cancel-audio-modal" class="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-200 rounded-md hover:bg-gray-300">Cancelar</button>
+                    <button type="submit" class="px-4 py-2 text-sm font-medium text-white bg-zap-secondary rounded-md hover:bg-purple-500">Salvar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- MODAL DE ADICIONAR MÍDIA -->
+    <div id="add-midia-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-xl p-8 w-full max-w-lg text-gray-800">
+            <h2 class="text-2xl font-bold mb-6">Adicionar Mídia</h2>
+            <form id="add-midia-form">
+                <div class="mb-4">
+                    <label for="midia-name-input" class="block text-sm font-medium text-gray-700 mb-1">Nome</label>
+                    <input type="text" id="midia-name-input" required class="w-full border-gray-300 rounded-md shadow-sm" placeholder="Nome da mídia">
+                    <p class="text-xs text-red-500 mt-1">Campo obrigatório</p>
+                </div>
+                 <div class="mb-4">
+                    <label for="midia-caption-input" class="block text-sm font-medium text-gray-700 mb-1">Legenda da mídia</label>
+                    <textarea id="midia-caption-input" rows="3" class="w-full border-gray-300 rounded-md shadow-sm" placeholder="Legenda da mídia"></textarea>
+                </div>
+                <div class="mb-4">
+                    <label class="flex items-center justify-between">
+                        <span class="text-sm font-medium text-gray-700">Enviar mídia como visualização única</span>
+                        <div class="relative inline-block w-10 mr-2 align-middle select-none">
+                            <input type="checkbox" id="midia-view-once-toggle" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer"/>
+                            <label for="midia-view-once-toggle" class="toggle-label block overflow-hidden h-6 rounded-full bg-gray-300 cursor-pointer"></label>
+                        </div>
+                    </label>
+                </div>
+                <div class="mb-6">
+                     <label for="midia-dropzone-file" id="midia-dropzone" class="flex flex-col items-center justify-center w-full h-32 px-4 transition bg-white border-2 border-gray-300 border-dashed rounded-md appearance-none cursor-pointer hover:border-gray-400">
+                        <span class="flex items-center space-x-2">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+                            <span id="midia-dropzone-text" class="font-medium text-gray-600">Arraste a mídia ou <span class="text-blue-600 underline">clique aqui</span></span>
+                        </span>
+                        <input type="file" id="midia-dropzone-file" class="hidden" accept=".png,.jpg,.jpeg,.mp4">
+                    </label>
+                    <p class="text-xs text-red-500 mt-1">Campo obrigatório</p>
+                </div>
+                <div class="flex justify-end space-x-4">
+                    <button type="button" id="cancel-midia-modal" class="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-200 rounded-md hover:bg-gray-300">Cancelar</button>
+                    <button type="submit" class="px-4 py-2 text-sm font-medium text-white bg-zap-secondary rounded-md hover:bg-purple-500">Salvar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL DE ADICIONAR ITEM AO FUNIL -->
+    <div id="add-funil-item-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-xl p-8 w-full max-w-lg text-gray-800">
+            <h2 class="text-2xl font-bold mb-6">Adicionar Item ao Funil</h2>
+            <form id="add-funil-item-form">
+                <div class="mb-4">
+                    <div id="funil-item-tabs" class="flex border-b border-gray-200">
+                        <button type="button" data-type="mensagem" class="funil-item-tab flex-1 py-2 text-center font-semibold border-b-2 border-zap-secondary text-zap-secondary">Mensagem</button>
+                        <button type="button" data-type="audio" class="funil-item-tab flex-1 py-2 text-center font-semibold border-b-2 border-transparent text-gray-500 hover:text-gray-700">Áudio</button>
+                        <button type="button" data-type="midia" class="funil-item-tab flex-1 py-2 text-center font-semibold border-b-2 border-transparent text-gray-500 hover:text-gray-700">Mídia</button>
+                        <button type="button" data-type="documento" class="funil-item-tab flex-1 py-2 text-center font-semibold border-b-2 border-transparent text-gray-500 hover:text-gray-700">Documento</button>
+                    </div>
+                </div>
+                 <div class="mb-4">
+                    <label for="funil-item-select" class="block text-sm font-medium text-gray-700 mb-1">Selecione um item</label>
+                    <select id="funil-item-select" required class="w-full border-gray-300 rounded-md shadow-sm"></select>
+                </div>
+                 <div class="mb-6">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Enviar item após</label>
+                    <div class="flex items-center space-x-4">
+                        <div class="flex items-center space-x-2">
+                            <input type="number" id="funil-delay-minutes" min="0" value="0" class="w-20 border-gray-300 rounded-md shadow-sm text-center">
+                            <span>Minutos</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <input type="number" id="funil-delay-seconds" min="0" value="0" class="w-20 border-gray-300 rounded-md shadow-sm text-center">
+                            <span>Segundos</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex justify-end space-x-4">
+                    <button type="button" id="cancel-funil-item-modal" class="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-200 rounded-md hover:bg-gray-300">Cancelar</button>
+                    <button type="submit" class="px-4 py-2 text-sm font-medium text-white bg-zap-secondary rounded-md hover:bg-purple-500">Salvar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+     <!-- MODAL DE ADICIONAR LEAD AO KANBAN -->
+    <div id="add-lead-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-xl p-8 w-full max-w-lg text-gray-800">
+            <h2 class="text-2xl font-bold mb-6">Adicionar Novo Lead</h2>
+            <form id="add-lead-form">
+                <div class="mb-4">
+                    <label for="lead-name-input" class="block text-sm font-medium text-gray-700 mb-1">Nome do Cliente <span class="text-red-500">*</span></label>
+                    <input type="text" id="lead-name-input" required class="w-full border-gray-300 rounded-md shadow-sm">
+                </div>
+                <div class="mb-4">
+                    <label for="lead-phone-input" class="block text-sm font-medium text-gray-700 mb-1">Telefone (WhatsApp) <span class="text-red-500">*</span></label>
+                    <input type="tel" id="lead-phone-input" required class="w-full border-gray-300 rounded-md shadow-sm">
+                </div>
+                <div class="mb-4">
+                    <label for="lead-email-input" class="block text-sm font-medium text-gray-700 mb-1">E-mail (opcional)</label>
+                    <input type="email" id="lead-email-input" class="w-full border-gray-300 rounded-md shadow-sm">
+                </div>
+                 <div class="mb-4">
+                    <label for="lead-product-input" class="block text-sm font-medium text-gray-700 mb-1">Produto de Interesse</label>
+                    <input type="text" id="lead-product-input" class="w-full border-gray-300 rounded-md shadow-sm">
+                </div>
+                 <div class="mb-4">
+                    <label for="lead-value-input" class="block text-sm font-medium text-gray-700 mb-1">Valor da Oferta/Produto</label>
+                    <input type="number" id="lead-value-input" min="0" step="0.01" class="w-full border-gray-300 rounded-md shadow-sm">
+                </div>
+                <div class="flex justify-end space-x-4 mt-8">
+                    <button type="button" id="cancel-lead-modal-btn" class="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-200 rounded-md hover:bg-gray-300">Cancelar</button>
+                    <button type="submit" class="px-4 py-2 text-sm font-medium text-white bg-zap-secondary rounded-md hover:bg-purple-500">Salvar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <style>.toggle-checkbox:checked { right: 0; border-color: #8A6CFF; } .toggle-checkbox:checked + .toggle-label { background-color: #8A6CFF; }</style>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const menuItems = document.querySelectorAll('.menu-item');
+            const pages = document.querySelectorAll('.page-content');
+            
+            // Lógica de Navegação do Menu
+            menuItems.forEach(item => {
+                item.addEventListener('click', function(event) {
+                    event.preventDefault();
+                    const targetPageId = this.getAttribute('data-target');
+                    pages.forEach(page => page.classList.add('hidden'));
+                    const targetPage = document.getElementById(targetPageId);
+                    if (targetPage) targetPage.classList.remove('hidden');
+
+                    document.querySelectorAll('.menu-item').forEach(link => {
+                        link.classList.remove('bg-zap-dark', 'border-l-4', 'border-zap-primary', 'text-white', 'font-semibold');
+                        link.classList.add('text-zap-text-secondary', 'hover:bg-zap-dark', 'hover:text-white');
+                    });
+
+                    this.classList.add('bg-zap-dark', 'border-l-4', 'border-zap-primary', 'text-white', 'font-semibold');
+                    this.classList.remove('text-zap-text-secondary');
+                });
+            });
+
+            // Lógica do Menu de Configurações
+            const settingsBtn = document.getElementById('settings-btn');
+            const settingsMenu = document.getElementById('settings-menu');
+            settingsBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                settingsMenu.classList.toggle('hidden');
+            });
+            document.addEventListener('click', (e) => {
+                if (!settingsMenu.contains(e.target) && !settingsBtn.contains(e.target)) {
+                    settingsMenu.classList.add('hidden');
+                }
+            });
+
+
+            // --- BANCO DE DADOS GERAL (SIMULADO) ---
+            let messages = [
+                { id: 1, title: 'Saudação Inicial', content: 'Olá! Tudo bem? Vi que você se interessou pelo nosso produto. Gostaria de mais alguma informação?', isFavorite: false },
+                { id: 2, title: 'Follow-up 1', content: 'Olá, passando para saber se você conseguiu dar uma olhada na nossa proposta.', isFavorite: true },
+                { id: 3, title: 'Proposta Comercial', content: 'Segue em anexo nossa proposta comercial detalhada.', isFavorite: false }
+            ];
+            let audios = [];
+            let midias = [];
+            let documentos = [];
+            let funis = [];
+            let kanbanData = [
+                { id: 1, title: 'Novos Leads', items: [
+                    { id: 101, name: 'Ana Clara', phone: '11987654321', email: '', product: 'Produto A', value: 1500, lastMessage: 'Olá, gostaria de um orçamento...' },
+                    { id: 102, name: 'Bruno Costa', phone: '21987654321', email: '', product: 'Produto B', value: 0, lastMessage: 'Tenho interesse no produto.' }
+                ]},
+                { id: 2, title: 'Em Negociação', items: [
+                    { id: 103, name: 'Carla Dias', phone: '31987654321', email: 'carla@email.com', product: 'Produto C', value: 8250, lastMessage: 'A proposta parece boa, mas...' }
+                ]},
+                { id: 3, title: 'Fechado', items: []}
+            ];
+
+
+            // --- LÓGICA DO DASHBOARD ---
+            function updateDashboardCounters() {
+                const safeSet = (id, value) => { const el = document.getElementById(id); if (el) el.textContent = value; };
+                safeSet('dashboard-mensagens-count', messages.length);
+                safeSet('dashboard-audios-count', audios.length);
+                safeSet('dashboard-midias-count', midias.length);
+                safeSet('dashboard-documentos-count', documentos.length);
+                safeSet('dashboard-funis-count', funis.length);
+                // Gatilhos (pode ser atualizado por renderGatilhos também)
+                safeSet('dashboard-gatilhos-count', (typeof gatilhos !== 'undefined') ? gatilhos.length : 0);
+                // Total de leads (soma de itens nas colunas do kanban)
+                try {
+                    const totalLeads = kanbanData.reduce((sum, c) => sum + (c.items ? c.items.length : 0), 0);
+                    safeSet('dashboard-leads-count', totalLeads);
+                } catch (e) { /* ignore se não existir elemento */ }
+            }
+
+
+            // --- LÓGICA DA PÁGINA DE MENSAGENS ---
+            const messageListContainer = document.getElementById('message-list');
+            const addMessageBtn = document.getElementById('add-message-btn');
+            const messageWelcomePanel = document.getElementById('message-welcome-panel');
+            const messageDetailsPanel = document.getElementById('message-details-panel');
+            const messageTitleDisplay = document.getElementById('message-title-display');
+            const messageContentDisplay = document.getElementById('message-content-display');
+            const deleteMessageBtn = document.getElementById('delete-message-btn');
+            const editMessageBtn = document.getElementById('edit-message-btn');
+            const saveMessageBtn = document.getElementById('save-message-btn');
+            const favoriteMessageBtn = document.getElementById('favorite-message-btn');
+            const starOutline = document.getElementById('star-outline');
+            const starSolid = document.getElementById('star-solid');
+            let selectedMessageId = null;
+            let isEditingMessage = false;
+
+            function renderMessages() {
+                messageListContainer.innerHTML = '';
+                messages.forEach(msg => {
+                    const isActive = msg.id === selectedMessageId;
+                    const itemDiv = document.createElement('div');
+                    itemDiv.className = `p-3 rounded-lg mb-2 cursor-pointer flex items-center justify-between ${isActive ? 'border-2 border-zap-secondary bg-zap-card' : 'hover:bg-zap-card'}`;
+                    itemDiv.dataset.id = msg.id;
+                    const titleEl = document.createElement('h4');
+                    titleEl.className = `font-semibold truncate ${isActive ? 'text-white' : 'text-zap-text-secondary'}`;
+                    titleEl.textContent = msg.title;
+                    itemDiv.appendChild(titleEl);
+                    if (msg.isFavorite) {
+                        const starIcon = document.createElement('div');
+                        starIcon.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-yellow-400" viewBox="0 0 20 20" fill="currentColor"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg>`;
+                        itemDiv.appendChild(starIcon);
+                    }
+                    itemDiv.addEventListener('click', () => {
+                        selectedMessageId = msg.id;
+                        isEditingMessage = false;
+                        displayMessageDetails(msg.id);
+                        renderMessages();
+                    });
+                    messageListContainer.appendChild(itemDiv);
+                });
+                updateDashboardCounters();
+            }
+
+            function displayMessageDetails(id) {
+                const message = messages.find(m => m.id === id);
+                if (message) {
+                    messageWelcomePanel.classList.add('hidden');
+                    messageDetailsPanel.classList.remove('hidden');
+                    messageDetailsPanel.classList.add('flex');
+                    messageTitleDisplay.value = message.title;
+                    messageContentDisplay.value = message.content;
+                    if (message.isFavorite) { starOutline.classList.add('hidden'); starSolid.classList.remove('hidden'); } 
+                    else { starOutline.classList.remove('hidden'); starSolid.classList.add('hidden'); }
+                    if (isEditingMessage) {
+                        messageTitleDisplay.readOnly = false; messageContentDisplay.readOnly = false;
+                        editMessageBtn.classList.add('hidden'); saveMessageBtn.classList.remove('hidden');
+                        messageTitleDisplay.focus();
+                    } else {
+                        messageTitleDisplay.readOnly = true; messageContentDisplay.readOnly = true;
+                        editMessageBtn.classList.remove('hidden'); saveMessageBtn.classList.add('hidden');
+                    }
+                }
+            }
+            addMessageBtn.addEventListener('click', () => {
+                const title = prompt('Digite o título da nova mensagem:');
+                if (title && title.trim() !== '') {
+                    const newId = messages.length > 0 ? Math.max(...messages.map(m => m.id)) + 1 : 1;
+                    messages.push({ id: newId, title, content: 'Escreva sua mensagem aqui...', isFavorite: false });
+                    selectedMessageId = newId; isEditingMessage = true;
+                    renderMessages(); displayMessageDetails(newId);
+                }
+            });
+            deleteMessageBtn.addEventListener('click', () => {
+                if (!selectedMessageId) return;
+                if (confirm('Tem certeza que deseja apagar esta mensagem?')) {
+                    messages = messages.filter(m => m.id !== selectedMessageId);
+                    selectedMessageId = null; isEditingMessage = false;
+                    messageDetailsPanel.classList.add('hidden'); messageDetailsPanel.classList.remove('flex');
+                    messageWelcomePanel.classList.remove('hidden');
+                    renderMessages();
+                }
+            });
+            editMessageBtn.addEventListener('click', () => { if (!selectedMessageId) return; isEditingMessage = true; displayMessageDetails(selectedMessageId); });
+            saveMessageBtn.addEventListener('click', () => {
+                if (!selectedMessageId) return;
+                const message = messages.find(m => m.id === selectedMessageId);
+                if (message) { message.title = messageTitleDisplay.value; message.content = messageContentDisplay.value; }
+                isEditingMessage = false; renderMessages(); displayMessageDetails(selectedMessageId);
+            });
+            favoriteMessageBtn.addEventListener('click', () => {
+                if (!selectedMessageId) return;
+                const message = messages.find(m => m.id === selectedMessageId);
+                if (message) { message.isFavorite = !message.isFavorite; if (!isEditingMessage) { displayMessageDetails(selectedMessageId); renderMessages(); } }
+            });
+            renderMessages();
+
+
+            // --- LÓGICA DA PÁGINA DE ÁUDIOS ---
+            const audioListContainer = document.getElementById('audio-list');
+            const addAudioBtn = document.getElementById('add-audio-btn');
+            const audioWelcomePanel = document.getElementById('audio-welcome-panel');
+            const audioDetailsPanel = document.getElementById('audio-details-panel');
+            const audioTitleDisplay = document.getElementById('audio-title-display');
+            const audioPlayer = document.getElementById('audio-player');
+            const deleteAudioBtn = document.getElementById('delete-audio-btn');
+            const editAudioBtn = document.getElementById('edit-audio-btn');
+            const saveAudioBtn = document.getElementById('save-audio-btn');
+            const downloadAudioBtn = document.getElementById('download-audio-btn');
+            const favoriteAudioBtn = document.getElementById('favorite-audio-btn');
+            const audioStarOutline = document.getElementById('audio-star-outline');
+            const audioStarSolid = document.getElementById('audio-star-solid');
+            const addAudioModal = document.getElementById('add-audio-modal');
+            const addAudioForm = document.getElementById('add-audio-form');
+            const cancelAudioModalBtn = document.getElementById('cancel-audio-modal');
+            const audioNameInput = document.getElementById('audio-name-input');
+            const audioDropzone = document.getElementById('audio-dropzone');
+            const audioDropzoneFile = document.getElementById('audio-dropzone-file');
+            const dropzoneText = document.getElementById('dropzone-text');
+            let selectedAudioId = null;
+            let isEditingAudio = false;
+            let audioFileToUpload = null;
+            function renderAudios() {
+                audioListContainer.innerHTML = '';
+                audios.forEach(audio => {
+                    const isActive = audio.id === selectedAudioId;
+                    const itemDiv = document.createElement('div');
+                    itemDiv.className = `p-3 rounded-lg mb-2 cursor-pointer flex items-center justify-between ${isActive ? 'border-2 border-zap-secondary bg-zap-card' : 'hover:bg-zap-card'}`;
+                    itemDiv.dataset.id = audio.id;
+                    const titleEl = document.createElement('h4');
+                    titleEl.className = `font-semibold truncate ${isActive ? 'text-white' : 'text-zap-text-secondary'}`;
+                    titleEl.textContent = audio.title;
+                    itemDiv.appendChild(titleEl);
+                    if (audio.isFavorite) {
+                        const starIcon = document.createElement('div');
+                        starIcon.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-yellow-400" viewBox="0 0 20 20" fill="currentColor"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg>`;
+                        itemDiv.appendChild(starIcon);
+                    }
+                    itemDiv.addEventListener('click', () => {
+                        selectedAudioId = audio.id;
+                        isEditingAudio = false;
+                        displayAudioDetails(audio.id);
+                        renderAudios();
+                    });
+                    audioListContainer.appendChild(itemDiv);
+                });
+                updateDashboardCounters();
+            }
+            function displayAudioDetails(id) {
+                const audio = audios.find(a => a.id === id);
+                if (audio) {
+                    audioWelcomePanel.classList.add('hidden');
+                    audioDetailsPanel.classList.remove('hidden');
+                    audioDetailsPanel.classList.add('flex');
+                    audioTitleDisplay.value = audio.title;
+                    audioPlayer.src = audio.url;
+                    if (audio.isFavorite) { audioStarOutline.classList.add('hidden'); audioStarSolid.classList.remove('hidden'); }
+                    else { audioStarOutline.classList.remove('hidden'); audioStarSolid.classList.add('hidden'); }
+                    if (isEditingAudio) {
+                        audioTitleDisplay.readOnly = false;
+                        editAudioBtn.classList.add('hidden');
+                        saveAudioBtn.classList.remove('hidden');
+                        audioTitleDisplay.focus();
+                    } else {
+                        audioTitleDisplay.readOnly = true;
+                        editAudioBtn.classList.remove('hidden');
+                        saveAudioBtn.classList.add('hidden');
+                    }
+                }
+            }
+            addAudioBtn.addEventListener('click', () => { addAudioModal.classList.remove('hidden'); addAudioModal.classList.add('flex'); });
+            cancelAudioModalBtn.addEventListener('click', () => { addAudioModal.classList.add('hidden'); addAudioModal.classList.remove('flex'); addAudioForm.reset(); audioFileToUpload = null; dropzoneText.innerHTML = 'Arraste o áudio ou <span class="text-blue-600 underline">clique aqui</span>';});
+            audioDropzoneFile.addEventListener('change', (e) => handleAudioFile(e.target.files[0]));
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                audioDropzone.addEventListener(eventName, (e) => { e.preventDefault(); e.stopPropagation(); }, false);
+            });
+            ['dragenter', 'dragover'].forEach(eventName => {
+                audioDropzone.addEventListener(eventName, () => audioDropzone.classList.add('border-blue-500', 'bg-blue-50'));
+            });
+            ['dragleave', 'drop'].forEach(eventName => {
+                audioDropzone.addEventListener(eventName, () => audioDropzone.classList.remove('border-blue-500', 'bg-blue-50'));
+            });
+            audioDropzone.addEventListener('drop', (e) => handleAudioFile(e.dataTransfer.files[0]));
+            function handleAudioFile(file) {
+                 if (file && file.type.startsWith('audio/')) {
+                    audioFileToUpload = file;
+                    dropzoneText.textContent = file.name;
+                    if (!audioNameInput.value) {
+                       audioNameInput.value = file.name.split('.').slice(0, -1).join('.');
+                    }
+                } else {
+                    alert('Por favor, selecione um arquivo de áudio válido.');
+                }
+            }
+            addAudioForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const title = audioNameInput.value;
+                const isForwarded = document.getElementById('audio-forwarded-toggle').checked;
+                const isViewOnce = document.getElementById('audio-view-once-toggle').checked;
+                if (title && title.trim() !== '' && audioFileToUpload) {
+                    const newId = audios.length > 0 ? Math.max(...audios.map(a => a.id)) + 1 : 1;
+                    const audioURL = URL.createObjectURL(audioFileToUpload);
+                    audios.push({ id: newId, title, url: audioURL, file: audioFileToUpload, isFavorite: false, forwarded: isForwarded, viewOnce: isViewOnce });
+                    selectedAudioId = newId; isEditingAudio = false;
+                    renderAudios(); displayAudioDetails(newId);
+                    cancelAudioModalBtn.click();
+                } else {
+                    alert('Por favor, preencha o nome e selecione um arquivo de áudio.');
+                }
+            });
+            deleteAudioBtn.addEventListener('click', () => {
+                if (!selectedAudioId) return;
+                if (confirm('Tem certeza que deseja apagar este áudio?')) {
+                    const audio = audios.find(a => a.id === selectedAudioId);
+                    if (audio) URL.revokeObjectURL(audio.url);
+                    audios = audios.filter(a => a.id !== selectedAudioId);
+                    selectedAudioId = null; isEditingAudio = false;
+                    audioDetailsPanel.classList.add('hidden'); audioDetailsPanel.classList.remove('flex');
+                    audioWelcomePanel.classList.remove('hidden');
+                    renderAudios();
+                }
+            });
+            editAudioBtn.addEventListener('click', () => { if (!selectedAudioId) return; isEditingAudio = true; displayAudioDetails(selectedAudioId); });
+            saveAudioBtn.addEventListener('click', () => {
+                if (!selectedAudioId) return;
+                const audio = audios.find(a => a.id === selectedAudioId);
+                if (audio) { audio.title = audioTitleDisplay.value; }
+                isEditingAudio = false;
+                renderAudios(); displayAudioDetails(selectedAudioId);
+            });
+            favoriteAudioBtn.addEventListener('click', () => {
+                if (!selectedAudioId) return;
+                const audio = audios.find(a => a.id === selectedAudioId);
+                if (audio) { audio.isFavorite = !audio.isFavorite; if (!isEditingAudio) { displayAudioDetails(selectedAudioId); renderAudios(); } }
+            });
+            downloadAudioBtn.addEventListener('click', () => {
+                if (!selectedAudioId) return;
+                const audio = audios.find(a => a.id === selectedAudioId);
+                if (audio) {
+                    const a = document.createElement('a');
+                    a.href = audio.url;
+                    a.download = audio.title;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                }
+            });
+            renderAudios();
+
+            // --- LÓGICA DA PÁGINA DE MÍDIAS ---
+            const midiaListContainer = document.getElementById('midia-list');
+            const addMidiaBtn = document.getElementById('add-midia-btn');
+            const midiaWelcomePanel = document.getElementById('midia-welcome-panel');
+            const midiaDetailsPanel = document.getElementById('midia-details-panel');
+            const midiaTitleDisplay = document.getElementById('midia-title-display');
+            const midiaCaptionDisplay = document.getElementById('midia-caption-display');
+            const midiaImagePreview = document.getElementById('midia-image-preview');
+            const midiaVideoPreview = document.getElementById('midia-video-preview');
+            const deleteMidiaBtn = document.getElementById('delete-midia-btn');
+            const editMidiaBtn = document.getElementById('edit-midia-btn');
+            const saveMidiaBtn = document.getElementById('save-midia-btn');
+            const downloadMidiaBtn = document.getElementById('download-midia-btn');
+            const favoriteMidiaBtn = document.getElementById('favorite-midia-btn');
+            const midiaStarOutline = document.getElementById('midia-star-outline');
+            const midiaStarSolid = document.getElementById('midia-star-solid');
+            const addMidiaModal = document.getElementById('add-midia-modal');
+            const addMidiaForm = document.getElementById('add-midia-form');
+            const cancelMidiaModalBtn = document.getElementById('cancel-midia-modal');
+            const midiaNameInput = document.getElementById('midia-name-input');
+            const midiaCaptionInput = document.getElementById('midia-caption-input');
+            const midiaDropzone = document.getElementById('midia-dropzone');
+            const midiaDropzoneFile = document.getElementById('midia-dropzone-file');
+            const midiaDropzoneText = document.getElementById('midia-dropzone-text');
+            let selectedMidiaId = null;
+            let isEditingMidia = false;
+            let midiaFileToUpload = null;
+
+            function renderMidias() {
+                midiaListContainer.innerHTML = '';
+                midias.forEach(midia => {
+                    const isActive = midia.id === selectedMidiaId;
+                    const itemDiv = document.createElement('div');
+                    itemDiv.className = `p-3 rounded-lg mb-2 cursor-pointer flex items-center justify-between ${isActive ? 'border-2 border-zap-secondary bg-zap-card' : 'hover:bg-zap-card'}`;
+                    itemDiv.dataset.id = midia.id;
+                    const titleEl = document.createElement('h4');
+                    titleEl.className = `font-semibold truncate ${isActive ? 'text-white' : 'text-zap-text-secondary'}`;
+                    titleEl.textContent = midia.title;
+                    itemDiv.appendChild(titleEl);
+                    if (midia.isFavorite) {
+                        const starIcon = document.createElement('div');
+                        starIcon.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-yellow-400" viewBox="0 0 20 20" fill="currentColor"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg>`;
+                        itemDiv.appendChild(starIcon);
+                    }
+                    itemDiv.addEventListener('click', () => {
+                        selectedMidiaId = midia.id;
+                        isEditingMidia = false;
+                        displayMidiaDetails(midia.id);
+                        renderMidias();
+                    });
+                    midiaListContainer.appendChild(itemDiv);
+                });
+                updateDashboardCounters();
+            }
+
+            function displayMidiaDetails(id) {
+                const midia = midias.find(m => m.id === id);
+                if (midia) {
+                    midiaWelcomePanel.classList.add('hidden');
+                    midiaDetailsPanel.classList.remove('hidden');
+                    midiaDetailsPanel.classList.add('flex');
+                    midiaTitleDisplay.value = midia.title;
+                    midiaCaptionDisplay.value = midia.caption;
+
+                    midiaImagePreview.classList.add('hidden');
+                    midiaVideoPreview.classList.add('hidden');
+                    if (midia.type.startsWith('image/')) {
+                        midiaImagePreview.src = midia.url;
+                        midiaImagePreview.classList.remove('hidden');
+                    } else if (midia.type.startsWith('video/')) {
+                        midiaVideoPreview.src = midia.url;
+                        midiaVideoPreview.classList.remove('hidden');
+                    }
+                    
+                    if (midia.isFavorite) { midiaStarOutline.classList.add('hidden'); midiaStarSolid.classList.remove('hidden'); }
+                    else { midiaStarOutline.classList.remove('hidden'); midiaStarSolid.classList.add('hidden'); }
+                    
+                    if (isEditingMidia) {
+                        midiaTitleDisplay.readOnly = false;
+                        midiaCaptionDisplay.readOnly = false;
+                        editMidiaBtn.classList.add('hidden');
+                        saveMidiaBtn.classList.remove('hidden');
+                        midiaTitleDisplay.focus();
+                    } else {
+                        midiaTitleDisplay.readOnly = true;
+                        midiaCaptionDisplay.readOnly = true;
+                        editMidiaBtn.classList.remove('hidden');
+                        saveMidiaBtn.classList.add('hidden');
+                    }
+                }
+            }
+            
+            addMidiaBtn.addEventListener('click', () => { addMidiaModal.classList.remove('hidden'); addMidiaModal.classList.add('flex'); });
+            cancelMidiaModalBtn.addEventListener('click', () => { addMidiaModal.classList.add('hidden'); addMidiaModal.classList.remove('flex'); addMidiaForm.reset(); midiaFileToUpload = null; midiaDropzoneText.innerHTML = 'Arraste a mídia ou <span class="text-blue-600 underline">clique aqui</span>';});
+            midiaDropzoneFile.addEventListener('change', (e) => handleMidiaFile(e.target.files[0]));
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                midiaDropzone.addEventListener(eventName, (e) => { e.preventDefault(); e.stopPropagation(); }, false);
+            });
+            ['dragenter', 'dragover'].forEach(eventName => {
+                midiaDropzone.addEventListener(eventName, () => midiaDropzone.classList.add('border-blue-500', 'bg-blue-50'));
+            });
+            ['dragleave', 'drop'].forEach(eventName => {
+                midiaDropzone.addEventListener(eventName, () => midiaDropzone.classList.remove('border-blue-500', 'bg-blue-50'));
+            });
+            midiaDropzone.addEventListener('drop', (e) => handleMidiaFile(e.dataTransfer.files[0]));
+            
+            function handleMidiaFile(file) {
+                 if (file && (file.type.startsWith('image/') || file.type.startsWith('video/'))) {
+                    midiaFileToUpload = file;
+                    midiaDropzoneText.textContent = file.name;
+                    if (!midiaNameInput.value) {
+                       midiaNameInput.value = file.name.split('.').slice(0, -1).join('.');
+                    }
+                } else {
+                    alert('Por favor, selecione um ficheiro de imagem ou vídeo válido.');
+                }
+            }
+            
+            addMidiaForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const title = midiaNameInput.value;
+                const caption = midiaCaptionInput.value;
+                const isViewOnce = document.getElementById('midia-view-once-toggle').checked;
+                if (title && title.trim() !== '' && midiaFileToUpload) {
+                    const newId = midias.length > 0 ? Math.max(...midias.map(m => m.id)) + 1 : 1;
+                    const midiaURL = URL.createObjectURL(midiaFileToUpload);
+                    midias.push({ id: newId, title, caption, url: midiaURL, file: midiaFileToUpload, type: midiaFileToUpload.type, isFavorite: false, viewOnce: isViewOnce });
+                    selectedMidiaId = newId;
+                    isEditingMidia = false;
+                    renderMidias();
+                    displayMidiaDetails(newId);
+                    cancelMidiaModalBtn.click();
+                } else {
+                    alert('Por favor, preencha o nome e selecione um ficheiro de mídia.');
+                }
+            });
+
+            deleteMidiaBtn.addEventListener('click', () => {
+                if (!selectedMidiaId) return;
+                if (confirm('Tem certeza que deseja apagar esta mídia?')) {
+                    const midia = midias.find(m => m.id === selectedMidiaId);
+                    if (midia) URL.revokeObjectURL(midia.url);
+                    midias = midias.filter(m => m.id !== selectedMidiaId);
+                    selectedMidiaId = null;
+                    isEditingMidia = false;
+                    midiaDetailsPanel.classList.add('hidden');
+                    midiaDetailsPanel.classList.remove('flex');
+                    midiaWelcomePanel.classList.remove('hidden');
+                    renderMidias();
+                }
+            });
+            editMidiaBtn.addEventListener('click', () => { if (!selectedMidiaId) return; isEditingMidia = true; displayMidiaDetails(selectedMidiaId); });
+            saveMidiaBtn.addEventListener('click', () => {
+                if (!selectedMidiaId) return;
+                const midia = midias.find(m => m.id === selectedMidiaId);
+                if (midia) {
+                    midia.title = midiaTitleDisplay.value;
+                    midia.caption = midiaCaptionDisplay.value;
+                }
+                isEditingMidia = false;
+                renderMidias();
+                displayMidiaDetails(selectedMidiaId);
+            });
+            favoriteMidiaBtn.addEventListener('click', () => {
+                if (!selectedMidiaId) return;
+                const midia = midias.find(m => m.id === selectedMidiaId);
+                if (midia) { midia.isFavorite = !midia.isFavorite; if (!isEditingMidia) { displayMidiaDetails(selectedMidiaId); renderMidias(); } }
+            });
+            downloadMidiaBtn.addEventListener('click', () => {
+                if (!selectedMidiaId) return;
+                const midia = midias.find(m => m.id === selectedMidiaId);
+                if (midia) {
+                    const a = document.createElement('a');
+                    a.href = midia.url;
+                    a.download = midia.title;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                }
+            });
+            renderMidias();
+            
+             // --- LÓGICA DA PÁGINA DE DOCUMENTOS ---
+            const documentoListContainer = document.getElementById('documento-list');
+            const addDocumentoBtn = document.getElementById('add-documento-btn');
+            const documentoWelcomePanel = document.getElementById('documento-welcome-panel');
+            const documentoDetailsPanel = document.getElementById('documento-details-panel');
+            const documentoTitleDisplay = document.getElementById('documento-title-display');
+            const deleteDocumentoBtn = document.getElementById('delete-documento-btn');
+            const editDocumentoBtn = document.getElementById('edit-documento-btn');
+            const saveDocumentoBtn = document.getElementById('save-documento-btn');
+            const downloadDocumentoBtn = document.getElementById('download-documento-btn');
+            const favoriteDocumentoBtn = document.getElementById('favorite-documento-btn');
+            const documentoStarOutline = document.getElementById('documento-star-outline');
+            const documentoStarSolid = document.getElementById('documento-star-solid');
+            const documentoFileInput = document.getElementById('documento-file-input');
+            const documentoIconPreview = document.getElementById('documento-icon-preview');
+            const documentoPdfPreview = document.getElementById('documento-pdf-preview');
+            const documentoInfo = document.getElementById('documento-info');
+
+            let selectedDocumentoId = null;
+            let isEditingDocumento = false;
+
+            function renderDocumentos() {
+                documentoListContainer.innerHTML = '';
+                documentos.forEach(doc => {
+                    const isActive = doc.id === selectedDocumentoId;
+                    const itemDiv = document.createElement('div');
+                    itemDiv.className = `p-3 rounded-lg mb-2 cursor-pointer flex items-center justify-between ${isActive ? 'border-2 border-zap-secondary bg-zap-card' : 'hover:bg-zap-card'}`;
+                    itemDiv.dataset.id = doc.id;
+                    const titleEl = document.createElement('h4');
+                    titleEl.className = `font-semibold truncate ${isActive ? 'text-white' : 'text-zap-text-secondary'}`;
+                    titleEl.textContent = doc.title;
+                    itemDiv.appendChild(titleEl);
+                    if (doc.isFavorite) {
+                        const starIcon = document.createElement('div');
+                        starIcon.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-yellow-400" viewBox="0 0 20 20" fill="currentColor"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg>`;
+                        itemDiv.appendChild(starIcon);
+                    }
+                    itemDiv.addEventListener('click', () => {
+                        selectedDocumentoId = doc.id;
+                        isEditingDocumento = false;
+                        displayDocumentoDetails(doc.id);
+                        renderDocumentos();
+                    });
+                    documentoListContainer.appendChild(itemDiv);
+                });
+                updateDashboardCounters();
+            }
+
+            function displayDocumentoDetails(id) {
+                const doc = documentos.find(d => d.id === id);
+                if (doc) {
+                    documentoWelcomePanel.classList.add('hidden');
+                    documentoDetailsPanel.classList.remove('hidden');
+                    documentoDetailsPanel.classList.add('flex');
+                    documentoTitleDisplay.value = doc.title;
+                    
+                    documentoIconPreview.classList.add('hidden');
+                    documentoPdfPreview.classList.add('hidden');
+
+                    if (doc.type === 'application/pdf') {
+                        documentoPdfPreview.src = doc.url;
+                        documentoPdfPreview.classList.remove('hidden');
+                    } else {
+                        documentoInfo.textContent = `Tipo: ${doc.type}, Tamanho: ${(doc.size / 1024).toFixed(2)} KB`;
+                        documentoIconPreview.classList.remove('hidden');
+                        documentoIconPreview.classList.add('flex');
+                    }
+                    
+                    if (doc.isFavorite) { documentoStarOutline.classList.add('hidden'); documentoStarSolid.classList.remove('hidden'); }
+                    else { documentoStarOutline.classList.remove('hidden'); documentoStarSolid.classList.add('hidden'); }
+                    
+                    if (isEditingDocumento) {
+                        documentoTitleDisplay.readOnly = false;
+                        editDocumentoBtn.classList.add('hidden');
+                        saveDocumentoBtn.classList.remove('hidden');
+                        documentoTitleDisplay.focus();
+                    } else {
+                        documentoTitleDisplay.readOnly = true;
+                        editDocumentoBtn.classList.remove('hidden');
+                        saveDocumentoBtn.classList.add('hidden');
+                    }
+                }
+            }
+
+            addDocumentoBtn.addEventListener('click', () => documentoFileInput.click());
+
+            documentoFileInput.addEventListener('change', (event) => {
+                const file = event.target.files[0];
+                if (file) {
+                    const title = prompt('Digite um nome para este documento:', file.name);
+                    if (title && title.trim() !== '') {
+                        const newId = documentos.length > 0 ? Math.max(...documentos.map(d => d.id)) + 1 : 1;
+                        const docURL = URL.createObjectURL(file);
+                        documentos.push({ id: newId, title, url: docURL, file: file, type: file.type, size: file.size, isFavorite: false });
+                        selectedDocumentoId = newId;
+                        isEditingDocumento = false;
+                        renderDocumentos();
+                        displayDocumentoDetails(newId);
+                    }
+                }
+                documentoFileInput.value = '';
+            });
+
+            deleteDocumentoBtn.addEventListener('click', () => {
+                if (!selectedDocumentoId) return;
+                if (confirm('Tem certeza que deseja apagar este documento?')) {
+                    const doc = documentos.find(d => d.id === selectedDocumentoId);
+                    if (doc) URL.revokeObjectURL(doc.url);
+                    documentos = documentos.filter(d => d.id !== selectedDocumentoId);
+                    selectedDocumentoId = null; isEditingDocumento = false;
+                    documentoDetailsPanel.classList.add('hidden'); documentoDetailsPanel.classList.remove('flex');
+                    documentoWelcomePanel.classList.remove('hidden');
+                    renderDocumentos();
+                }
+            });
+            editDocumentoBtn.addEventListener('click', () => { if (!selectedDocumentoId) return; isEditingDocumento = true; displayDocumentoDetails(selectedDocumentoId); });
+            saveDocumentoBtn.addEventListener('click', () => {
+                if (!selectedDocumentoId) return;
+                const doc = documentos.find(d => d.id === selectedDocumentoId);
+                if (doc) { doc.title = documentoTitleDisplay.value; }
+                isEditingDocumento = false;
+                renderDocumentos();
+                displayDocumentoDetails(selectedDocumentoId);
+            });
+            favoriteDocumentoBtn.addEventListener('click', () => {
+                if (!selectedDocumentoId) return;
+                const doc = documentos.find(d => d.id === selectedDocumentoId);
+                if (doc) { doc.isFavorite = !doc.isFavorite; if (!isEditingDocumento) { displayDocumentoDetails(selectedDocumentoId); renderDocumentos(); } }
+            });
+            downloadDocumentoBtn.addEventListener('click', () => {
+                if (!selectedDocumentoId) return;
+                const doc = documentos.find(d => d.id === selectedDocumentoId);
+                if (doc) {
+                    const a = document.createElement('a');
+                    a.href = doc.url;
+                    a.download = doc.title;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                }
+            });
+            renderDocumentos();
+            
+            // --- LÓGICA DA PÁGINA DE FUNIS ---
+            const funilListContainer = document.getElementById('funil-list');
+            const addFunilBtn = document.getElementById('add-funil-btn');
+            const funilWelcomePanel = document.getElementById('funil-welcome-panel');
+            const funilDetailsPanel = document.getElementById('funil-details-panel');
+            const funilTitleDisplay = document.getElementById('funil-title-display');
+            const addFunilItemBtn = document.getElementById('add-funil-item-btn');
+            const funilItemListContainer = document.getElementById('funil-item-list');
+            const deleteFunilBtn = document.getElementById('delete-funil-btn');
+            const duplicateFunilBtn = document.getElementById('duplicate-funil-btn');
+            const saveFunilBtn = document.getElementById('save-funil-btn');
+            const editFunilBtn = document.getElementById('edit-funil-btn');
+            const favoriteFunilBtn = document.getElementById('favorite-funil-btn');
+            const funilStarOutline = document.getElementById('funil-star-outline');
+            const funilStarSolid = document.getElementById('funil-star-solid');
+
+            const addFunilItemModal = document.getElementById('add-funil-item-modal');
+            const addFunilItemForm = document.getElementById('add-funil-item-form');
+            const cancelFunilItemModalBtn = document.getElementById('cancel-funil-item-modal');
+            const funilItemTabs = document.getElementById('funil-item-tabs');
+            const funilItemSelect = document.getElementById('funil-item-select');
+            
+            let selectedFunilId = null;
+            let isEditingFunil = false;
+            let currentFunilItemType = 'mensagem';
+
+            function renderFunis() {
+                funilListContainer.innerHTML = '';
+                funis.forEach(funil => {
+                    const isActive = funil.id === selectedFunilId;
+                    const itemDiv = document.createElement('div');
+                    itemDiv.className = `p-3 rounded-lg mb-2 cursor-pointer flex items-center justify-between ${isActive ? 'border-2 border-zap-secondary bg-zap-card' : 'hover:bg-zap-card'}`;
+                    itemDiv.dataset.id = funil.id;
+                    const titleEl = document.createElement('h4');
+                    titleEl.className = `font-semibold truncate ${isActive ? 'text-white' : 'text-zap-text-secondary'}`;
+                    titleEl.textContent = funil.title;
+                    itemDiv.appendChild(titleEl);
+                    if (funil.isFavorite) {
+                        const starIcon = document.createElement('div');
+                        starIcon.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-yellow-400" viewBox="0 0 20 20" fill="currentColor"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg>`;
+                        itemDiv.appendChild(starIcon);
+                    }
+                    itemDiv.addEventListener('click', () => {
+                        selectedFunilId = funil.id;
+                        isEditingFunil = false;
+                        displayFunilDetails(funil.id);
+                        renderFunis();
+                    });
+                    funilListContainer.appendChild(itemDiv);
+                });
+                updateDashboardCounters();
+            }
+
+            function displayFunilDetails(id) {
+                const funil = funis.find(f => f.id === id);
+                if (funil) {
+                    funilWelcomePanel.classList.add('hidden');
+                    funilDetailsPanel.classList.remove('hidden');
+                    funilDetailsPanel.classList.add('flex');
+                    funilTitleDisplay.value = funil.title;
+
+                    if (funil.isFavorite) { funilStarOutline.classList.add('hidden'); funilStarSolid.classList.remove('hidden'); }
+                    else { funilStarOutline.classList.remove('hidden'); funilStarSolid.classList.add('hidden'); }
+
+                     if (isEditingFunil) {
+                        funilTitleDisplay.readOnly = false;
+                        editFunilBtn.classList.add('hidden');
+                        saveFunilBtn.classList.remove('hidden');
+                        funilTitleDisplay.focus();
+                    } else {
+                        funilTitleDisplay.readOnly = true;
+                        editFunilBtn.classList.remove('hidden');
+                        saveFunilBtn.classList.add('hidden');
+                    }
+
+                    renderFunilItems(funil.items);
+                }
+            }
+
+            function renderFunilItems(items) {
+                funilItemListContainer.innerHTML = '';
+                if (items.length === 0) {
+                    funilItemListContainer.innerHTML = '<div class="text-center text-zap-text-secondary"><svg class="mx-auto h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg><p class="mt-2">Nenhum item adicionado</p></div>';
+                    return;
+                }
+                items.forEach((item, index) => {
+                    const itemDiv = document.createElement('div');
+                    itemDiv.className = 'bg-zap-sidebar p-3 rounded-lg mb-2 flex justify-between items-center';
+                    let itemDetails = '';
+                    let itemIcon = '';
+                    let sourceArray;
+
+                    switch (item.type) {
+                        case 'mensagem': sourceArray = messages; itemIcon = `<svg class="h-5 w-5 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>`; break;
+                        case 'audio': sourceArray = audios; itemIcon = `<svg class="h-5 w-5 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>`; break;
+                        case 'midia': sourceArray = midias; itemIcon = `<svg class="h-5 w-5 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>`; break;
+                        case 'documento': sourceArray = documentos; itemIcon = `<svg class="h-5 w-5 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>`; break;
+                    }
+                    
+                    const foundItem = sourceArray.find(i => i.id === item.itemId);
+                    itemDetails = foundItem ? foundItem.title : 'Item não encontrado';
+
+                    itemDiv.innerHTML = `
+                        <div class="flex items-center">
+                            ${itemIcon}
+                            <div>
+                                <p class="font-semibold text-white">${itemDetails}</p>
+                                <p class="text-xs text-zap-text-secondary">Aguardar: ${item.delayMinutes}m ${item.delaySeconds}s</p>
+                            </div>
+                        </div>
+                        <button class="text-red-400 hover:text-red-600" data-index="${index}">&times;</button>
+                    `;
+                    funilItemListContainer.appendChild(itemDiv);
+                });
+            }
+
+            addFunilBtn.addEventListener('click', () => {
+                const title = prompt('Digite o nome do novo funil:');
+                if (title && title.trim() !== '') {
+                    const newId = funis.length > 0 ? Math.max(...funis.map(f => f.id)) + 1 : 1;
+                    funis.push({ id: newId, title, items: [], isFavorite: false });
+                    selectedFunilId = newId;
+                    renderFunis();
+                    displayFunilDetails(newId);
+                }
+            });
+            
+            addFunilItemBtn.addEventListener('click', () => {
+                if (!selectedFunilId) return;
+                populateFunilItemSelect();
+                addFunilItemModal.classList.remove('hidden');
+                addFunilItemModal.classList.add('flex');
+            });
+
+            cancelFunilItemModalBtn.addEventListener('click', () => {
+                addFunilItemModal.classList.add('hidden');
+                addFunilItemModal.classList.remove('flex');
+            });
+
+            funilItemTabs.addEventListener('click', (e) => {
+                if (e.target.matches('.funil-item-tab')) {
+                    document.querySelectorAll('.funil-item-tab').forEach(tab => {
+                        tab.classList.remove('border-zap-secondary', 'text-zap-secondary');
+                        tab.classList.add('border-transparent', 'text-gray-500');
+                    });
+                    e.target.classList.add('border-zap-secondary', 'text-zap-secondary');
+                    e.target.classList.remove('border-transparent', 'text-gray-500');
+                    currentFunilItemType = e.target.dataset.type;
+                    populateFunilItemSelect();
+                }
+            });
+
+            function populateFunilItemSelect() {
+                funilItemSelect.innerHTML = '';
+                let sourceArray;
+                switch (currentFunilItemType) {
+                    case 'mensagem': sourceArray = messages; break;
+                    case 'audio': sourceArray = audios; break;
+                    case 'midia': sourceArray = midias; break;
+                    case 'documento': sourceArray = documentos; break;
+                }
+                if (sourceArray.length === 0) {
+                    const option = document.createElement('option');
+                    option.textContent = 'Nenhum item deste tipo cadastrado';
+                    option.disabled = true;
+                    funilItemSelect.appendChild(option);
+                    return;
+                }
+                sourceArray.forEach(item => {
+                    const option = document.createElement('option');
+                    option.value = item.id;
+                    option.textContent = item.title;
+                    funilItemSelect.appendChild(option);
+                });
+            }
+
+            addFunilItemForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const funil = funis.find(f => f.id === selectedFunilId);
+                if (funil && funilItemSelect.value) {
+                    const newItem = {
+                        itemId: parseInt(funilItemSelect.value),
+                        type: currentFunilItemType,
+                        delayMinutes: parseInt(document.getElementById('funil-delay-minutes').value) || 0,
+                        delaySeconds: parseInt(document.getElementById('funil-delay-seconds').value) || 0
+                    };
+                    funil.items.push(newItem);
+                    renderFunilItems(funil.items);
+                    cancelFunilItemModalBtn.click();
+                } else if (!funilItemSelect.value) {
+                    alert('Nenhum item para adicionar. Crie um item primeiro na seção correspondente.')
+                }
+            });
+            
+            funilItemListContainer.addEventListener('click', (e) => {
+                if (e.target.matches('button')) {
+                    const index = parseInt(e.target.dataset.index);
+                    const funil = funis.find(f => f.id === selectedFunilId);
+                    if (funil) {
+                        funil.items.splice(index, 1);
+                        renderFunilItems(funil.items);
+                    }
+                }
+            });
+            
+            deleteFunilBtn.addEventListener('click', () => {
+                if (!selectedFunilId) return;
+                if (confirm('Tem certeza que deseja apagar este funil?')) {
+                    funis = funis.filter(f => f.id !== selectedFunilId);
+                    selectedFunilId = null; isEditingFunil = false;
+                    funilDetailsPanel.classList.add('hidden'); funilDetailsPanel.classList.remove('flex');
+                    funilWelcomePanel.classList.remove('hidden');
+                    renderFunis();
+                }
+            });
+            
+            duplicateFunilBtn.addEventListener('click', () => {
+                 if (!selectedFunilId) return;
+                 const funilToCopy = funis.find(f => f.id === selectedFunilId);
+                 if(funilToCopy) {
+                    const newId = funis.length > 0 ? Math.max(...funis.map(f => f.id)) + 1 : 1;
+                    const newFunil = JSON.parse(JSON.stringify(funilToCopy)); // Deep copy
+                    newFunil.id = newId;
+                    newFunil.title = `${newFunil.title} (Cópia)`;
+                    newFunil.isFavorite = false;
+                    funis.push(newFunil);
+                    renderFunis();
+                 }
+            });
+
+            editFunilBtn.addEventListener('click', () => { if (!selectedFunilId) return; isEditingFunil = true; displayFunilDetails(selectedFunilId); });
+            
+            saveFunilBtn.addEventListener('click', () => {
+                if (!selectedFunilId) return;
+                const funil = funis.find(f => f.id === selectedFunilId);
+                if (funil) { funil.title = funilTitleDisplay.value; }
+                isEditingFunil = false;
+                renderFunis();
+                displayFunilDetails(selectedFunilId);
+            });
+            
+            favoriteFunilBtn.addEventListener('click', () => {
+                if (!selectedFunilId) return;
+                const funil = funis.find(f => f.id === selectedFunilId);
+                if (funil) { funil.isFavorite = !funil.isFavorite; if (!isEditingFunil) { displayFunilDetails(selectedFunilId); renderFunis(); } }
+            });
+
+            renderFunis();
+
+
+            // --- INICIALIZAÇÃO GERAL ---
+            updateDashboardCounters(); // Chama uma vez no início para popular os contadores
+
+
+            // --- LÓGICA DO KANBAN (FUNCIONAL) ---
+            const kanbanBoard = document.getElementById('kanban-board');
+            const addKanbanColumnBtn = document.getElementById('add-kanban-column-btn');
+            const addLeadBtn = document.getElementById('add-lead-btn');
+            const addLeadModal = document.getElementById('add-lead-modal');
+            const addLeadForm = document.getElementById('add-lead-form');
+            const cancelLeadModalBtn = document.getElementById('cancel-lead-modal-btn');
+            let selectedKanbanColumnId = null;
+
+            function renderKanban() {
+                if (!kanbanBoard) return;
+                kanbanBoard.innerHTML = '';
+                kanbanData.forEach((column, colIndex) => {
+                    const colDiv = document.createElement('div');
+                    colDiv.className = 'bg-zap-sidebar rounded-lg p-4 w-72 flex-shrink-0 flex flex-col';
+                    colDiv.innerHTML = `
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-lg font-bold text-white">${column.title}</h3>
+                            <div class="flex items-center space-x-2">
+                                <button class="text-xs text-zap-text-secondary mr-2 edit-col" data-colid="${column.id}">Editar</button>
+                                <button class="text-red-400 hover:text-red-600 remove-col" data-colid="${column.id}" title="Remover coluna">&times;</button>
+                            </div>
+                        </div>
+                    `;
+                    const itemsDiv = document.createElement('div');
+                    itemsDiv.className = 'flex-grow min-h-[40px]';
+
+                    column.items.forEach(item => {
+                        const card = document.createElement('div');
+                        card.className = 'kanban-card bg-zap-card rounded-md p-3 mb-2 text-white';
+                        card.dataset.leadId = item.id;
+                        card.innerHTML = `
+                            <div class="font-semibold">${item.name}</div>
+                            <div class="text-xs text-zap-text-secondary">${item.phone} ${item.product ? ' | ' + item.product : ''} ${item.value ? ' | R$ ' + item.value : ''}</div>
+                            <div class="text-xs text-zap-text-secondary">${item.lastMessage || ''}</div>
+                            <div class="mt-2 flex justify-end"><button class="text-xs text-red-400 remove-lead" data-leadid="${item.id}" data-colid="${column.id}">Remover</button></div>
+                        `;
+                        itemsDiv.appendChild(card);
+                    });
+
+                    colDiv.appendChild(itemsDiv);
+                    kanbanBoard.appendChild(colDiv);
+
+                    // Inicializa Sortable na coluna
+                    Sortable.create(itemsDiv, {
+                        group: 'kanban',
+                        animation: 150,
+                        onEnd: function (evt) {
+                            try {
+                                const fromColEl = evt.from.closest('div[wip]') || evt.from.parentElement; // fallback
+                                // Atualiza os dados em memória
+                                const oldColIndex = Array.from(kanbanBoard.children).indexOf(evt.from.parentElement || evt.from.closest('.flex'));
+                                const newColIndex = Array.from(kanbanBoard.children).indexOf(evt.to.parentElement || evt.to.closest('.flex'));
+                                // If indexes can't be computed fallback to evt.from/evt.to containers by searching titles
+                                const moved = kanbanData[oldColIndex] && kanbanData[oldColIndex].items.splice(evt.oldIndex, 1)[0];
+                                if (moved) {
+                                    kanbanData[newColIndex].items.splice(evt.newIndex, 0, moved);
+                                }
+                                renderKanban();
+                            } catch (err) {
+                                console.error('Erro ao mover card:', err);
+                            }
+                        }
+                    });
+                });
+                updateDashboardCounters();
+            }
+
+            // Event listeners para ações do Kanban (delegation)
+            if (kanbanBoard) {
+                kanbanBoard.addEventListener('click', (e) => {
+                    // Remover coluna
+                    if (e.target.matches('.remove-col')) {
+                        const colId = parseInt(e.target.dataset.colid);
+                        if (confirm('Remover esta coluna?')) {
+                            kanbanData = kanbanData.filter(c => c.id !== colId);
+                            renderKanban();
+                        }
+                    }
+                    // Editar coluna
+                    if (e.target.matches('.edit-col')) {
+                        const colId = parseInt(e.target.dataset.colid);
+                        const col = kanbanData.find(c => c.id === colId);
+                        if (col) {
+                            const newTitle = prompt('Nome da coluna:', col.title);
+                            if (newTitle && newTitle.trim() !== '') { col.title = newTitle; renderKanban(); }
+                        }
+                    }
+                    // Remover lead
+                    if (e.target.matches('.remove-lead')) {
+                        const leadId = parseInt(e.target.dataset.leadid);
+                        const colId = parseInt(e.target.dataset.colid);
+                        const col = kanbanData.find(c => c.id === colId);
+                        if (col) { col.items = col.items.filter(l => l.id !== leadId); renderKanban(); }
+                    }
+                });
+            }
+
+            if (addKanbanColumnBtn) {
+                addKanbanColumnBtn.addEventListener('click', () => {
+                    const title = prompt('Nome da nova coluna do Kanban:');
+                    if (title && title.trim() !== '') {
+                        const newId = kanbanData.length > 0 ? Math.max(...kanbanData.map(c => c.id)) + 1 : 1;
+                        kanbanData.push({ id: newId, title, items: [] });
+                        renderKanban();
+                    }
+                });
+            }
+
+            if (addLeadBtn) {
+                addLeadBtn.addEventListener('click', () => {
+                    addLeadModal.classList.remove('hidden');
+                    addLeadModal.classList.add('flex');
+                });
+            }
+
+            if (cancelLeadModalBtn) {
+                cancelLeadModalBtn.addEventListener('click', () => {
+                    addLeadModal.classList.add('hidden');
+                    addLeadModal.classList.remove('flex');
+                    addLeadForm.reset();
+                });
+            }
+
+            if (addLeadForm) {
+                addLeadForm.addEventListener('submit', (e) => {
+                    e.preventDefault();
+                    const name = document.getElementById('lead-name-input').value;
+                    const phone = document.getElementById('lead-phone-input').value;
+                    const email = document.getElementById('lead-email-input').value;
+                    const product = document.getElementById('lead-product-input').value;
+                    const value = parseFloat(document.getElementById('lead-value-input').value) || 0;
+                    if (name && phone) {
+                        const newLead = { id: Date.now(), name, phone, email, product, value, lastMessage: '' };
+                        // Adiciona na primeira coluna por padrão
+                        if (kanbanData.length === 0) { kanbanData.push({ id: 1, title: 'Novos Leads', items: [] }); }
+                        kanbanData[0].items.push(newLead);
+                        renderKanban();
+                        cancelLeadModalBtn.click();
+                    } else {
+                        alert('Preencha os campos obrigatórios (nome e telefone).');
+                    }
+                });
+            }
+
+            renderKanban();
+
+            // --- LÓGICA DO MÓDULO GATILHOS (FUNCIONAL) ---
+            const pageGatilhos = document.getElementById('page-gatilhos');
+            // cria painel interno se estiver vazio
+            if (pageGatilhos && pageGatilhos.innerHTML.trim() === '<h2 class="text-3xl font-bold text-white mb-6">Gatilhos</h2>') {
+                pageGatilhos.innerHTML = `
+                    <h2 class="text-3xl font-bold text-white mb-6">Gatilhos</h2>
+                    <div class="bg-zap-sidebar rounded-lg p-6">
+                        <p class="text-zap-text-secondary mb-4">Cadastre gatilhos automáticos para suas ações.</p>
+                        <div class="flex space-x-2 mb-4">
+                            <input id="gatilho-name-input" type="text" placeholder="Nome do gatilho" class="w-full bg-zap-card rounded-md px-3 py-2 text-white placeholder-zap-text-secondary border-transparent focus:border-zap-secondary focus:ring-0">
+                            <button id="add-gatilho-btn" class="bg-zap-secondary text-white p-2 rounded-md hover:bg-purple-500">Adicionar</button>
+                        </div>
+                        <div id="gatilho-list" class="space-y-2"></div>
+                    </div>
+                `;
+            }
+
+            let gatilhos = [];
+            const addGatilhoBtn = document.getElementById('add-gatilho-btn');
+            const gatilhoList = document.getElementById('gatilho-list');
+            const gatilhoNameInput = document.getElementById('gatilho-name-input');
+
+            function renderGatilhos() {
+                if (!gatilhoList) return;
+                gatilhoList.innerHTML = '';
+                if (gatilhos.length === 0) {
+                    gatilhoList.innerHTML = '<p class="text-zap-text-secondary">Nenhum gatilho cadastrado.</p>';
+                    return;
+                }
+                gatilhos.forEach(g => {
+                    const row = document.createElement('div');
+                    row.className = 'bg-zap-card p-3 rounded-md flex justify-between items-center text-white';
+                    row.innerHTML = `<div class="truncate">${g.nome}</div><div class="flex items-center space-x-2"><button class="text-xs text-zap-text-secondary edit-gatilho" data-id="${g.id}">Editar</button><button class="text-red-400 remove-gatilho" data-id="${g.id}">&times;</button></div>`;
+                    gatilhoList.appendChild(row);
+                });
+                // Atualiza contador no dashboard
+                const dash = document.getElementById('dashboard-gatilhos-count');
+                if (dash) dash.textContent = gatilhos.length;
+            }
+
+            if (addGatilhoBtn) {
+                addGatilhoBtn.addEventListener('click', () => {
+                    const nome = gatilhoNameInput.value;
+                    if (nome && nome.trim() !== '') {
+                        gatilhos.push({ id: Date.now(), nome });
+                        gatilhoNameInput.value = '';
+                        renderGatilhos();
+                    } else {
+                        alert('Digite um nome para o gatilho.');
+                    }
+                });
+            }
+
+            if (gatilhoList) {
+                gatilhoList.addEventListener('click', (e) => {
+                    if (e.target.matches('.remove-gatilho')) {
+                        const id = parseInt(e.target.dataset.id);
+                        if (confirm('Remover gatilho?')) {
+                            gatilhos = gatilhos.filter(g => g.id !== id);
+                            renderGatilhos();
+                        }
+                    }
+                    if (e.target.matches('.edit-gatilho')) {
+                        const id = parseInt(e.target.dataset.id);
+                        const gat = gatilhos.find(g => g.id === id);
+                        if (gat) {
+                            const novo = prompt('Nome do gatilho:', gat.nome);
+                            if (novo && novo.trim() !== '') { gat.nome = novo; renderGatilhos(); }
+                        }
+                    }
+                });
+            }
+
+            renderGatilhos();
+
+        });
+    </script>
+
+</body>
+</html>

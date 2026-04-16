@@ -1,0 +1,8 @@
+# Local config files (do not commit)
+/config.js
+/extension/config.js
+node_modules/
+*.log
+backend/*.db
+backend/*.sqlite
+.env

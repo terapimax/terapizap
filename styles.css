@@ -1,0 +1,352 @@
+/* Definindo a fonte principal do projeto */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+body {
+    font-family: 'Inter', sans-serif;
+}
+
+/* Scrollbar Customizada */
+::-webkit-scrollbar {
+    width: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+/* Glassmorphism Classes */
+.glass {
+    background: rgba(30, 41, 59, 0.7);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.glass-card {
+    background: rgba(51, 65, 85, 0.5);
+    /* zap-card opacity */
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+/* Animations */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.animate-fade-in {
+    animation: fadeIn 0.5s ease-out forwards;
+}
+
+.animate-slide-up {
+    animation: slideUp 0.3s ease-out forwards;
+}
+
+/* Kanban Styles */
+.kanban-card {
+    cursor: grab;
+}
+
+.kanban-card:active {
+    cursor: grabbing;
+}
+
+.sortable-ghost {
+    opacity: 0.4;
+    background: #4A4B68;
+}
+
+/* Chart Styles */
+.chart-bar {
+    transition: height 0.3s ease-in-out;
+}
+
+/* Toggle Checkbox */
+.toggle-checkbox:checked~.dot {
+    transform: translateX(100%);
+    background-color: #8b5cf6;
+}
+
+.toggle-checkbox:checked~div:first-of-type {
+    background-color: #334155;
+}
+
+.toggle-checkbox:checked {
+    right: 0;
+    border-color: #8b5cf6;
+}
+
+/* SweetAlert2 Custom Toast */
+.colored-toast.swal2-icon-success {
+    background-color: #10b981 !important;
+}
+
+.colored-toast.swal2-icon-error {
+    background-color: #ef4444 !important;
+}
+
+.colored-toast.swal2-icon-warning {
+    background-color: #f59e0b !important;
+}
+
+.colored-toast.swal2-icon-info {
+    background-color: #3b82f6 !important;
+}
+
+.colored-toast.swal2-icon-question {
+    background-color: #87898c !important;
+}
+
+.colored-toast .swal2-title {
+    color: white;
+}
+
+.colored-toast .swal2-close {
+    color: white;
+}
+
+.colored-toast .swal2-html-container {
+    color: white;
+}
+
+/* Custom Scrollbar for Containers */
+.custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+    width: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+    background-color: rgba(255, 255, 255, 0.1);
+    border-radius: 20px;
+}
+
+/* ApexCharts Dark Theme Overrides */
+.apexcharts-toolbar {
+    z-index: 10;
+}
+
+.apexcharts-menu {
+    background: #1e293b !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    border-radius: 12px !important;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5) !important;
+    padding: 8px !important;
+    min-width: 140px !important;
+}
+
+.apexcharts-menu-item {
+    color: #e2e8f0 !important;
+    padding: 10px 16px !important;
+    border-radius: 8px !important;
+    transition: all 0.2s ease !important;
+    font-size: 13px !important;
+}
+
+.apexcharts-menu-item:hover {
+    background: rgba(139, 92, 246, 0.2) !important;
+    color: #a78bfa !important;
+}
+
+.apexcharts-toolbar-custom-icon,
+.apexcharts-zoom-icon,
+.apexcharts-zoomin-icon,
+.apexcharts-zoomout-icon,
+.apexcharts-reset-icon,
+.apexcharts-pan-icon,
+.apexcharts-selection-icon,
+.apexcharts-menu-icon,
+.apexcharts-download-icon {
+    color: #94a3b8 !important;
+}
+
+.apexcharts-toolbar svg {
+    fill: #94a3b8 !important;
+}
+
+.apexcharts-toolbar svg:hover {
+    fill: #a78bfa !important;
+}
+
+/* Select dropdown styling for dark theme */
+select option {
+    background: #1e293b;
+    color: #e2e8f0;
+    padding: 10px;
+}
+
+/* Scrollbar that only shows on hover */
+.hover-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+    transition: scrollbar-color 0.3s ease;
+}
+
+.hover-scrollbar:hover {
+    scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+}
+
+.hover-scrollbar::-webkit-scrollbar {
+    width: 6px;
+}
+
+.hover-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.hover-scrollbar::-webkit-scrollbar-thumb {
+    background-color: transparent;
+    border-radius: 20px;
+    transition: background-color 0.3s ease;
+}
+
+.hover-scrollbar:hover::-webkit-scrollbar-thumb {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+/* Premium Modal Animations */
+@keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in-up {
+    animation: fadeInUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.text-shadow-sm {
+    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+}
+
+
+
+
+/* ============================================================
+   MOBILE RESPONSIVENESS (ZAPFLOW SAAS DASHBOARD)
+   ============================================================ */
+
+/* Mobile Variables and Overlay classes */
+body {
+    overflow-x: hidden;
+}
+
+@media (max-width: 768px) {
+    /* 1. Sidebar Collapse */
+    #sidebar {
+        position: fixed;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        transform: translateX(-100%);
+        transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        z-index: 50;
+        box-shadow: 10px 0 30px rgba(0,0,0,0.5);
+    }
+
+    #sidebar.sidebar-open {
+        transform: translateX(0);
+    }
+
+    /* Dimmer Overlay for Sidebar */
+    .mobile-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.6);
+        backdrop-filter: blur(4px);
+        z-index: 40;
+    }
+    
+    .mobile-overlay.active {
+        display: block;
+    }
+
+    /* Add a hamburger toggle to the main content header */
+    #main-app-container header {
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
+    }
+
+    /* 2. Dashboard Grids */
+    .grid-cols-4, .grid-cols-3, .grid-cols-2 {
+        grid-template-columns: 1fr !important;
+        gap: 1rem !important;
+    }
+
+    /* 3. Kanban Horizontal Scroll */
+    #kanban-board {
+        display: flex !important;
+        flex-direction: row !important;
+        overflow-x: auto !important;
+        overflow-y: hidden !important;
+        scroll-snap-type: x mandatory;
+        padding-bottom: 20px;
+        -webkit-overflow-scrolling: touch;
+        gap: 16px;
+    }
+
+    .kanban-col {
+        min-width: 85vw !important;
+        scroll-snap-align: center;
+        flex-shrink: 0;
+    }
+
+    /* 4. Auth Screen Mobile */
+    #auth-form-container {
+        width: 90% !important;
+        padding: 2rem !important;
+    }
+
+    /* 5. Modals */
+    .max-w-5xl, .max-w-4xl, .max-w-3xl, .max-w-2xl {
+        width: 95vw !important;
+        max-width: none !important;
+        height: auto !important;
+        max-height: 95vh !important;
+    }
+    
+    #lead-details-modal > div {
+        height: 95vh !important;
+    }
+
+    /* 6. Typography */
+    .text-4xl { font-size: 2rem !important; }
+    .text-3xl { font-size: 1.5rem !important; }
+}
