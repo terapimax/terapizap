@@ -1,0 +1,267 @@
+@import "tailwindcss";
+
+/* ============================================================
+   ZAPFLOW DESIGN SYSTEM v2 — base neutra, preto para ações, rosa ZapFlow para marca.
+   Tema: claro por padrão, escuro pelo sistema ou pela classe .dark no <html>
+   (a classe .light força claro mesmo com o sistema escuro).
+   ============================================================ */
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --bg: #ffffff;
+  --surface: #f5f5f6;
+  --card: #ffffff;
+  --line: #e4e4e7;
+  --fg: #111113;
+  --muted: #5d5d66;
+  --primary: #111113;
+  --on-primary: #ffffff;
+  --accent: #d1236f;
+  --accent-fg: #b3175b;
+  --accent-soft: #fce7f0;
+  --ok: #0e7a4f;
+  --ok-soft: #e3f5ec;
+  --warn: #9a5b00;
+  --warn-soft: #fff1d6;
+  --hot: #b42318;
+  --hot-soft: #fde8e7;
+  --cold: #1d4ed8;
+  --cold-soft: #e6edfd;
+  --scrim: rgba(17, 17, 19, 0.32);
+  --elev: 0 12px 40px rgba(17, 17, 19, 0.14);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --bg: #0b0b0d;
+    --surface: #151518;
+    --card: #18181c;
+    --line: #2a2a30;
+    --fg: #f4f4f6;
+    --muted: #a3a3ad;
+    --primary: #f4f4f6;
+    --on-primary: #0b0b0d;
+    --accent: #e8478f;
+    --accent-fg: #f472b6;
+    --accent-soft: #3a1527;
+    --ok: #4ade80;
+    --ok-soft: #11291c;
+    --warn: #fbbf24;
+    --warn-soft: #2e2208;
+    --hot: #f87171;
+    --hot-soft: #2d1414;
+    --cold: #93b4ff;
+    --cold-soft: #14203d;
+    --scrim: rgba(0, 0, 0, 0.55);
+    --elev: 0 12px 40px rgba(0, 0, 0, 0.5);
+    color-scheme: dark;
+  }
+}
+
+:root.dark {
+  --bg: #0b0b0d;
+  --surface: #151518;
+  --card: #18181c;
+  --line: #2a2a30;
+  --fg: #f4f4f6;
+  --muted: #a3a3ad;
+  --primary: #f4f4f6;
+  --on-primary: #0b0b0d;
+  --accent: #e8478f;
+  --accent-fg: #f472b6;
+  --accent-soft: #3a1527;
+  --ok: #4ade80;
+  --ok-soft: #11291c;
+  --warn: #fbbf24;
+  --warn-soft: #2e2208;
+  --hot: #f87171;
+  --hot-soft: #2d1414;
+  --cold: #93b4ff;
+  --cold-soft: #14203d;
+  --scrim: rgba(0, 0, 0, 0.55);
+  --elev: 0 12px 40px rgba(0, 0, 0, 0.5);
+  color-scheme: dark;
+}
+
+@theme inline {
+  /* Tokens semânticos (use estes em código novo) */
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-card: var(--card);
+  --color-line: var(--line);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-primary: var(--primary);
+  --color-on-primary: var(--on-primary);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-hot: var(--hot);
+  --color-hot-soft: var(--hot-soft);
+  --color-cold: var(--cold);
+  --color-cold-soft: var(--cold-soft);
+  --color-scrim: var(--scrim);
+  --shadow-elev: var(--elev);
+
+  /* Cores antigas mapeadas para o tema novo (telas ainda não redesenhadas) */
+  --color-zap-primary: var(--accent);
+  --color-zap-primary-hover: var(--accent-fg);
+  --color-zap-secondary: var(--accent);
+  --color-zap-accent: var(--cold);
+  --color-zap-dark: var(--bg);
+  --color-zap-darker: var(--bg);
+  --color-zap-sidebar: var(--surface);
+  --color-zap-card: var(--card);
+  --color-zap-card-hover: var(--surface);
+  --color-zap-text: var(--fg);
+  --color-zap-text-secondary: var(--muted);
+  --color-zap-text-muted: var(--muted);
+  --color-zap-success: var(--ok);
+  --color-zap-warning: var(--warn);
+  --color-zap-danger: var(--hot);
+  --color-zap-info: var(--cold);
+  --color-temp-hot: var(--hot);
+  --color-temp-warm: var(--warn);
+  --color-temp-cold: var(--cold);
+
+  /* Fontes */
+  --font-sans: var(--font-inter), system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: var(--font-inter-tight), var(--font-inter), system-ui, sans-serif;
+
+  /* Animações */
+  --animate-fade-in: fade-in 0.2s ease-out both;
+  --animate-slide-up: slide-up 0.2s ease-out both;
+  --animate-fade-in-up: fade-in 0.2s ease-out both;
+  --animate-pulse-glow: none;
+  --animate-sheet-in: sheet-in 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+/* ============================================================
+   BASE
+   ============================================================ */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Em @layer base para que classes como font-sans / tracking-normal possam sobrescrever */
+@layer base {
+  h1, h2, h3 {
+    font-family: var(--font-display);
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+  }
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.tabular-nums,
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============================================================
+   COMPATIBILIDADE — classes antigas agora são planas (sem vidro/brilho)
+   ============================================================ */
+
+.glass {
+  background: var(--bg);
+  border: 1px solid var(--line);
+}
+
+.glass-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+}
+
+.glass-input {
+  background: var(--card);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  transition: border-color 0.15s ease;
+}
+
+.glass-input::placeholder {
+  color: var(--muted);
+}
+
+.glass-input:focus {
+  border-color: var(--fg);
+  outline: none;
+}
+
+.glow-primary,
+.glow-success,
+.glow-danger {
+  box-shadow: none;
+}
+
+.gradient-text {
+  color: var(--fg);
+}
+
+.text-shadow-sm {
+  text-shadow: none;
+}
+
+/* ============================================================
+   UTILITÁRIOS
+   ============================================================ */
+
+.skeleton {
+  background: linear-gradient(90deg, var(--surface) 25%, var(--line) 50%, var(--surface) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+  border-radius: 8px;
+}
+
+.hide-scrollbar {
+  -ms-overflow-style: none !important;
+  scrollbar-width: none !important;
+}
+.hide-scrollbar::-webkit-scrollbar {
+  display: none !important;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes sheet-in {
+  from { transform: translateX(100%); }
+  to { transform: none; }
+}
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

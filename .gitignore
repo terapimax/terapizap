@@ -6,3 +6,8 @@ node_modules/
 backend/*.db
 backend/*.sqlite
 .env
+
+# Testes e arquivos locais
+scratch/
+backend/uploads/
+zapflow-app/test_auth_api.js

@@ -1,5 +1,4 @@
 // Configuração customizada para o Tailwind CSS
-try {
 tailwind.config = {
     theme: {
         extend: {
@@ -18,65 +17,24 @@ tailwind.config = {
         }
     }
 }
-} catch(e) { console.warn('tailwind config skip:', e.message); }
-
-// =============================================================
-// LOADER: Esconde imediatamente ao carregar o script
-// (app.js está no final do body, DOM já existe aqui)
-// =============================================================
-(function () {
-    clearTimeout(window.safetyTimeout);
-    const loader = document.getElementById('global-loader');
-    if (loader) loader.classList.add('hidden');
-    console.log('✅ Loader escondido imediatamente pelo app.js');
-})();
 
 // --- VARIÁVEIS GLOBAIS ---
 // const API_BASE = 'http://localhost:3001'; // REMOVED: Online Only Mode
 const API_BASE = null; // Disable local API
 
 // ===== SUPABASE CONFIGURATION (GLOBAL) =====
-const SUPABASE_URL = window.SUPABASE_URL || '';
-const SUPABASE_KEY = window.SUPABASE_KEY || '';
-
-if (!SUPABASE_URL || !SUPABASE_KEY) {
-    console.warn('⚠️ SUPABASE_URL or SUPABASE_KEY not defined. Create config.js from config.example.js and set them.');
-}
-
-async function getCurrentUserId() {
-    if (typeof supabase === 'undefined' || !supabase || !supabase.auth) return null;
-    try {
-        const { data: userData } = await supabase.auth.getUser();
-        if (userData && userData.user && userData.user.id) return userData.user.id;
-        const { data: sessionData } = await supabase.auth.getSession();
-        if (sessionData && sessionData.session && sessionData.session.user && sessionData.session.user.id) return sessionData.session.user.id;
-    } catch (e) {
-        console.error('getCurrentUserId error', e);
-}
-    return null;
-}
-
-window.uploadToSupabase = async function(file, bucketPath) {
-    if (!supabase) throw new Error("Supabase não inicializado");
-    const userId = await getCurrentUserId();
-    const prefix = userId ? `${userId}/` : '';
-    const fileName = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.\-_]/g, '')}`;
-    const filePath = `${bucketPath}/${prefix}${fileName}`;
-    
-    // We use 'campaign_files' bucket based on schema_update.sql
-    const targetBucket = 'campaign_files';
-    
-    const { data, error } = await supabase.storage
-        .from(targetBucket)
-        .upload(filePath, file, { cacheControl: '3600', upsert: true });
-        
-    if (error) throw error;
-    
-    const { data: publicUrlData } = supabase.storage.from(targetBucket).getPublicUrl(filePath);
-    return publicUrlData.publicUrl;
-};
-
+const SUPABASE_URL = 'https://fhhqctngrukjjozsrkvx.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_PwraXGFf34pUUEW-dZmaJA_QRCjaNbN';
 // let supabase = null; // Init in DOMContentLoaded - REMOVED to avoid conflict with CDN library
+async function getCurrentUserId() {
+    if (!supabase) return null;
+    const { data: { user }, error } = await supabase.auth.getUser();
+    if (error || !user) {
+        console.warn('User not authenticated');
+        return null;
+    }
+    return user.id;
+}
 var kanbanData = [];
 var messages = [];
 var audios = [];
@@ -140,14 +98,170 @@ window.updateDashboardCounters = function () {
     if (activeLeads) activeLeads.textContent = total;
 };
 
-document.addEventListener('DOMContentLoaded', function () {
+document.addEventListener('DOMContentLoaded', async function () {
+    // --- DEBUG & CONNECTION CHECK ---
     console.log('🚀 Zapflow App Initializing...');
-    clearTimeout(window.safetyTimeout);
 
-    // =========================================================
-    // PART 1: SETUP SÍNCRONO — Registra todos os listeners AGORA
-    // sem esperar conexão com Supabase
-    // =========================================================
+    // Clear HTML Safety Timeout if possible
+    if (typeof window.safetyTimeout !== 'undefined') {
+        console.log('🛡️ Clearing HTML Safety Timeout');
+        clearTimeout(window.safetyTimeout);
+    } else {
+        console.log('⚠️ safetyTimeout not found (scope issue?)');
+    }
+
+    // Check Supabase
+    // Check Supabase
+    // Check Supabase
+    if (typeof window.supabase !== 'undefined' && window.supabase.createClient) {
+        console.log('✅ Supabase SDK Library Found');
+        try {
+            supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+            console.log('✅ Supabase Client Created');
+        } catch (err) {
+            console.error('❌ Failed to create Supabase client:', err);
+        }
+    } else {
+        console.warn('⚠️ Supabase SDK Library NOT found on window.supabase');
+    }
+
+    if (supabase) {
+        try {
+            console.log('✅ Supabase Client Ready, setting up Auth state listener...');
+
+            // Setup Auth listener
+            supabase.auth.onAuthStateChange(async (event, session) => {
+                console.log(`🔑 Auth State Event: ${event}`);
+                const authOverlay = document.getElementById('auth-overlay');
+                
+                if (session) {
+                    console.log('🔓 Active session found for user:', session.user.email);
+                    if (authOverlay) authOverlay.classList.add('hidden');
+                    
+                    // Fetch data since user is authenticated
+                    try {
+                        if (typeof fetchAllData === 'function') {
+                            await fetchAllData();
+                        } else if (typeof fetchKanbanData === 'function') {
+                            await fetchKanbanData();
+                        }
+                    } catch (fetchErr) {
+                        console.error('Error fetching data after sign in:', fetchErr);
+                    }
+                    hideGlobalLoader();
+                } else {
+                    console.log('🔒 No active session. Showing login overlay.');
+                    if (authOverlay) authOverlay.classList.remove('hidden');
+                    hideGlobalLoader();
+                }
+            });
+
+            // Set up login/signup form event listeners
+            const authForm = document.getElementById('auth-form');
+            const authEmail = document.getElementById('auth-email');
+            const authPassword = document.getElementById('auth-password');
+            const authSubmitBtn = document.getElementById('auth-submit-btn');
+            const authToggleBtn = document.getElementById('auth-toggle-btn');
+            const authTitle = document.getElementById('auth-title');
+            const authSubtitle = document.getElementById('auth-subtitle');
+            const authToggleText = document.getElementById('auth-toggle-text');
+
+            let isSignUpMode = false;
+
+            if (authToggleBtn) {
+                authToggleBtn.addEventListener('click', () => {
+                    isSignUpMode = !isSignUpMode;
+                    if (isSignUpMode) {
+                        if (authTitle) authTitle.textContent = 'Criar Conta';
+                        if (authSubtitle) authSubtitle.textContent = 'Cadastre-se para começar a usar o ZapFlow.';
+                        if (authSubmitBtn) authSubmitBtn.textContent = 'Criar Conta';
+                        if (authToggleText) authToggleText.textContent = 'Já tem uma conta?';
+                        if (authToggleBtn) authToggleBtn.textContent = 'Fazer Login';
+                    } else {
+                        if (authTitle) authTitle.textContent = 'Bem-vindo(a)';
+                        if (authSubtitle) authSubtitle.textContent = 'Faça login para continuar para o ZapFlow.';
+                        if (authSubmitBtn) authSubmitBtn.textContent = 'Entrar';
+                        if (authToggleText) authToggleText.textContent = 'Não tem uma conta?';
+                        if (authToggleBtn) authToggleBtn.textContent = 'Criar conta';
+                    }
+                });
+            }
+
+            if (authForm) {
+                authForm.addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    const email = authEmail.value.trim();
+                    const password = authPassword.value;
+
+                    if (!email || !password) return;
+
+                    try {
+                        if (isSignUpMode) {
+                            const { data, error } = await supabase.auth.signUp({ email, password });
+                            if (error) throw error;
+                            
+                            Swal.fire({
+                                icon: 'info',
+                                title: 'Cadastro Iniciado!',
+                                text: 'Verifique seu e-mail para confirmar a conta e liberar o acesso.',
+                                confirmButtonColor: '#E13584'
+                            });
+                            hideGlobalLoader();
+                        } else {
+                            const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+                            if (error) throw error;
+                            
+                            Swal.fire({
+                                icon: 'success',
+                                title: 'Sucesso!',
+                                text: 'Login efetuado com sucesso!',
+                                timer: 1500,
+                                showConfirmButton: false
+                            });
+                        }
+                    } catch (err) {
+                        console.error('Auth Error:', err);
+                        hideGlobalLoader();
+                        Swal.fire({
+                            icon: 'error',
+                            title: 'Erro de Autenticação',
+                            text: err.message || 'Credenciais inválidas',
+                            confirmButtonColor: '#E13584'
+                        });
+                    }
+                });
+            }
+
+            window.logoutZapflow = async function() {
+                showGlobalLoader();
+                try {
+                    await supabase.auth.signOut();
+                    showToast('Sessão encerrada', 'info');
+                } catch (logoutErr) {
+                    console.error('Logout error:', logoutErr);
+                } finally {
+                    hideGlobalLoader();
+                }
+            };
+
+        } catch (e) {
+            console.error('❌ Supabase Init Error:', e);
+            Swal.fire({
+                icon: 'error',
+                title: 'Erro Crítico',
+                text: 'Falha ao inicializar sistema: ' + e.message,
+                confirmButtonColor: '#E13584'
+            });
+        }
+    } else {
+        console.error('❌ Supabase SDK MISSING');
+        Swal.fire({
+            icon: 'error',
+            title: 'Erro de Carregamento',
+            text: 'A biblioteca do sistema não foi carregada.',
+            confirmButtonColor: '#E13584'
+        });
+    }
 
     const menuItems = document.querySelectorAll('.menu-item');
     const pages = document.querySelectorAll('.page-content');
@@ -162,13 +276,17 @@ document.addEventListener('DOMContentLoaded', function () {
             if (targetPage) targetPage.classList.remove('hidden');
 
             document.querySelectorAll('.menu-item').forEach(link => {
+                // Remove active state classes
                 link.classList.remove('bg-zap-primary', 'text-white', 'shadow-lg', 'shadow-zap-primary/20', 'bg-zap-dark', 'border-l-4', 'border-zap-primary', 'font-semibold');
+                // Add inactive state classes
                 link.classList.add('text-zap-text-secondary', 'hover:bg-white/5', 'hover:text-white');
             });
 
+            // Apply active state to clicked item
             this.classList.remove('text-zap-text-secondary', 'hover:bg-white/5', 'hover:text-white');
             this.classList.add('bg-zap-primary', 'text-white', 'shadow-lg', 'shadow-zap-primary/20', 'font-semibold');
 
+            // Trigger Renders based on page
             if (targetPageId === 'page-kanban') renderKanban();
             if (targetPageId === 'page-mensagens') renderMessages();
             if (targetPageId === 'page-audios') renderAudios();
@@ -194,143 +312,40 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
-    // =========================================================
-    // PART 2: SUPABASE ASYNC — Roda em paralelo sem bloquear UI
-    // =========================================================
-    (async function initSupabase() {
-        try {
-            if (typeof window.supabase !== 'undefined' && window.supabase.createClient) {
-                console.log('✅ Supabase SDK Found');
-                supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-                console.log('✅ Supabase Client Created');
-            } else {
-                console.warn('⚠️ Supabase SDK não encontrado — modo offline.');
-                return;
-            }
-
-            const authOverlay = document.getElementById('auth-overlay');
-            const mainAppContainer = document.getElementById('main-app-container');
-            const authForm = document.getElementById('auth-form');
-            const authEmail = document.getElementById('auth-email');
-            const authPassword = document.getElementById('auth-password');
-            const authSubmitBtn = document.getElementById('auth-submit-btn');
-            const authToggleBtn = document.getElementById('auth-toggle-btn');
-            const authTitle = document.getElementById('auth-title');
-            const authToggleText = document.getElementById('auth-toggle-text');
-            let isLoginMode = true;
-
-            // Global Logout
-            window.logoutZapflow = async () => {
-                await supabase.auth.signOut();
-            };
-
-            // Check Initial Session
-            const { data: { session } } = await supabase.auth.getSession();
-            if (session) {
-                if (authOverlay) authOverlay.classList.add('hidden');
-                if (mainAppContainer) mainAppContainer.classList.remove('hidden');
-                const sidebarEmailEl = document.getElementById('sidebar-user-email');
-                if (sidebarEmailEl) sidebarEmailEl.textContent = session.user.email;
-                if (typeof fetchAllData === 'function') fetchAllData();
-                else if (typeof fetchKanbanData === 'function') fetchKanbanData();
-            } else {
-                if (authOverlay) authOverlay.classList.remove('hidden');
-                if (mainAppContainer) mainAppContainer.classList.add('hidden');
-            }
-
-            // Auth State Change
-            supabase.auth.onAuthStateChange((event, session) => {
-                if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-                    console.log('✅ Logado com sucesso:', session.user.email);
-                    if (authOverlay) authOverlay.classList.add('hidden');
-                    if (mainAppContainer) mainAppContainer.classList.remove('hidden');
-                    const sidebarEmailEl = document.getElementById('sidebar-user-email');
-                    if (sidebarEmailEl) sidebarEmailEl.textContent = session.user.email;
-                    if (typeof fetchAllData === 'function') fetchAllData();
-                    else if (typeof fetchKanbanData === 'function') fetchKanbanData();
-                } else if (event === 'SIGNED_OUT') {
-                    console.log('👋 Deslogado');
-                    if (authOverlay) authOverlay.classList.remove('hidden');
-                    if (mainAppContainer) mainAppContainer.classList.add('hidden');
-                    const sidebarEmailEl = document.getElementById('sidebar-user-email');
-                    if (sidebarEmailEl) sidebarEmailEl.textContent = 'Visitante';
-                }
-            });
-
-            // Toggle Login / Signup
-            if (authToggleBtn) {
-                authToggleBtn.addEventListener('click', () => {
-                    isLoginMode = !isLoginMode;
-                    authTitle.textContent = isLoginMode ? 'Bem-vindo(a)' : 'Criar Conta';
-                    authSubmitBtn.textContent = isLoginMode ? 'Entrar' : 'Cadastrar';
-                    authToggleText.textContent = isLoginMode ? 'Não tem uma conta?' : 'Já tem uma conta?';
-                    authToggleBtn.textContent = isLoginMode ? 'Criar conta' : 'Fazer login';
-                });
-            }
-
-            // Submeter formulário
-            if (authForm) {
-                authForm.addEventListener('submit', async (e) => {
-                    e.preventDefault();
-                    const email = authEmail.value;
-                    const password = authPassword.value;
-                    
-                    authSubmitBtn.disabled = true;
-                    const originalText = authSubmitBtn.textContent;
-                    authSubmitBtn.textContent = 'Aguarde...';
-
-                    try {
-                        let authResponse;
-                        if (isLoginMode) {
-                            authResponse = await supabase.auth.signInWithPassword({ email, password });
-                            console.log('signInWithPassword response', authResponse);
-                        } else {
-                            authResponse = await supabase.auth.signUp({ email, password });
-                            console.log('signUp response', authResponse);
-
-                            if (!authResponse.error) {
-                                // If Supabase returned a user object, account was created immediately
-                                if (authResponse.data && authResponse.data.user) {
-                                    alert('Conta criada com sucesso! Você pode fazer login agora.');
-                                } else {
-                                    // Common flow when email confirmation is required
-                                    alert('Cadastro enviado. Verifique seu email para confirmar (se aplicável).');
-                                }
-                                isLoginMode = true;
-                                if (authToggleBtn) authToggleBtn.click(); // switch back to login UI
-                            }
-                        }
-
-                        if (authResponse && authResponse.error) {
-                            const msg = authResponse.error.message || JSON.stringify(authResponse.error);
-                            alert('⚠️: ' + msg);
-                        }
-                    } catch (err) {
-                        console.error('Auth error', err);
-                        alert('Ocorreu um erro ao conectar. Veja o console para detalhes.');
-                    } finally {
-                        authSubmitBtn.disabled = false;
-                        authSubmitBtn.textContent = originalText;
-                    }
-                });
-            }
-        } catch (e) {
-            console.warn('⚠️ Supabase init error:', e.message);
-        }
-    })();
-
-
-
     // --- BANCO DE DADOS GERAL (SIMULADO) ---
-    messages = [];
+    messages = [
+        { id: 1, title: 'Saudação Inicial', content: 'Olá! Tudo bem? Vi que você se interessou pelo nosso produto. Gostaria de mais alguma informação?', isFavorite: false },
+        { id: 2, title: 'Follow-up 1', content: 'Olá, passando para saber se você conseguiu dar uma olhada na nossa proposta.', isFavorite: true },
+        { id: 3, title: 'Proposta Comercial', content: 'Segue em anexo nossa proposta comercial detalhada.', isFavorite: false },
+        { id: 4, title: 'Boas Vindas', content: 'Seja bem-vindo à nossa plataforma! Qualquer dúvida estamos à disposição.', isFavorite: false }
+    ];
     audios = [];
     midias = [];
     documentos = [];
     funis = [];
     gatilhos = [];
-    kanbanData = [];
-    var currentBoardId = null;
-    var kanbanBoards = [];
+    kanbanData = [
+        {
+            id: 1, title: 'Novos Leads', items: [
+                { id: 101, name: 'Ana Clara', phone: '11987654321', email: '', product: 'Produto A', value: 1500, avatar: 'https://i.pravatar.cc/150?u=a042581f4e29026024d', lastMessage: 'Olá, gostaria de um orçamento...' },
+                { id: 102, name: 'Bruno Costa', phone: '21987654321', email: '', product: 'Produto B', value: 0, avatar: 'https://i.pravatar.cc/150?u=a042581f4e29026704d', lastMessage: 'Tenho interesse no produto.' },
+                { id: 105, name: 'Fernanda Lima', phone: '31988887777', email: '', product: 'Mentoria', value: 3000, avatar: 'https://i.pravatar.cc/150?u=a042581f4e29026024e', lastMessage: 'Como funciona o pagamento?' }
+            ]
+        },
+        {
+            id: 2, title: 'Em Negociação', items: [
+                { id: 103, name: 'Carlos Silva', phone: '31987654321', email: '', product: 'Produto C', value: 5000, avatar: 'https://i.pravatar.cc/150?u=a042581f4e29026025d', lastMessage: 'Podemos marcar uma reunião?' }
+            ]
+        },
+        {
+            id: 3, title: 'Agendado', items: []
+        },
+        {
+            id: 4, title: 'Fechado', items: [
+                { id: 104, name: 'Daniela Souza', phone: '41987654321', email: '', product: 'Produto A', value: 1500, avatar: 'https://i.pravatar.cc/150?u=a042581f4e29026026d', lastMessage: 'Pagamento confirmado!' }
+            ]
+        }
+    ];
 
     // Base da API quando o backend estiver ativo
     // let API_BASE = ''; // REMOVED: Online Only Mode
@@ -493,8 +508,14 @@ document.addEventListener('DOMContentLoaded', function () {
             try {
                 showGlobalLoader();
                 const userId = await getCurrentUserId();
-                const payload = [{ title, content: 'Escreva sua mensagem aqui...', is_favorite: false, user_id: userId }];
-                const { data, error } = await supabase.from('messages').insert(payload).select();
+                if (!userId) {
+                    showToast('Erro: Não autenticado', 'error');
+                    return;
+                }
+                const { data, error } = await supabase
+                    .from('messages')
+                    .insert([{ user_id: userId, title, content: 'Escreva sua mensagem aqui...', is_favorite: false }])
+                    .select();
 
                 if (error) throw error;
 
@@ -511,7 +532,7 @@ document.addEventListener('DOMContentLoaded', function () {
                     isEditingMessage = true;
                     renderMessages();
                     displayMessageDetails(data[0].id);
-                    showToast('Mensagem criada!', 'success'); if(typeof updateDashboardCounters === 'function') updateDashboardCounters();
+                    showToast('Mensagem criada!', 'success');
                 }
             } catch (err) {
                 console.error('Error creating message:', err);
@@ -540,22 +561,23 @@ document.addEventListener('DOMContentLoaded', function () {
 
         if (!result.isConfirmed) return;
 
-        try {
-            const { error } = await supabase.from('messages').delete().eq('id', selectedMessageId);
-            if (error) throw error;
-
-            messages = messages.filter(m => m.id !== selectedMessageId);
-            showToast('Mensagem removida', 'success');
-        } catch (e) {
-            showToast('Erro ao apagar no banco.', 'error');
-            return;
-        }
-
+        /*
+        if (API_BASE) {
+            try {
+                const res = await fetch(API_BASE + '/api/messages/' + selectedMessageId, { method: 'DELETE' });
+                if (!res.ok) throw new Error('API error');
+                messages = messages.filter(m => m.id !== selectedMessageId);
+                showToast('Mensagem removida', 'success');
+            } catch (e) { showToast('Erro ao apagar no backend.', 'error'); return; }
+        } else {
+        */
+        messages = messages.filter(m => m.id !== selectedMessageId);
+        showToast('Mensagem removida (local)', 'success');
+        // }
         selectedMessageId = null; isEditingMessage = false;
         messageDetailsPanel.classList.add('hidden'); messageDetailsPanel.classList.remove('flex');
         messageWelcomePanel.classList.remove('hidden');
         renderMessages();
-        if (typeof updateDashboardCounters === 'function') updateDashboardCounters();
     });
 
     if (editMessageBtn) editMessageBtn.addEventListener('click', () => { if (!selectedMessageId) return; isEditingMessage = true; displayMessageDetails(selectedMessageId); });
@@ -564,24 +586,20 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!selectedMessageId) return;
         const message = messages.find(m => m.id === selectedMessageId);
         if (!message) return;
-        
-        const newTitle = messageTitleDisplay.value; 
-        const newContent = messageContentDisplay.value;
-        
-        try {
-            const { error } = await supabase.from('messages').update({ title: newTitle, content: newContent }).eq('id', selectedMessageId);
-            if (error) throw error;
-            
-            message.title = newTitle; 
-            message.content = newContent;
-            showToast('Mensagem salva', 'success');
-        } catch (e) {
-            showToast('Erro ao salvar no banco.', 'error');
-            return;
-        }
-        
-        renderMessages(); 
-        displayMessageDetails(selectedMessageId);
+        const newTitle = messageTitleDisplay.value; const newContent = messageContentDisplay.value;
+        /*
+        if (API_BASE) {
+            try {
+                await fetch(API_BASE + '/api/messages/' + selectedMessageId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: newTitle, content: newContent }) });
+                message.title = newTitle; message.content = newContent;
+                showToast('Mensagem salva', 'success');
+            } catch (e) { alert('Erro ao salvar no backend.'); }
+        } else {
+        */
+        message.title = newTitle; message.content = newContent;
+        showToast('Mensagem salva (local)', 'success');
+        // }
+        renderMessages(); displayMessageDetails(selectedMessageId);
         isEditingMessage = false;
     });
 
@@ -590,15 +608,14 @@ document.addEventListener('DOMContentLoaded', function () {
         const message = messages.find(m => m.id === selectedMessageId);
         if (!message) return;
         const newStatus = !message.isFavorite;
-
-        try {
-            const { error } = await supabase.from('messages').update({ is_favorite: newStatus }).eq('id', selectedMessageId);
-            if(error) throw error;
-            
-            message.isFavorite = newStatus;
-            if (!isEditingMessage) { displayMessageDetails(selectedMessageId); renderMessages(); }
-            showToast('Favorito atualizado', 'success');
-        } catch(e) { console.error(e); }
+        /*
+        if (API_BASE) {
+            try { await fetch(API_BASE + '/api/messages/' + selectedMessageId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ is_favorite: newStatus }) }); } catch (e) { }
+        }
+        */
+        message.isFavorite = newStatus;
+        if (!isEditingMessage) { displayMessageDetails(selectedMessageId); renderMessages(); }
+        showToast('Favorito atualizado', 'success');
     });
     renderMessages();
 
@@ -788,19 +805,24 @@ document.addEventListener('DOMContentLoaded', function () {
                 showGlobalLoader();
                 showToast('Enviando áudio...', 'info');
 
+                const userId = await getCurrentUserId();
+                if (!userId) {
+                    showToast('Erro: Não autenticado', 'error');
+                    return;
+                }
+
                 // 1. Upload File
                 const publicUrl = await uploadToSupabase(audioFileToUpload, 'audios');
 
                 // 2. Insert Metadata
-                const userId = await getCurrentUserId();
                 const { data, error } = await supabase.from('media_library').insert([{
+                    user_id: userId,
                     title: title,
                     url: publicUrl,
                     type: 'audio',
                     mime_type: audioFileToUpload.type,
                     size: audioFileToUpload.size,
-                    is_favorite: false,
-                    user_id: userId
+                    is_favorite: false
                 }]).select();
 
                 if (error) throw error;
@@ -1083,20 +1105,25 @@ document.addEventListener('DOMContentLoaded', function () {
                 showGlobalLoader();
                 showToast('Enviando mídia...', 'info');
 
+                const userId = await getCurrentUserId();
+                if (!userId) {
+                    showToast('Erro: Não autenticado', 'error');
+                    return;
+                }
+
                 // 1. Upload File
                 const publicUrl = await uploadToSupabase(midiaFileToUpload, 'midias');
 
                 // 2. Insert Metadata
-                const userId = await getCurrentUserId();
                 const { data, error } = await supabase.from('media_library').insert([{
+                    user_id: userId,
                     title: title,
                     caption: caption,
                     url: publicUrl,
                     type: midiaFileToUpload.type.startsWith('image/') ? 'image' : 'video',
                     mime_type: midiaFileToUpload.type,
                     size: midiaFileToUpload.size,
-                    is_favorite: false,
-                    user_id: userId
+                    is_favorite: false
                 }]).select();
 
                 if (error) throw error;
@@ -1339,19 +1366,24 @@ document.addEventListener('DOMContentLoaded', function () {
                 showGlobalLoader();
                 showToast('Enviando documento...', 'info');
 
+                const userId = await getCurrentUserId();
+                if (!userId) {
+                    showToast('Erro: Não autenticado', 'error');
+                    return;
+                }
+
                 // 1. Upload File
                 const publicUrl = await uploadToSupabase(documentFileToUpload, 'documents');
 
                 // 2. Insert Metadata
-                const userId = await getCurrentUserId();
                 const { data, error } = await supabase.from('media_library').insert([{
+                    user_id: userId,
                     title: title,
                     url: publicUrl,
                     type: 'document',
                     mime_type: documentFileToUpload.type,
                     size: documentFileToUpload.size,
-                    is_favorite: false,
-                    user_id: userId
+                    is_favorite: false
                 }]).select();
 
                 if (error) throw error;
@@ -1536,7 +1568,12 @@ document.addEventListener('DOMContentLoaded', function () {
             try {
                 showGlobalLoader();
                 const userId = await getCurrentUserId();
-                const { data, error } = await supabase.from('funnels').insert([{ title, description: '', is_favorite: false, user_id: userId }]).select();
+                if (!userId) {
+                    showToast('Erro: Não autenticado', 'error');
+                    hideGlobalLoader();
+                    return;
+                }
+                const { data, error } = await supabase.from('funnels').insert([{ user_id: userId, title, description: '', is_favorite: false }]).select();
 
                 if (error) throw error;
 
@@ -1588,101 +1625,67 @@ document.addEventListener('DOMContentLoaded', function () {
         e.preventDefault();
         const funil = funis.find(f => f.id === selectedFunilId);
         if (funil && funilItemSelect.value) {
-            const tempValId = parseInt(funilItemSelect.value);
-            const newItemObj = {
-                funnel_id: funil.id,
-                item_id: tempValId,
-                type: currentFunilItemType,
-                delay_minutes: parseInt(document.getElementById('funil-delay-minutes').value) || 0,
-                delay_seconds: parseInt(document.getElementById('funil-delay-seconds').value) || 0,
-                position: funil.items.length
-            };
-            
-            newItemObj.user_id = await getCurrentUserId();
-
-            try {
-                const { data, error } = await supabase.from('funnel_items').insert(newItemObj).select().single();
-                if (error) throw error;
-                funil.items.push({ 
-                    dbId: data.id, 
-                    itemId: data.item_id, 
-                    type: data.type, 
-                    delayMinutes: data.delay_minutes, 
-                    delaySeconds: data.delay_seconds 
-                });
-                renderFunilItems(funil.items);
-                showToast('Item adicionado', 'success');
-            } catch(err) {
-                showToast('Erro ao adicionar item', 'error');
-                console.error(err);
-            }
+            const newItem = { itemId: parseInt(funilItemSelect.value), type: currentFunilItemType, delayMinutes: parseInt(document.getElementById('funil-delay-minutes').value) || 0, delaySeconds: parseInt(document.getElementById('funil-delay-seconds').value) || 0 };
+            /*
+            if (API_BASE) {
+                try {
+                    await fetch(API_BASE + `/api/funnels/${funil.id}/items`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newItem) });
+                    funil.items.push(newItem); renderFunilItems(funil.items); showToast('Item adicionado', 'success');
+                } catch (e) { showToast('Erro ao adicionar item', 'error'); }
+            } else {
+            */
+            funil.items.push(newItem); renderFunilItems(funil.items); showToast('Item adicionado', 'success');
+            // }
             cancelFunilItemModalBtn.click();
         }
     });
 
-    if (funilItemListContainer) funilItemListContainer.addEventListener('click', async (e) => {
+    if (funilItemListContainer) funilItemListContainer.addEventListener('click', (e) => {
         if (e.target.matches('button')) {
             const index = parseInt(e.target.dataset.index);
             const funil = funis.find(f => f.id === selectedFunilId);
-            if (funil) { 
-                const itData = funil.items[index];
-                if(itData && itData.dbId) {
-                    await supabase.from('funnel_items').delete().eq('id', itData.dbId);
-                }
-                funil.items.splice(index, 1); 
-                renderFunilItems(funil.items); 
-            }
+            if (funil) { funil.items.splice(index, 1); renderFunilItems(funil.items); }
         }
     });
 
     if (deleteFunilBtn) deleteFunilBtn.addEventListener('click', async () => {
         if (!selectedFunilId) return;
-        const result = await Swal.fire({ title: 'Tem certeza?', text: "Você não poderá reverter isso!", icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', cancelButtonColor: '#334155', confirmButtonText: 'Sim, deletar!' });
+        const result = await Swal.fire({
+            title: 'Tem certeza?',
+            text: "Você não poderá reverter isso!",
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#ef4444',
+            cancelButtonColor: '#334155',
+            confirmButtonText: 'Sim, deletar!',
+            cancelButtonText: 'Cancelar',
+            background: '#1e293b',
+            color: '#fff'
+        });
 
         if (result.isConfirmed) {
-            try { 
-                await supabase.from('funnels').delete().eq('id', selectedFunilId); 
-                funis = funis.filter(f => f.id !== selectedFunilId);
-                selectedFunilId = null; isEditingFunil = false; funilDetailsPanel.classList.add('hidden'); funilDetailsPanel.classList.remove('flex'); funilWelcomePanel.classList.remove('hidden'); renderFunis();
-                showToast('Funil removido', 'success');
-                if(typeof updateDashboardCounters === 'function') updateDashboardCounters();
-            } catch (e) { showToast('Erro', 'error'); }
+            if (API_BASE) {
+                try { await fetch(API_BASE + '/api/funnels/' + selectedFunilId, { method: 'DELETE' }); } catch (e) { }
+            }
+            funis = funis.filter(f => f.id !== selectedFunilId);
+            selectedFunilId = null; isEditingFunil = false; funilDetailsPanel.classList.add('hidden'); funilDetailsPanel.classList.remove('flex'); funilWelcomePanel.classList.remove('hidden'); renderFunis();
+            showToast('Funil removido', 'success');
         }
     });
 
-    if (duplicateFunilBtn) duplicateFunilBtn.addEventListener('click', async () => {
+    if (duplicateFunilBtn) duplicateFunilBtn.addEventListener('click', () => {
         if (!selectedFunilId) return;
         const funilToCopy = funis.find(f => f.id === selectedFunilId);
         if (funilToCopy) {
-            try {
-                const t = funilToCopy.title + " (Cópia)";
-                const userId = await getCurrentUserId();
-                const {data, error} = await supabase.from('funnels').insert({ title: t, description: funilToCopy.description, is_favorite: false, user_id: userId}).select().single();
-                if(data) {
-                    funis.push({ id: data.id, title: data.title, items: [], isFavorite: false });
-                    renderFunis(); showToast('Funil duplicado', 'success');
-                    if(typeof updateDashboardCounters === 'function') updateDashboardCounters();
-                }
-            } catch(e) {}
+            const newId = funis.length > 0 ? Math.max(...funis.map(f => f.id)) + 1 : 1;
+            const newFunil = JSON.parse(JSON.stringify(funilToCopy));
+            newFunil.id = newId; newFunil.title = `${newFunil.title} (Cópia)`; newFunil.isFavorite = false;
+            funis.push(newFunil); renderFunis(); showToast('Funil duplicado (local)', 'success');
         }
     });
     if (editFunilBtn) editFunilBtn.addEventListener('click', () => { if (!selectedFunilId) return; isEditingFunil = true; displayFunilDetails(selectedFunilId); });
-    if (saveFunilBtn) saveFunilBtn.addEventListener('click', async () => { 
-        if (!selectedFunilId) return; const funil = funis.find(f => f.id === selectedFunilId); 
-        if (funil) {
-            await supabase.from('funnels').update({ title: funilTitleDisplay.value }).eq('id', selectedFunilId);
-            funil.title = funilTitleDisplay.value; isEditingFunil = false; renderFunis(); displayFunilDetails(selectedFunilId); 
-        }
-    });
-    if (favoriteFunilBtn) favoriteFunilBtn.addEventListener('click', async () => { 
-        if (!selectedFunilId) return; const funil = funis.find(f => f.id === selectedFunilId); 
-        if (funil) { 
-            const nF = !funil.isFavorite;
-            await supabase.from('funnels').update({ is_favorite: nF }).eq('id', selectedFunilId);
-            funil.isFavorite = nF; 
-            if (!isEditingFunil) { displayFunilDetails(selectedFunilId); renderFunis(); } 
-        } 
-    });
+    if (saveFunilBtn) saveFunilBtn.addEventListener('click', () => { if (!selectedFunilId) return; const funil = funis.find(f => f.id === selectedFunilId); if (funil) funil.title = funilTitleDisplay.value; isEditingFunil = false; renderFunis(); displayFunilDetails(selectedFunilId); });
+    if (favoriteFunilBtn) favoriteFunilBtn.addEventListener('click', () => { if (!selectedFunilId) return; const funil = funis.find(f => f.id === selectedFunilId); if (funil) { funil.isFavorite = !funil.isFavorite; if (!isEditingFunil) { displayFunilDetails(selectedFunilId); renderFunis(); } } });
     renderFunis();
 
 
@@ -1694,135 +1697,1206 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // --- DATA FETCHING ---
     async function fetchKanbanData() {
+        if (!supabase) return;
+        try {
+            const { data, error } = await supabase.from('kanban_columns').select('*, leads(*)').order('position');
+            if (error) throw error;
+            if (data) {
+                kanbanData = data.map(col => ({ ...col, items: col.leads || [] }));
+                renderKanban();
+                updateDashboardCounters();
+            }
+        } catch (error) {
+            console.error('❌ Error fetching kanban:', error);
+            if (error.code === '42P01' || error.message.includes('404')) {
+                Swal.fire({ icon: 'warning', title: 'Tabelas não encontradas', text: 'Por favor, rode o script SQL atualizado.' });
+            }
+        }
+    }
+
+    async function fetchMessages() {
+        const { data, error } = await supabase.from('messages').select('*').order('created_at', { ascending: false });
+        if (data) {
+            messages = data.map(m => ({ id: m.id, title: m.title, content: m.content, isFavorite: m.is_favorite }));
+            renderMessages();
+        }
+    }
+
+    async function fetchMediaLibrary() {
+        const { data, error } = await supabase.from('media_library').select('*').order('created_at', { ascending: false });
+        if (data) {
+            audios = data.filter(m => m.type === 'audio').map(m => ({ id: m.id, title: m.title, url: m.url, isFavorite: m.is_favorite, duration: '00:00' }));
+            midias = data.filter(m => m.type === 'image' || m.type === 'video').map(m => ({ id: m.id, title: m.title, caption: m.caption, url: m.url, type: m.mime_type, isFavorite: m.is_favorite }));
+            documentos = data.filter(m => m.type === 'document').map(m => ({ id: m.id, title: m.title, url: m.url, size: (m.size ? (m.size / 1024).toFixed(2) + ' KB' : 'Unknown'), type: 'Documento', isFavorite: m.is_favorite }));
+
+            renderAudios();
+            renderMidias();
+            renderDocumentos();
+        }
+    }
+
+    async function fetchFunis() {
+        // Fetch funnels and their items
+        const { data, error } = await supabase.from('funnels').select('*, funnel_items(*)').order('created_at', { ascending: false });
+
+        if (data) {
+            funis = data.map(f => ({
+                id: f.id,
+                title: f.title,
+                isFavorite: f.is_favorite,
+                items: (f.funnel_items || []).map(item => ({
+                    itemId: item.item_id,
+                    type: item.type,
+                    delayMinutes: item.delay_minutes,
+                    delaySeconds: item.delay_seconds,
+                    position: item.position
+                })).sort((a, b) => a.position - b.position)
+            }));
+            renderFunis();
+        }
+    }
+
+    // Expose for usage
+    window.fetchKanbanData = fetchKanbanData;
+    window.fetchAllData = async function () {
+        showGlobalLoader();
+        await Promise.all([
+            fetchKanbanData(),
+            fetchMessages(),
+            fetchMediaLibrary(),
+            fetchFunis()
+        ]);
+        hideGlobalLoader();
+    };
+
+    function renderKanban() {
+        // Get element dynamically each time
+        const board = document.getElementById('kanban-board');
+
+        if (!board) {
+            console.error('CRITICAL: #kanban-board element not found!');
+            return;
+        }
+
+        // FORCE VISIBILITY
+        board.style.display = 'flex';
+        board.style.opacity = '1';
+
+        board.innerHTML = '';
+
+        board.innerHTML = '';
+
+        // ===== SUPABASE CONFIGURATION (MOVED GLOBAL) =====
+        // const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+        // State Variables
+        let isSidebarOpen = true;
+        let activeLeadId = null;
+        let currentAudio = null;
+        let currentPlayBtn = null;
+        // let kanbanData = []; // Will be populated from Supabase
+        kanbanData.forEach((column, colIndex) => {
+            // Calculate Total Value
+            // Calculate Total Value
+            const totalValue = column.items.reduce((acc, item) => acc + (Number(item.value) || 0), 0);
+            const formattedTotal = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalValue);
+            const colColor = column.color || '#E13584'; // Default color
+
+            const colDiv = document.createElement('div');
+            // Premium Glass Column Structure with localized styling
+            colDiv.className = 'glass rounded-2xl w-80 flex-shrink-0 flex flex-col border border-white/5 bg-zap-sidebar/50 max-h-full transition-all duration-300 snap-center shadow-xl backdrop-blur-sm ml-4 first:ml-0';
+            colDiv.dataset.colid = column.id;
+
+            colDiv.innerHTML = `
+            <!-- Column Header -->
+            <div class="p-4 border-b border-white/5 bg-black/20 rounded-t-2xl group relative overflow-hidden">
+                 <div class="absolute top-0 left-0 w-full h-1 opacity-80" style="background: linear-gradient(to right, ${colColor}, transparent);"></div>
+                 <div class="absolute top-0 left-0 w-full h-[1px] bg-${colColor} shadow-[0_0_10px_${colColor}]"></div>
+                <div class="flex justify-between items-start mb-3 relative z-10">
+                    <div class="flex items-center gap-3">
+                        <div class="w-3 h-3 rounded-full shadow-[0_0_8px_inset] shadow-current" style="background-color: ${colColor}; color: ${colColor}; box-shadow: 0 0 10px ${colColor};"></div>
+                        <h3 class="text-base font-bold text-white uppercase tracking-wider truncate drop-shadow-sm" title="${column.title}">${column.title}</h3>
+                        <span class="text-[10px] font-bold text-white bg-white/10 px-2.5 py-0.5 rounded-full border border-white/5 shadow-sm">${column.items.length}</span>
+                    </div>
+                    <div class="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-all duration-200 transform translate-x-2 group-hover:translate-x-0">
+                         <button class="p-1.5 rounded-lg hover:bg-white/10 text-gray-400 hover:text-white edit-col transition-colors" data-colid="${column.id}" title="Editar Nome"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg></button>
+                         <button class="p-1.5 rounded-lg hover:bg-white/10 text-red-500/70 hover:text-red-400 remove-col transition-colors" data-colid="${column.id}" title="Excluir Coluna"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg></button>
+                    </div>
+                </div>
+                <div class="flex items-center justify-between mt-1 bg-white/5 p-2 rounded-lg border border-white/5">
+                    <span class="text-xs text-zap-text-secondary font-medium uppercase tracking-wide">Valor Total</span>
+                    <span class="text-xs font-bold text-white tracking-wide">${formattedTotal}</span>
+                </div>
+            </div>
+
+            <!-- Cards Container -->
+            <div class="kanban-cards-container flex-grow p-3 space-y-3 overflow-y-auto custom-scrollbar min-h-[100px] scroll-smooth" style="max-height: calc(100vh - 260px);">
+                <!-- Cards will be injected here -->
+            </div>
+        `;
+
+            const itemsDiv = colDiv.querySelector('.kanban-cards-container');
+
+            column.items.forEach(item => {
+                const card = document.createElement('div');
+                // Premium Card Style
+                card.className = 'kanban-item kanban-card group bg-zap-card hover:bg-zap-card-hover p-4 rounded-xl shadow-lg border border-white/5 cursor-pointer relative z-10 transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl hover:border-zap-primary/30';
+                card.draggable = true;
+                card.dataset.id = item.id;
+                card.dataset.colid = column.id;
+
+                const itemValue = Number(item.value) || 0;
+                const formattedItemValue = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(itemValue);
+                const avatarUrl = item.avatar || 'https://ui-avatars.com/api/?name=' + encodeURIComponent(item.name) + '&background=random';
+
+                const dateObj = item.createdAt ? new Date(item.createdAt) : new Date();
+                const dateStr = dateObj.toLocaleDateString('pt-BR');
+                const originDisplay = (item.origin === 'Outros' && item.customOrigin) ? item.customOrigin : (item.origin || '');
+
+                // Temp Badge Logic (Visuals)
+                // Default to 'cold' if not set, so it can be interacted with
+                const currentTemp = item.temp || 'cold';
+                const tempColors = {
+                    'hot': 'bg-red-500/20 text-red-400 border-red-500/30',
+                    'warm': 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
+                    'cold': 'bg-blue-500/20 text-blue-400 border-blue-500/30'
+                };
+                const colorClass = tempColors[currentTemp] || tempColors['cold'];
+                const tempLabel = currentTemp === 'hot' ? 'Quente' : (currentTemp === 'warm' ? 'Morno' : 'Frio');
+
+                // Add 'temp-badge' class for event delegation
+                const tempBadge = `<span class="temp-badge px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide border ${colorClass} cursor-pointer hover:opacity-80 transition-opacity" data-lead-id="${item.id}" title="Alterar temperatura">${tempLabel}</span>`;
+
+                card.innerHTML = `
+                                    <div class="flex items-start gap-3 mb-2">
+                                        <div class="relative shrink-0">
+                                            <img src="${avatarUrl}" class="w-10 h-10 rounded-full object-cover border-2 border-white/10 shadow-sm" alt="${item.name}">
+                                             <div class="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-zap-card rounded-full" title="Online"></div>
+                                        </div>
+                                        <div class="flex-1 min-w-0">
+                                            <div class="flex items-center flex-wrap gap-2 mb-1">
+                                                <h4 class="font-bold text-white text-sm truncate leading-tight">${item.name}</h4>
+                                                ${tempBadge}
+                                            </div>
+                                            
+                                            <!-- WhatsApp (Clickable) -->
+                                            <a href="https://wa.me/${(item.phone || '').replace(/\D/g, '')}" target="_blank" onclick="event.stopPropagation()" class="text-xs text-green-400 hover:text-green-300 flex items-center gap-1.5 transition-colors font-medium w-fit">
+                                               <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/></svg>
+                                               ${item.phone || 'WhatsApp'}
+                                            </a>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Origin & Campaign Tags -->
+                                    <div class="space-y-1.5 mb-2 pl-1">
+                                        ${originDisplay ? `
+                                        <div class="flex items-center gap-1.5">
+                                            <span class="text-[9px] font-bold text-gray-500 uppercase tracking-wider">Origem:</span>
+                                            <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/10 text-purple-300 border border-purple-500/20 truncate max-w-[150px]">${originDisplay}</span>
+                                        </div>` : ''}
+                                        
+                                        ${item.campaign ? `
+                                        <div class="flex items-center gap-1.5">
+                                            <span class="text-[9px] font-bold text-gray-500 uppercase tracking-wider">Campanha:</span>
+                                            <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-pink-500/10 text-pink-300 border border-pink-500/20 truncate max-w-[150px]">${item.campaign}</span>
+                                        </div>` : ''}
+                                    </div>
+
+                                    <!-- Product -->
+                                    <div class="mb-3 pl-1">
+                                         ${item.product ? `<div class="text-xs text-gray-400 flex items-center gap-1.5"><svg class="w-3 h-3 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"></path></svg>${item.product}</div>` : ''}
+                                    </div>
+
+                                    <div class="flex justify-between items-center border-t border-white/5 pt-3 mt-1">
+                                        <span class="text-xs font-bold text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded border border-emerald-500/20 shadow-sm">${formattedItemValue}</span>
+                                        <div class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                                            <button class="p-1.5 rounded-full hover:bg-zap-primary text-gray-400 hover:text-white transition-colors" title="Ver Detalhes">
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                                            </button>
+                                            <button class="kanban-delete-btn p-1.5 rounded-full hover:bg-red-500/20 text-gray-400 hover:text-red-400 transition-colors" title="Arquivar">
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" /></svg>
+                                            </button>
+                                        </div>
+                                    </div>
+                `;
+                // Event Listeners for Interaction
+                card.addEventListener('click', (e) => {
+                    if (e.target.closest('button')) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log('Manual Listener: Click on card', item.id);
+                    if (typeof window.openLeadDetailsModal === 'function') {
+                        window.openLeadDetailsModal(item.id, column.id);
+                    } else {
+                        alert('Erro: Função modal não encontrada!');
+                    }
+                });
+
+                const detailBtn = card.querySelector('button[title="Ver Detalhes"]');
+                if (detailBtn) {
+                    detailBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        window.openLeadDetailsModal(item.id, column.id);
+                    });
+                }
+
+                // Archive logic removed for online-only stability
+
+
+                itemsDiv.appendChild(card);
+            });
+
+            board.appendChild(colDiv);
+        }); // End forEach
+    } // End renderKanban
+
+    // window.renderKanban = renderKanban; // Already executed
+    // renderKanban(); // REMOVED RECURSIVE CALL
+
+    // --- LÓGICA DO MODAL DE DETALHES DO LEAD ---
+    const leadDetailsModal = document.getElementById('lead-details-modal');
+    const closeLeadModalBtn = document.getElementById('close-lead-modal-btn');
+    const cancelLeadDetailsBtn = document.getElementById('cancel-lead-details-btn');
+    const saveLeadDetailsBtn = document.getElementById('save-lead-details-btn');
+    const leadTabBtns = document.querySelectorAll('.lead-tab-btn');
+    const leadTabContents = document.querySelectorAll('.lead-tab-content');
+
+    // let currentEditingLead = null; // Removed shadowing
+    // let currentEditingColumnId = null; // Removed shadowing
+
+
+    // --- EVENT LISTENERS FOR MODAL (GLOBAL BINDING) ---
+    // Re-bind buttons to global functions to avoid shadowing issues
+    const saveBtnGlobal = document.getElementById('save-lead-details-btn');
+    if (saveBtnGlobal) {
+        saveBtnGlobal.onclick = function (e) {
+            e.preventDefault();
+            if (window.saveLeadDetails) window.saveLeadDetails();
+        };
+    }
+
+    const closeBtnGlobal = document.getElementById('close-lead-modal-btn');
+    if (closeBtnGlobal) {
+        closeBtnGlobal.onclick = function () {
+            if (window.closeLeadDetailsModal) window.closeLeadDetailsModal();
+        };
+    }
+
+    const cancelBtnGlobal = document.getElementById('cancel-lead-details-btn');
+    if (cancelBtnGlobal) {
+        cancelBtnGlobal.onclick = function () {
+            if (window.closeLeadDetailsModal) window.closeLeadDetailsModal();
+        };
+    }
+
+
+
+    // Expose currentEditingLead via getter/setter to ensure updates are reflected
+    // Only define if not already defined to avoid "Cannot redefine property" error
+    if (!Object.getOwnPropertyDescriptor(window, 'currentEditingLead')) {
+        Object.defineProperty(window, 'currentEditingLead', {
+            get: () => currentEditingLead,
+            set: (val) => { currentEditingLead = val; },
+            configurable: true // Allow redefinition if needed
+        });
+    }
+
+    // Helper to toggle temperature directly on card
+    function toggleLeadTemp(leadId, columnId) {
+        const column = kanbanData.find(c => c.id === columnId);
+        if (!column) return;
+        const lead = column.items.find(i => i.id === leadId);
+        if (!lead) return;
+
+        const temps = ['cold', 'warm', 'hot'];
+        const current = lead.temp || 'cold';
+        const nextIndex = (temps.indexOf(current) + 1) % temps.length;
+        lead.temp = temps[nextIndex];
+
+        // Update History
+        if (window.addLeadHistory) {
+            const labels = { 'cold': 'FRIO', 'warm': 'MORNO', 'hot': 'QUENTE' };
+            window.addLeadHistory(lead, 'thermometer', 'Temperatura Alterada', `Classificado como ${labels[lead.temp]}.`, 'thermometer', 'purple');
+        }
+
+        renderKanban();
+    }
+    window.toggleLeadTemp = toggleLeadTemp;
+
+    // --- SETUP LISTENERS AFTER DOM IS READY ---
+    // Moved inside a function to be called from DOMContentLoaded or ensuring these run
+    // --- SETUP LISTENERS (GLOBAL VERSION) ---
+    window.setupKanbanListeners = function () {
+        console.log('🚀 Executing setupKanbanListeners...');
+        const kanbanBoard = document.getElementById('kanban-board');
+        const addKanbanColumnBtn = document.getElementById('add-kanban-column-btn');
+        const addLeadBtn = document.getElementById('add-lead-btn');
+        const addLeadModal = document.getElementById('add-lead-modal');
+        const addLeadForm = document.getElementById('add-lead-form');
+        const cancelLeadModalBtn = document.getElementById('cancel-lead-modal-btn');
+
+        if (kanbanBoard) {
+            console.log('✅ Kanban board found');
+            // Remove existing to avoid duplicates
+            kanbanBoard.removeEventListener('click', window.handleKanbanClick);
+            kanbanBoard.addEventListener('click', window.handleKanbanClick);
+
+            // Force overflow styles via JS
+            kanbanBoard.style.overflowX = 'auto';
+            kanbanBoard.style.overflowY = 'hidden';
+            kanbanBoard.style.display = 'flex';
+            kanbanBoard.style.flexWrap = 'nowrap';
+            kanbanBoard.style.scrollBehavior = 'auto'; // Disable smooth for instant response
+            kanbanBoard.style.userSelect = 'none'; // Prevent text selection while dragging
+
+            // ===== MOUSE WHEEL SCROLL =====
+            // ===== MOUSE WHEEL SCROLL =====
+            kanbanBoard.addEventListener('wheel', (evt) => {
+                // Check if we are scrolling INSIDE a column (which has vertical scroll)
+                const scrollableColumn = evt.target.closest('.kanban-cards-container');
+
+                // If inside a column and it HAS scrollable content, STRICTLY allow default vertical scroll
+                // and PREVENT any board horizontal scroll mapping.
+                if (scrollableColumn && scrollableColumn.scrollHeight > scrollableColumn.clientHeight) {
+                    evt.stopPropagation(); // Stop event from bubbling to any other handlers
+                    return; // Let default browser behavior (vertical scroll) happen
+                }
+
+                // If NOT in a scrollable column, map vertical scroll to horizontal board scroll
+                if (Math.abs(evt.deltaY) > Math.abs(evt.deltaX)) {
+                    evt.preventDefault();
+                    kanbanBoard.scrollLeft += evt.deltaY;
+                }
+            }, { passive: false });
+
+            // ===== DRAG TO SCROLL (Mouse) =====
+            let isDragging = false;
+            let startX = 0;
+            let scrollLeftStart = 0;
+
+            kanbanBoard.addEventListener('mousedown', (e) => {
+                // Only start drag if clicking on the board itself, not on cards
+                if (e.target.closest('.kanban-card') || e.target.closest('button')) return;
+                isDragging = true;
+                startX = e.pageX - kanbanBoard.offsetLeft;
+                scrollLeftStart = kanbanBoard.scrollLeft;
+                e.preventDefault();
+            });
+
+            kanbanBoard.addEventListener('mouseleave', () => {
+                isDragging = false;
+            });
+
+            kanbanBoard.addEventListener('mouseup', () => {
+                isDragging = false;
+            });
+
+            kanbanBoard.addEventListener('mousemove', (e) => {
+                if (!isDragging) return;
+                e.preventDefault();
+                const x = e.pageX - kanbanBoard.offsetLeft;
+                const walk = (x - startX) * 1.5; // multiply for faster scroll
+                kanbanBoard.scrollLeft = scrollLeftStart - walk;
+            });
+
+            // ===== TOUCH SCROLL (Mobile) =====
+            let touchStartX = 0;
+            let touchScrollLeft = 0;
+
+            kanbanBoard.addEventListener('touchstart', (e) => {
+                touchStartX = e.touches[0].pageX;
+                touchScrollLeft = kanbanBoard.scrollLeft;
+            }, { passive: true });
+
+            kanbanBoard.addEventListener('touchmove', (e) => {
+                const touchX = e.touches[0].pageX;
+                const walk = (touchStartX - touchX) * 1.2;
+                kanbanBoard.scrollLeft = touchScrollLeft + walk;
+            }, { passive: true });
+
+            console.log('✅ Scroll handlers attached (wheel + drag + touch)');
+        } else {
+            console.error('❌ Kanban board NOT found inside listener setup');
+        }
+
+        if (addKanbanColumnBtn) {
+            console.log('✅ Add Column Button found');
+            addKanbanColumnBtn.onclick = async (e) => {
+                e.preventDefault();
+                const t = prompt('Nome da coluna:');
+                if (t) {
+                    try {
+                        const userId = await getCurrentUserId();
+                        if (!userId) {
+                            showToast('Erro: Não autenticado', 'error');
+                            return;
+                        }
+                        // Optimistic Update (optional, but let's stick to fetch for safety first)
+                        const { error } = await supabase.from('kanban_columns').insert([{
+                            user_id: userId,
+                            title: t,
+                            color: '#E13584',
+                            position: kanbanData.length + 1
+                        }]);
+
+                        if (error) throw error;
+                        fetchKanbanData(); // Refresh board
+                        showToast('Coluna criada!', 'success');
+                    } catch (err) {
+                        console.error(err);
+                        alert('Erro ao criar coluna');
+                    }
+                }
+            };
+        } else { console.error('❌ Add Column Button NOT found'); }
+
+        if (addLeadBtn) {
+            console.log('✅ Add Lead Button found');
+            addLeadBtn.onclick = (e) => {
+                e.preventDefault();
+                addLeadModal.classList.remove('hidden');
+                addLeadModal.classList.add('flex');
+            };
+        }
+
+        if (cancelLeadModalBtn) cancelLeadModalBtn.onclick = () => {
+            addLeadModal.classList.add('hidden');
+            addLeadModal.classList.remove('flex');
+            addLeadForm.reset();
+        };
+
+        if (addLeadForm) addLeadForm.onsubmit = async (e) => {
+            e.preventDefault();
+            const name = document.getElementById('lead-name-input').value;
+            const phone = document.getElementById('lead-phone-input').value;
+            const value = document.getElementById('lead-value-input').value;
+            const product = document.getElementById('lead-product-input').value;
+            const email = document.getElementById('lead-email-input').value;
+
+            if (name && phone) {
+                const defaultColId = kanbanData.length > 0 ? kanbanData[0].id : 1;
+
+                if (supabase) {
+                    try {
+                        showGlobalLoader(); // Show loader for action
+                        const userId = await getCurrentUserId();
+                        if (!userId) {
+                            showToast('Erro: Não autenticado', 'error');
+                            hideGlobalLoader();
+                            return;
+                        }
+
+                        const newLead = {
+                            user_id: userId,
+                            name,
+                            phone,
+                            value: parseFloat(value) || 0,
+                            product: product || '',
+                            email: email || '',
+                            column_id: defaultColId,
+                            avatar_url: `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=random&color=fff`,
+                            status: 'cold',
+                            created_at: new Date().toISOString()
+                        };
+
+                        const { data, error } = await supabase.from('leads').insert([newLead]).select();
+
+                        if (error) throw error;
+
+                        if (data && data[0]) {
+                            newLead.id = data[0].id; // Use DB ID
+
+                            // Update State
+                            const col = kanbanData.find(c => c.id === defaultColId);
+                            if (col) col.items.unshift(newLead);
+
+                            showToast('Lead adicionado!', 'success');
+                            cancelLeadModalBtn.click();
+                            renderKanban();
+                        }
+                    } catch (err) {
+                        console.error('Supabase Add Lead Error:', err);
+                        Swal.fire('Erro', 'Não foi possível conectar ao servidor.', 'error');
+                    } finally {
+                        hideGlobalLoader();
+                    }
+                } else {
+                    Swal.fire('Erro', 'Sistema desconectado.', 'error');
+                }
+            }
+        };
+    };
+
+    // Make handleKanbanClick global too
+    window.handleKanbanClick = async function (e) {
+        // Temperature Badge Toggle (Inline)
+        const tempBadge = e.target.closest('.temp-badge');
+        if (tempBadge) {
+            e.stopPropagation();
+            const lid = parseInt(tempBadge.dataset.leadId);
+            const colEl = tempBadge.closest('.kanban-column');
+            const cid = colEl ? parseInt(colEl.dataset.colid) : null;
+            if (lid && cid) {
+                toggleLeadTemp(lid, cid);
+            }
+            return;
+        }
+
+        const removeColBtn = e.target.closest('.remove-col');
+        const editColBtn = e.target.closest('.edit-col');
+        const removeLeadBtn = e.target.closest('.remove-lead');
+        const card = e.target.closest('.kanban-card');
+
+        if (removeColBtn) {
+            const result = await Swal.fire({
+                title: 'Remover coluna?',
+                text: "Os leads nesta coluna serão perdidos!",
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#ef4444',
+                cancelButtonColor: '#334155',
+                confirmButtonText: 'Sim, remover',
+                cancelButtonText: 'Cancelar',
+                background: '#1e293b',
+                color: '#fff'
+            });
+            if (result.isConfirmed) {
+                try {
+                    const colId = parseInt(removeColBtn.dataset.colid);
+                    // Supabase Delete
+                    const { error } = await supabase.from('kanban_columns').delete().eq('id', colId);
+                    if (error) throw error;
+
+                    kanbanData = kanbanData.filter(c => c.id !== colId);
+                    renderKanban();
+                    showToast('Coluna removida', 'success');
+                } catch (err) {
+                    console.error(err);
+                    showToast('Erro ao remover coluna (verifique se há leads nela)', 'error');
+                }
+            }
+        }
+        if (editColBtn) {
+            const c = kanbanData.find(x => x.id === parseInt(editColBtn.dataset.colid));
+            if (c) {
+                const { value: formValues } = await Swal.fire({
+                    title: 'Editar Coluna',
+                    html: `
+                        <div class="flex flex-col gap-4 text-left">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-400 mb-1">Nome da Coluna</label>
+                                <input id="swal-col-title" class="swal2-input m-0 w-full bg-white/5 border border-white/10 text-white focus:border-zap-primary" placeholder="Nome da Coluna" value="${c.title}">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-400 mb-1">Cor do Neon</label>
+                                <div class="flex gap-2 justify-center mt-2">
+                                    <div class="color-option w-8 h-8 rounded-full cursor-pointer border-2 border-transparent hover:scale-110 transition-transform bg-[#E13584]" data-color="#E13584" title="Neon Pink"></div>
+                                    <div class="color-option w-8 h-8 rounded-full cursor-pointer border-2 border-transparent hover:scale-110 transition-transform bg-[#8A6CFF]" data-color="#8A6CFF" title="Neon Purple"></div>
+                                    <div class="color-option w-8 h-8 rounded-full cursor-pointer border-2 border-transparent hover:scale-110 transition-transform bg-[#F59E0B]" data-color="#F59E0B" title="Neon Orange"></div>
+                                    <div class="color-option w-8 h-8 rounded-full cursor-pointer border-2 border-transparent hover:scale-110 transition-transform bg-[#10B981]" data-color="#10B981" title="Neon Green"></div>
+                                    <div class="color-option w-8 h-8 rounded-full cursor-pointer border-2 border-transparent hover:scale-110 transition-transform bg-[#3B82F6]" data-color="#3B82F6" title="Neon Blue"></div>
+                                    <div class="color-option w-8 h-8 rounded-full cursor-pointer border-2 border-transparent hover:scale-110 transition-transform bg-[#06B6D4]" data-color="#06B6D4" title="Cyan"></div>
+                                    <div class="color-option w-8 h-8 rounded-full cursor-pointer border-2 border-transparent hover:scale-110 transition-transform bg-[#8B5CF6]" data-color="#8B5CF6" title="Violet"></div>
+                                    <div class="color-option w-8 h-8 rounded-full cursor-pointer border-2 border-transparent hover:scale-110 transition-transform bg-[#EF4444]" data-color="#EF4444" title="Red"></div>
+                                    <div class="color-option w-8 h-8 rounded-full cursor-pointer border-2 border-transparent hover:scale-110 transition-transform bg-[#D946EF]" data-color="#D946EF" title="Fuchsia"></div>
+                                    <div class="color-option w-8 h-8 rounded-full cursor-pointer border-2 border-transparent hover:scale-110 transition-transform bg-[#84cc16]" data-color="#84cc16" title="Lime"></div>
+                                    <input type="color" id="swal-col-color" class="w-8 h-8 p-0 border-0 rounded-full cursor-pointer ml-2" value="${c.color || '#E13584'}" title="Cor Personalizada">
+                                </div>
+                            </div>
+                        </div>
+                    `,
+                    background: '#1e293b',
+                    color: '#fff',
+                    confirmButtonColor: '#8b5cf6',
+                    showCancelButton: true,
+                    focusConfirm: false,
+                    didOpen: () => {
+                        const colorOptions = Swal.getPopup().querySelectorAll('.color-option');
+                        const colorInput = Swal.getPopup().querySelector('#swal-col-color');
+
+                        colorOptions.forEach(opt => {
+                            opt.addEventListener('click', () => {
+                                colorInput.value = opt.dataset.color;
+                                // Visual feedback
+                                colorOptions.forEach(o => o.style.borderColor = 'transparent');
+                                opt.style.borderColor = '#fff';
+                            });
+                        });
+                    },
+                    preConfirm: () => {
+                        return [
+                            document.getElementById('swal-col-title').value,
+                            document.getElementById('swal-col-color').value
+                        ]
+                    }
+                });
+
+                if (formValues) {
+                    try {
+                        const newTitle = formValues[0];
+                        const newColor = formValues[1];
+                        const colId = c.id;
+
+                        // Supabase Update
+                        const { error } = await supabase
+                            .from('kanban_columns')
+                            .update({ title: newTitle, color: newColor })
+                            .eq('id', colId);
+
+                        if (error) throw error;
+
+                        c.title = newTitle;
+                        c.color = newColor;
+                        renderKanban();
+                        showToast('Coluna atualizada!', 'success');
+                    } catch (err) {
+                        console.error(err);
+                        showToast('Erro ao atualizar coluna', 'error');
+                    }
+                }
+            }
+        }
+        if (removeLeadBtn) {
+            e.stopPropagation(); // Stop card click
+            const result = await Swal.fire({
+                title: 'Remover lead?',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#ef4444',
+                cancelButtonColor: '#334155',
+                confirmButtonText: 'Sim',
+                cancelButtonText: 'Não',
+                background: '#1e293b',
+                color: '#fff'
+            });
+            if (result.isConfirmed) {
+                try {
+                    const lid = parseInt(removeLeadBtn.dataset.leadid);
+                    // Supabase Delete
+                    const { error } = await supabase.from('leads').delete().eq('id', lid);
+
+                    if (error) throw error;
+
+                    fetchKanbanData(); // Refresh Board
+                    showToast('Lead removido', 'success');
+                } catch (err) {
+                    console.error(err);
+                    showToast('Erro ao remover lead', 'error');
+                }
+            }
+        }
+    }
+
+    // Call setups
+    // Call setups securely
+    if (typeof window.setupKanbanListeners === 'function') {
+        window.setupKanbanListeners();
+    } else {
+        console.error('window.setupKanbanListeners is not a function');
+    }
+
+    // Event Listeners do Modal
+    if (closeLeadModalBtn) closeLeadModalBtn.addEventListener('click', closeLeadDetailsModal);
+    if (cancelLeadDetailsBtn) cancelLeadDetailsBtn.addEventListener('click', closeLeadDetailsModal);
+
+    // Temperature Badge Interactive (Modal)
+    const modalTempBtn = document.getElementById('lead-temp-badge-btn');
+    if (modalTempBtn) {
+        modalTempBtn.addEventListener('click', () => {
+            const temps = ['cold', 'warm', 'hot'];
+            const current = modalTempBtn.dataset.temp || 'cold';
+            const nextIndex = (temps.indexOf(current) + 1) % temps.length;
+            updateModalTempBadge(temps[nextIndex]);
+        });
+    }
+
+    // Tabs
+    leadTabBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            leadTabBtns.forEach(b => {
+                b.classList.remove('active', 'text-white', 'border-zap-primary');
+                b.classList.add('text-zap-text-secondary', 'border-transparent');
+            });
+            btn.classList.add('active', 'text-white', 'border-zap-primary');
+            btn.classList.remove('text-zap-text-secondary', 'border-transparent');
+
+            leadTabContents.forEach(c => c.classList.add('hidden'));
+            document.getElementById('lead-tab-' + btn.dataset.tab).classList.remove('hidden');
+        });
+    });
+
+    // Adicionar nota
+    const addNoteBtn = document.getElementById('add-note-btn');
+    const newNoteInput = document.getElementById('new-note-input');
+    if (addNoteBtn) addNoteBtn.addEventListener('click', () => {
+        if (!currentEditingLead || !newNoteInput.value.trim()) return;
+        if (!currentEditingLead.notes) currentEditingLead.notes = [];
+        currentEditingLead.notes.unshift({
+            text: newNoteInput.value.trim(),
+            createdAt: new Date().toISOString()
+        });
+        newNoteInput.value = '';
+        renderLeadNotes();
+        showToast('Nota adicionada!', 'success');
+    });
+
+    // Adicionar lembrete
+    const addReminderBtn = document.getElementById('add-reminder-btn');
+    if (addReminderBtn) addReminderBtn.addEventListener('click', () => {
+        const date = document.getElementById('reminder-date').value;
+        const time = document.getElementById('reminder-time').value;
+        const text = document.getElementById('reminder-text').value.trim();
+        if (!currentEditingLead || !date || !time || !text) {
+            showToast('Preencha todos os campos do lembrete', 'warning');
+            return;
+        }
+        if (!currentEditingLead.reminders) currentEditingLead.reminders = [];
+        currentEditingLead.reminders.push({ date, time, text });
+        document.getElementById('reminder-date').value = '';
+        document.getElementById('reminder-time').value = '';
+        document.getElementById('reminder-text').value = '';
+        renderLeadReminders();
+        showToast('Lembrete adicionado!', 'success');
+    });
+
+    // Deletar nota/lembrete (event delegation)
+    document.getElementById('notes-list')?.addEventListener('click', (e) => {
+        if (e.target.closest('.delete-note-btn')) {
+            const idx = parseInt(e.target.closest('.delete-note-btn').dataset.idx);
+            if (currentEditingLead && currentEditingLead.notes) {
+                currentEditingLead.notes.splice(idx, 1);
+                renderLeadNotes();
+            }
+        }
+    });
+    document.getElementById('reminders-list')?.addEventListener('click', (e) => {
+        if (e.target.closest('.delete-reminder-btn')) {
+            const idx = parseInt(e.target.closest('.delete-reminder-btn').dataset.idx);
+            if (currentEditingLead && currentEditingLead.reminders) {
+                currentEditingLead.reminders.splice(idx, 1);
+                renderLeadReminders();
+            }
+        }
+    });
+
+    // Salvar alterações do lead
+    if (saveLeadDetailsBtn) {
+        saveLeadDetailsBtn.addEventListener('click', () => {
+            console.log('💾 Save button clicked');
+            window.saveLeadDetails();
+        });
+    }
+
+
+    // Clicar no card para abrir modal (usando event delegation GLOBAL)
+    document.addEventListener('click', (e) => {
+        // Debug global de cliques
+        // console.log('🎯 Clicked on:', e.target); 
+
+        const card = e.target.closest('.kanban-card');
+        if (card && !e.target.closest('.remove-lead')) {
+            console.log('🎯 Kanban Card Clicked:', card);
+
+            const leadId = parseInt(card.dataset.leadId);
+            const colDiv = card.closest('[data-colid]');
+            const columnId = colDiv ? parseInt(colDiv.dataset.colid) : null;
+
+            console.log('🎯 Extracted IDs - Lead:', leadId, 'Column:', columnId);
+
+            if (leadId && columnId) {
+                openLeadDetailsModal(leadId, columnId);
+            }
+        }
+    });
+    // --- LÓGICA DO MÓDULO GATILHOS (PREMIUM) ---
+    // Mock Data se vazio
+    if (!gatilhos || gatilhos.length === 0) {
+        gatilhos = [
+            { id: 1, nome: 'Boas-vindas', event: 'message_received', keyword: 'oi, olá, bom dia', action: 'send_message', response: 'Olá! Bem-vindo ao ZapFlow. Como posso ajudar?', isActive: true },
+            { id: 2, nome: 'Interesse', event: 'tag_added', keyword: 'interesse', action: 'move_funnel', response: 'Mover para: Em Negociação', isActive: true },
+            { id: 3, nome: 'Ausência', event: 'message_received', keyword: 'horário', action: 'send_message', response: 'Nosso horário de atendimento é das 9h às 18h.', isActive: false }
+        ];
+    }
+
+    let selectedGatilhoId = null;
+    let isEditingGatilho = false;
+
+    // Referências do DOM
+    const gatilhoListContainer = document.getElementById('gatilho-list');
+    const gatilhoWelcomePanel = document.getElementById('gatilho-welcome-panel');
+    const gatilhoDetailsPanel = document.getElementById('gatilho-details-panel');
+    const gatilhoTitleDisplay = document.getElementById('gatilho-title-display');
+    const gatilhoEventSelect = document.getElementById('gatilho-event-select');
+    const gatilhoKeywordInput = document.getElementById('gatilho-keyword-input');
+    const gatilhoActionSelect = document.getElementById('gatilho-action-select');
+    const gatilhoResponseInput = document.getElementById('gatilho-response-input');
+    const gatilhoStatusToggle = document.getElementById('gatilho-status-toggle');
+    const gatilhoStatusText = document.getElementById('gatilho-status-text');
+
+    // Botões
+    const addGatilhoBtn = document.getElementById('add-gatilho-btn');
+    const editGatilhoBtn = document.getElementById('edit-gatilho-btn');
+    const saveGatilhoBtn = document.getElementById('save-gatilho-btn');
+    const deleteGatilhoBtn = document.getElementById('delete-gatilho-btn');
+    const searchGatilhoInput = document.getElementById('search-gatilho-input');
+
+    function renderGatilhos() {
+        if (!gatilhoListContainer) return;
+        gatilhoListContainer.innerHTML = '';
+        const term = searchGatilhoInput ? searchGatilhoInput.value.toLowerCase() : '';
+
+        const filtered = gatilhos.filter(g => g.nome.toLowerCase().includes(term));
+
+        if (filtered.length === 0) {
+            gatilhoListContainer.innerHTML = `<div class="text-center py-8 text-gray-500"><p class="text-sm">Nenhum gatilho encontrado.</p></div>`;
+            return;
+        }
+
+        filtered.forEach(g => {
+            const isActive = g.id === selectedGatilhoId;
+            const itemDiv = document.createElement('div');
+            itemDiv.className = `p-4 rounded-xl cursor-pointer border transition-all duration-300 group ${isActive
+                ? 'bg-zap-primary/20 border-zap-primary/50 shadow-lg shadow-zap-primary/10'
+                : 'bg-white/5 border-white/5 hover:bg-white/10 hover:border-white/10'}`;
+
+            // Icon based on event
+            let iconSvg = '';
+            if (g.event === 'message_received') iconSvg = '<path stroke-linecap="round" stroke-linejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />';
+            else if (g.event === 'funnel_enter') iconSvg = '<path stroke-linecap="round" stroke-linejoin="round" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />';
+            else iconSvg = '<path stroke-linecap="round" stroke-linejoin="round" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />';
+
+            itemDiv.innerHTML = `
+                <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-3">
+                        <div class="w-8 h-8 rounded-lg flex items-center justify-center ${isActive ? 'bg-zap-primary text-white' : 'bg-white/10 text-gray-400 group-hover:bg-white/20 group-hover:text-white'} transition-colors">
+                            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">${iconSvg}</svg>
+                        </div>
+                        <h4 class="font-semibold text-sm ${isActive ? 'text-white' : 'text-gray-300 group-hover:text-white'} truncate" style="max-width: 140px;">${g.nome}</h4>
+                    </div>
+                    <div class="w-2 h-2 rounded-full ${g.isActive ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-gray-600'}"></div>
+                </div>
+                <div class="flex items-center gap-2 text-xs text-zap-text-secondary pl-11">
+                    <span class="bg-black/30 px-1.5 py-0.5 rounded border border-white/5 truncate max-w-[100px]">${g.event === 'message_received' ? 'Msg Recebida' : (g.event === 'funnel_enter' ? 'Funil' : 'Tag')}</span>
+                    <span class="text-gray-600">&rarr;</span>
+                    <span class="bg-black/30 px-1.5 py-0.5 rounded border border-white/5 truncate max-w-[100px]">${g.action === 'send_message' ? 'Enviar Msg' : (g.action === 'move_funnel' ? 'Mover' : 'Add Tag')}</span>
+                </div>
+            `;
+
+            itemDiv.addEventListener('click', () => {
+                selectedGatilhoId = g.id;
+                isEditingGatilho = false;
+                displayGatilhoDetails(g.id);
+                renderGatilhos();
+            });
+            gatilhoListContainer.appendChild(itemDiv);
+        });
+        const dc = document.getElementById('dashboard-gatilhos-count'); if (dc) dc.textContent = gatilhos.length;
+    }
+
+    function displayGatilhoDetails(id) {
+        const gatilho = gatilhos.find(g => g.id === id);
+        if (!gatilho) return;
+
+        gatilhoWelcomePanel.classList.add('hidden');
+        gatilhoDetailsPanel.classList.remove('hidden');
+        gatilhoDetailsPanel.classList.add('flex');
+
+        gatilhoTitleDisplay.value = gatilho.nome;
+        gatilhoEventSelect.value = gatilho.event;
+        gatilhoKeywordInput.value = gatilho.keyword || '';
+        gatilhoActionSelect.value = gatilho.action;
+        gatilhoResponseInput.value = gatilho.response || '';
+
+        // Status Update
+        updateGatilhoStatusUI(gatilho.isActive);
+
+        // Read-only state
+        setGatilhoEditMode(false);
+    }
+
+    function updateGatilhoStatusUI(isActive) {
+        if (!gatilhoStatusToggle) return;
+        if (isActive) {
+            gatilhoStatusToggle.classList.remove('bg-gray-600');
+            gatilhoStatusToggle.classList.add('bg-green-500');
+            gatilhoStatusToggle.querySelector('span').classList.add('translate-x-4');
+            gatilhoStatusToggle.querySelector('span').classList.remove('translate-x-0');
+            gatilhoStatusText.textContent = 'Ativo';
+            gatilhoStatusText.classList.replace('text-gray-400', 'text-green-400');
+        } else {
+            gatilhoStatusToggle.classList.add('bg-gray-600');
+            gatilhoStatusToggle.classList.remove('bg-green-500');
+            gatilhoStatusToggle.querySelector('span').classList.remove('translate-x-4');
+            gatilhoStatusToggle.querySelector('span').classList.add('translate-x-0');
+            gatilhoStatusText.textContent = 'Inativo';
+            gatilhoStatusText.classList.replace('text-green-400', 'text-gray-400');
+        }
+    }
+
+    function setGatilhoEditMode(editable) {
+        isEditingGatilho = editable;
+        const inputs = [gatilhoTitleDisplay, gatilhoEventSelect, gatilhoKeywordInput, gatilhoActionSelect, gatilhoResponseInput];
+
+        inputs.forEach(input => {
+            if (!input) return;
+            input.disabled = !editable;
+            input.readOnly = !editable; // select elements don't obey readonly but disabled works
+            if (editable) {
+                input.classList.add('bg-black/40', 'border-zap-primary/50');
+                input.classList.remove('bg-black/20', 'border-white/10');
+            } else {
+                input.classList.remove('bg-black/40', 'border-zap-primary/50');
+                input.classList.add('bg-black/20', 'border-white/10');
+            }
+        });
+
+        // Title styling specific
+        if (editable) {
+            gatilhoTitleDisplay.classList.remove('bg-transparent', 'border-none');
+            gatilhoTitleDisplay.classList.add('bg-white/10', 'border-b', 'border-zap-primary');
+        } else {
+            gatilhoTitleDisplay.classList.add('bg-transparent', 'border-none');
+            gatilhoTitleDisplay.classList.remove('bg-white/10', 'border-b', 'border-zap-primary');
+        }
+
+        if (editable) {
+            editGatilhoBtn.classList.add('hidden');
+            saveGatilhoBtn.classList.remove('hidden');
+        } else {
+            editGatilhoBtn.classList.remove('hidden');
+            saveGatilhoBtn.classList.add('hidden');
+        }
+    }
+
+    // Listeners
+    if (searchGatilhoInput) searchGatilhoInput.addEventListener('input', renderGatilhos);
+
+    if (addGatilhoBtn) addGatilhoBtn.addEventListener('click', () => {
+        const newId = Date.now();
+        const newGatilho = {
+            id: newId,
+            nome: 'Nova Automação',
+            event: 'message_received',
+            keyword: '',
+            action: 'send_message',
+            response: '',
+            isActive: false
+        };
+        gatilhos.unshift(newGatilho);
+        selectedGatilhoId = newId;
+        renderGatilhos();
+        displayGatilhoDetails(newId);
+        setGatilhoEditMode(true); // Auto-enter edit mode
+        gatilhoTitleDisplay.focus();
+        showToast('Novo gatilho criado', 'success');
+    });
+
+    if (editGatilhoBtn) editGatilhoBtn.addEventListener('click', () => setGatilhoEditMode(true));
+
+    if (saveGatilhoBtn) saveGatilhoBtn.addEventListener('click', () => {
+        const g = gatilhos.find(x => x.id === selectedGatilhoId);
+        if (g) {
+            g.nome = gatilhoTitleDisplay.value;
+            g.event = gatilhoEventSelect.value;
+            g.keyword = gatilhoKeywordInput.value;
+            g.action = gatilhoActionSelect.value;
+            g.response = gatilhoResponseInput.value;
+
+            setGatilhoEditMode(false);
+            renderGatilhos();
+            showToast('Gatilho salvo com sucesso!', 'success');
+
+            // Simular save API
+            if (API_BASE) { /* fetch implementation */ }
+        }
+    });
+
+    if (gatilhoStatusToggle) gatilhoStatusToggle.addEventListener('click', () => {
+        if (!isEditingGatilho) {
+            // Allow toggling status even in read-mode? Yes, usually better UX.
+            const g = gatilhos.find(x => x.id === selectedGatilhoId);
+            if (g) {
+                g.isActive = !g.isActive;
+                updateGatilhoStatusUI(g.isActive);
+                renderGatilhos(); // Update list dot
+            }
+        }
+    });
+
+    if (deleteGatilhoBtn) deleteGatilhoBtn.addEventListener('click', async () => {
+        const result = await Swal.fire({
+            title: 'Excluir Gatilho?',
+            text: "Essa ação não pode ser desfeita.",
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#ef4444',
+            cancelButtonColor: '#334155',
+            confirmButtonText: 'Sim, excluir',
+            cancelButtonText: 'Cancelar',
+            background: '#1e293b',
+            color: '#fff'
+        });
+
+        if (result.isConfirmed) {
+            gatilhos = gatilhos.filter(g => g.id !== selectedGatilhoId);
+            selectedGatilhoId = null;
+            gatilhoDetailsPanel.classList.add('hidden');
+            gatilhoWelcomePanel.classList.remove('hidden');
+            renderGatilhos();
+            showToast('Gatilho removido.', 'success');
+        }
+    });
+
+    // Initial Load
+    // Initial Load - Wrapped in IIFE to avoid top-level await syntax error if scope is confused
+    (async () => {
+        try {
+            await fetchKanbanData();
+        } catch (e) {
+            console.error('Initial Load Error:', e);
+        }
+    })();
+});
+
+// ===== SUPABASE FUNCTIONS =====
+
+// --- LOADER & CONNECTION HELPERS ---
+function showGlobalLoader() {
+    const loader = document.getElementById('global-loader');
+    if (loader) loader.classList.remove('hidden');
+}
+
+function hideGlobalLoader() {
+    const loader = document.getElementById('global-loader');
+    if (loader) loader.classList.add('hidden');
+}
+
+async function fetchWithTimeout(promise, ms = 10000) {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+            reject(new Error('Tempo limite de conexão excedido'));
+        }, ms);
+
+        promise
+            .then(value => {
+                clearTimeout(timer);
+                resolve(value);
+            })
+            .catch(reason => {
+                clearTimeout(timer);
+                reject(reason);
+            });
+    });
+}
+
+// ===== SUPABASE FUNCTIONS (ONLINE ONLY) =====
+
+async function fetchKanbanData() {
     showGlobalLoader();
 
     if (!supabase) {
         console.error('❌ Supabase client not initialized');
         hideGlobalLoader();
+        Swal.fire({
+            title: 'Erro de Configuração',
+            text: 'Não foi possível conectar ao sistema. A biblioteca Supabase não foi carregada.',
+            icon: 'error',
+            confirmButtonText: 'Tentar Novamente',
+            allowOutsideClick: false
+        }).then(() => location.reload());
         return;
     }
 
     try {
-        console.log('🔄 Fetching data from Supabase...');
+        console.log('🔄 Fetching data from Supabase (Online Only)...');
 
-        const { data: boards, error: boardsErr } = await supabase.from('kanban_boards').select('*').order('created_at', { ascending: true });
-        if (boardsErr) throw boardsErr;
+        // Parallel Fetch with Timeout
+        // We use Promise.all to fetch columns and leads simultaneously
+        const [columnsResult, leadsResult] = await fetchWithTimeout(
+            Promise.all([
+                supabase.from('kanban_columns').select('*').order('position', { ascending: true }),
+                supabase.from('leads').select('*')
+            ])
+        );
 
-        if (!boards || boards.length === 0) {
-            console.log('⚠️ Nenhum quadro encontrado. Criando Quadro Padrão...');
-            const userId = await getCurrentUserId();
-            const { data: newBoard, error: insErr } = await supabase.from('kanban_boards').insert({ title: 'Comercial Padrão', user_id: userId }).select().single();
-            if (insErr) throw insErr;
-            kanbanBoards = [newBoard];
-            currentBoardId = newBoard.id;
-            await createDefaultColumns(currentBoardId);
-        } else {
-            kanbanBoards = boards;
-            if (!currentBoardId || !kanbanBoards.find(b => b.id === currentBoardId)) {
-                currentBoardId = kanbanBoards[0].id;
-            }
-        }
-        
-        updateBoardSelector();
+        const { data: columns, error: colError } = columnsResult;
+        const { data: leads, error: leadError } = leadsResult;
 
-        const { data: columns, error: colError } = await supabase.from('kanban_columns')
-            .select('*')
-            .eq('board_id', currentBoardId)
-            .order('position', { ascending: true });
         if (colError) throw colError;
-        
-        let columnIds = columns.map(c => c.id);
-        const { data: leads, error: leadError } = await supabase.from('leads').select('*').in('column_id', columnIds.length ? columnIds : [0]);
         if (leadError) throw leadError;
 
+        // If no columns (first run), verify if we need to create defaults or if it's just empty
+        if (!columns || columns.length === 0) {
+            console.log('⚠️ No columns found in Supabase. Creating defaults...');
+            await createDefaultColumns();
+            return fetchKanbanData(); // Retry once
+        }
+
+        // Map columns and attach leads
         kanbanData = columns.map(col => ({
             id: col.id,
             title: col.title,
             color: col.color || '#E13584',
             items: leads.filter(l => l.column_id === col.id).map(l => ({
                 ...l,
-                temp: l.status === 'hot' ? 'hot' : 'warm',
+                temp: l.status === 'hot' ? 'hot' : 'warm', // Mapping back to UI helpers
                 badge: l.status === 'hot' ? 'Muito Quente' : 'Quente'
             }))
         }));
 
         renderKanban();
 
-        supabase.from('media_library').select('*').order('created_at', { ascending: false }).then(({ data }) => {
-            if (data) {
-                midias = data.filter(m => m.type === 'image' || m.type === 'video');
-                audios = data.filter(m => m.type === 'audio');
-                documentos = data.filter(m => m.type === 'document');
-                if (typeof renderMidias === 'function') renderMidias();
-                if (typeof renderAudios === 'function') renderAudios();
-                if (typeof renderDocumentos === 'function') renderDocumentos();
-            }
-        });
+        // 4. Fetch Media Library (Non-blocking)
+        // We don't await this strictly for the critical path, but good to have
+        supabase
+            .from('media_library')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .then(({ data, error }) => {
+                if (data) {
+                    midias = data.filter(m => m.type === 'image' || m.type === 'video');
+                    audios = data.filter(m => m.type === 'audio');
+                    documentos = data.filter(m => m.type === 'document');
+                    if (typeof renderMidias === 'function') renderMidias();
+                    if (typeof renderAudios === 'function') renderAudios();
+                    if (typeof renderDocumentos === 'function') renderDocumentos();
+                }
+            });
 
-        console.log('✅ Kanban Data loaded successfully!');
+        console.log('✅ All data loaded successfully!');
         hideGlobalLoader();
 
     } catch (error) {
         console.error('❌ Data Load Error:', error);
         hideGlobalLoader();
-        Swal.fire('Erro de Conexão', 'Não foi possível carregar os quadros do Kanban.', 'error');
-    }
-}
 
-function updateBoardSelector() {
-    const selector = document.getElementById('board-selector');
-    if (!selector) return;
-
-    selector.innerHTML = '';
-    kanbanBoards.forEach(b => {
-        const opt = document.createElement('option');
-        opt.value = b.id;
-        opt.textContent = b.title;
-        if (b.id === currentBoardId) opt.selected = true;
-        selector.appendChild(opt);
-    });
-
-    selector.onchange = (e) => {
-        currentBoardId = parseInt(e.target.value);
-        fetchKanbanData();
-    };
-
-    const addBtn = document.getElementById('add-board-btn');
-    if (addBtn && !addBtn.dataset.bound) {
-        addBtn.dataset.bound = 'true';
-        addBtn.addEventListener('click', async () => {
-            const { value: title } = await Swal.fire({
-                title: 'Novo Quadro',
-                input: 'text',
-                inputPlaceholder: 'Ex: Suporte, Vendas...',
-                showCancelButton: true,
-                confirmButtonText: 'Criar'
-            });
-            if (!title) return;
-            const userId = await getCurrentUserId();
-            const { data: newBoard, error } = await supabase.from('kanban_boards').insert({ title, user_id: userId }).select().single();
-            if (error) { Swal.fire('Erro', error.message, 'error'); return; }
-            if (newBoard) {
-                await createDefaultColumns(newBoard.id);
-                currentBoardId = newBoard.id;
-                kanbanBoards.push(newBoard);
-                updateBoardSelector();
-                fetchKanbanData();
+        // Show Retry Modal
+        Swal.fire({
+            title: 'Erro de Conexão',
+            text: 'Não foi possível carregar os dados. Verifique sua internet.',
+            icon: 'error',
+            confirmButtonText: 'Tentar Novamente',
+            allowOutsideClick: false,
+            confirmButtonColor: '#E13584'
+        }).then((result) => {
+            if (result.isConfirmed) {
+                location.reload();
             }
         });
     }
 }
 
-async function createDefaultColumns(boardId) {
-    const defaults = [
-        { board_id: boardId, title: 'Novos Leads', position: 1 },
-        { board_id: boardId, title: 'Em Atendimento', position: 2 },
-        { board_id: boardId, title: 'Agendados', position: 3 },
-        { board_id: boardId, title: 'Venda Realizada', position: 4 }
-    ];
+async function createDefaultColumns() {
     const userId = await getCurrentUserId();
-    const defaultsWithUser = defaults.map(d => ({ ...d, user_id: userId }));
-    await supabase.from('kanban_columns').insert(defaultsWithUser);
+    if (!userId) return;
+    const defaults = [
+        { user_id: userId, title: 'Novos Leads', color: '#E13584', position: 1 },
+        { user_id: userId, title: 'Em Atendimento', color: '#8A6CFF', position: 2 },
+        { user_id: userId, title: 'Agendados', color: '#F59E0B', position: 3 },
+        { user_id: userId, title: 'Venda Realizada', color: '#10B981', position: 4 },
+        { user_id: userId, title: 'Perdido', color: '#3B82F6', position: 5 }
+    ];
+    await supabase.from('kanban_columns').insert(defaults);
 }
 
 // --- APEXCHARTS CONFIGURATION ---
@@ -2281,46 +3355,7 @@ window.closeLeadDetailsModal = function () {
 
 
 // --- PERIOD FILTER DROPDOWN ---
-requestAnimationFrame(() => {
-    // --- LÓGICA MOBILE HAMBURGUER MENU ---
-    const sidebar = document.getElementById('sidebar');
-    if(sidebar) {
-        // Create an overlay
-        let overlay = document.createElement('div');
-        overlay.className = 'mobile-overlay';
-        document.body.appendChild(overlay);
-
-        // Function to toggle
-        window.toggleMobileSidebar = () => {
-            sidebar.classList.toggle('sidebar-open');
-            overlay.classList.toggle('active');
-        };
-
-        overlay.addEventListener('click', window.toggleMobileSidebar);
-
-        // Inject Hamburger button into Headers
-        const headers = document.querySelectorAll('#main-app-container header');
-        headers.forEach(h => {
-            if(!h.querySelector('.mobile-hamburger-btn')) {
-                const btn = document.createElement('button');
-                btn.className = 'mobile-hamburger-btn md:hidden p-2 -ml-2 mr-2 text-white/70 hover:text-white rounded-lg hover:bg-white/10 transition-colors';
-                btn.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>';
-                btn.onclick = window.toggleMobileSidebar;
-                h.insertBefore(btn, h.firstChild);
-            }
-        });
-        
-        // Auto-close sidebar on item click (mobile)
-        const navLinks = sidebar.querySelectorAll('a[data-target], button[data-target]');
-        navLinks.forEach(l => {
-            l.addEventListener('click', () => {
-                if(window.innerWidth <= 768 && sidebar.classList.contains('sidebar-open')) {
-                    window.toggleMobileSidebar();
-                }
-            });
-        });
-    }
-
+document.addEventListener('DOMContentLoaded', () => {
     const filterBtn = document.getElementById('period-filter-btn');
     const filterMenu = document.getElementById('period-filter-menu');
     const filterText = document.getElementById('period-filter-text');
@@ -2373,43 +3408,14 @@ requestAnimationFrame(() => {
 var agendamentos = [];
 var currentCalendarDate = new Date();
 var selectedDate = new Date(); // ===== EVENT LISTENERS =====
-requestAnimationFrame(async () => {
+document.addEventListener('DOMContentLoaded', async () => {
     // 1. Sidebar Toggle
     const sidebarToggle = document.getElementById('sidebar-toggle');
-    const tabKanban = document.getElementById('tab-kanban');
     const tabAgendamentos = document.getElementById('tab-agendamentos');
     const kanbanContent = document.getElementById('kanban-content');
     const agendamentosContent = document.getElementById('agendamentos-content');
     const kanbanActions = document.getElementById('kanban-actions');
     const agendamentosActions = document.getElementById('agendamentos-actions');
-
-    if (tabKanban && tabAgendamentos) {
-        tabKanban.addEventListener('click', () => {
-            kanbanContent.classList.remove('hidden');
-            kanbanActions.classList.remove('hidden');
-            agendamentosContent.classList.add('hidden');
-            agendamentosActions.classList.add('hidden');
-
-            tabKanban.classList.add('bg-zap-primary', 'text-white');
-            tabKanban.classList.remove('text-gray-400', 'hover:text-white');
-            tabAgendamentos.classList.remove('bg-zap-primary', 'text-white');
-            tabAgendamentos.classList.add('text-gray-400', 'hover:text-white');
-        });
-
-        tabAgendamentos.addEventListener('click', () => {
-            kanbanContent.classList.add('hidden');
-            kanbanActions.classList.add('hidden');
-            agendamentosContent.classList.remove('hidden');
-            agendamentosActions.classList.remove('hidden');
-
-            tabAgendamentos.classList.add('bg-zap-primary', 'text-white');
-            tabAgendamentos.classList.remove('text-gray-400', 'hover:text-white');
-            tabKanban.classList.remove('bg-zap-primary', 'text-white');
-            tabKanban.classList.add('text-gray-400', 'hover:text-white');
-            
-            if (typeof renderCalendar === 'function') renderCalendar();
-        });
-    }
 
     // Calendar Navigation
     const prevMonthBtn = document.getElementById('prev-month-btn');
@@ -2816,340 +3822,3 @@ function handleUpcomingClick(dateStr, id) {
 }
 
 
-
-window.renderKanban = function renderKanban() {
-    const board = document.getElementById('kanban-board');
-    if (!board) {
-        console.error('CRITICAL: #kanban-board element not found!');
-        return;
-    }
-    board.style.display = 'flex';
-    board.style.opacity = '1';
-    board.innerHTML = '';
-
-    if (typeof kanbanData === 'undefined' || !kanbanData) return;
-
-    kanbanData.forEach((column, colIndex) => {
-        const totalValue = column.items.reduce((acc, item) => acc + (Number(item.value) || 0), 0);
-        const formattedTotal = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalValue);
-        const colColor = column.color || '#E13584';
-
-        const colDiv = document.createElement('div');
-        colDiv.className = 'glass rounded-2xl w-80 flex-shrink-0 flex flex-col border border-white/5 bg-zap-sidebar/50 max-h-full transition-all duration-300 snap-center shadow-xl backdrop-blur-sm ml-4 first:ml-0';
-        colDiv.dataset.colid = column.id;
-
-        colDiv.innerHTML = `
-        <!-- Column Header -->
-        <div class="p-4 border-b border-white/5 bg-black/20 rounded-t-2xl group relative overflow-hidden">
-             <div class="absolute top-0 left-0 w-full h-1 opacity-80" style="background: linear-gradient(to right, ${colColor}, transparent);"></div>
-             <div class="absolute top-0 left-0 w-full h-[1px] bg-${colColor} shadow-[0_0_10px_${colColor}]"></div>
-            <div class="flex justify-between items-start mb-3 relative z-10">
-                <div class="flex items-center gap-3">
-                    <div class="w-3 h-3 rounded-full shadow-[0_0_8px_inset] shadow-current" style="background-color: ${colColor}; color: ${colColor}; box-shadow: 0 0 10px ${colColor};"></div>
-                    <h3 class="text-base font-bold text-white uppercase tracking-wider truncate drop-shadow-sm" title="${column.title}">${column.title}</h3>
-                    <span class="text-[10px] font-bold text-white bg-white/10 px-2.5 py-0.5 rounded-full border border-white/5 shadow-sm">${column.items.length}</span>
-                </div>
-                <div class="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-all duration-200 transform translate-x-2 group-hover:translate-x-0">
-                     <button class="p-1.5 rounded-lg hover:bg-white/10 text-gray-400 hover:text-white edit-col transition-colors" data-colid="${column.id}" title="Editar Nome"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg></button>
-                     <button class="p-1.5 rounded-lg hover:bg-white/10 text-red-500/70 hover:text-red-400 remove-col transition-colors" data-colid="${column.id}" title="Excluir Coluna"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg></button>
-                </div>
-            </div>
-            <div class="flex items-center justify-between mt-1 bg-white/5 p-2 rounded-lg border border-white/5">
-                <span class="text-xs text-zap-text-secondary font-medium uppercase tracking-wide">Valor Total</span>
-                <span class="text-xs font-bold text-white tracking-wide">${formattedTotal}</span>
-            </div>
-        </div>
-        <!-- Cards Container -->
-        <div class="kanban-cards-container flex-grow p-3 space-y-3 overflow-y-auto custom-scrollbar min-h-[100px] scroll-smooth" style="max-height: calc(100vh - 260px);"></div>
-        `;
-
-        const itemsDiv = colDiv.querySelector('.kanban-cards-container');
-
-        const tempColors = {
-            'hot': 'bg-red-500/20 text-red-400 border-red-500/30',
-            'warm': 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
-            'cold': 'bg-blue-500/20 text-blue-400 border-blue-500/30'
-        };
-
-        column.items.forEach(item => {
-            const card = document.createElement('div');
-            card.className = 'kanban-item kanban-card group bg-zap-card hover:bg-zap-card-hover p-4 rounded-xl shadow-lg border border-white/5 cursor-pointer relative z-10 transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl hover:border-zap-primary/30';
-            card.draggable = true;
-            card.dataset.id = item.id;
-            card.dataset.colid = column.id;
-
-            const itemValue = Number(item.value) || 0;
-            const formattedItemValue = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(itemValue);
-            const avatarUrl = item.avatar || 'https://ui-avatars.com/api/?name=' + encodeURIComponent(item.name) + '&background=random';
-
-            const currentTemp = item.temp || 'cold';
-            const colorClass = tempColors[currentTemp] || tempColors['cold'];
-            const tempLabel = currentTemp === 'hot' ? 'Quente' : (currentTemp === 'warm' ? 'Morno' : 'Frio');
-            const tempBadge = `<span class="temp-badge px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide border ${colorClass} cursor-pointer hover:opacity-80 transition-opacity" data-lead-id="${item.id}" title="Alterar temperatura">${tempLabel}</span>`;
-            
-            const originDisplay = (item.origin === 'Outros' && item.customOrigin) ? item.customOrigin : (item.origin || '');
-
-            card.innerHTML = `
-                <div class="flex items-start gap-3 mb-2">
-                    <div class="relative shrink-0">
-                        <img src="${avatarUrl}" class="w-10 h-10 rounded-full object-cover border-2 border-white/10 shadow-sm" alt="${item.name}">
-                         <div class="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-zap-card rounded-full" title="Online"></div>
-                    </div>
-                    <div class="flex-1 min-w-0">
-                        <div class="flex items-center flex-wrap gap-2 mb-1">
-                            <h4 class="font-bold text-white text-sm truncate leading-tight">${item.name}</h4>
-                            ${tempBadge}
-                        </div>
-                        <a href="https://wa.me/${(item.phone || '').replace(/\D/g, '')}" target="_blank" onclick="event.stopPropagation()" class="text-xs text-green-400 hover:text-green-300 flex items-center gap-1.5 transition-colors font-medium w-fit">
-                           <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/></svg>
-                           ${item.phone || 'WhatsApp'}
-                        </a>
-                    </div>
-                </div>
-                <!-- Extras -->
-                <div class="space-y-1.5 mb-2 pl-1">
-                    ${originDisplay ? `
-                    <div class="flex items-center gap-1.5">
-                        <span class="text-[9px] font-bold text-gray-500 uppercase tracking-wider">Origem:</span>
-                        <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/10 text-purple-300 border border-purple-500/20 truncate max-w-[150px]">${originDisplay}</span>
-                    </div>` : ''}
-                </div>
-                
-                <div class="mb-3 pl-1">
-                     ${item.product ? `<div class="text-xs text-gray-400 flex items-center gap-1.5"><svg class="w-3 h-3 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"></path></svg>${item.product}</div>` : ''}
-                </div>
-
-                <div class="flex justify-between items-center border-t border-white/5 pt-3 mt-1">
-                    <span class="text-xs font-bold text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded border border-emerald-500/20 shadow-sm">${formattedItemValue}</span>
-                    <div class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                        <button class="p-1.5 rounded-full hover:bg-zap-primary text-gray-400 hover:text-white transition-colors" title="Ver Detalhes">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
-                        </button>
-                    </div>
-                </div>
-            `;
-
-            card.addEventListener('click', (e) => {
-                if (e.target.closest('button') || e.target.closest('a')) return;
-                e.preventDefault();
-                e.stopPropagation();
-                if (typeof window.openLeadDetailsModal === 'function') {
-                    window.openLeadDetailsModal(item.id, column.id);
-                } else {
-                    console.log('Lead modal hook', item);
-                }
-            });
-
-            const detailBtn = card.querySelector('button[title="Ver Detalhes"]');
-            if (detailBtn) {
-                detailBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    if (typeof window.openLeadDetailsModal === 'function') {
-                       window.openLeadDetailsModal(item.id, column.id);
-                    }
-                });
-            }
-
-            itemsDiv.appendChild(card);
-        });
-
-        // Initialize SortableJS
-        if (typeof Sortable !== 'undefined') {
-            new Sortable(itemsDiv, {
-                group: 'kanban', // set both lists to same group
-                animation: 150,
-                ghostClass: 'opacity-50',
-                onEnd: async function (evt) {
-                    const itemEl = evt.item;  // dragged HTMLElement
-                    const leadId = itemEl.dataset.id;
-                    const toDiv = evt.to.closest('.glass');
-                    if (!toDiv) return;
-                    const newColId = toDiv.dataset.colid;
-                    const oldColId = itemEl.dataset.colid;
-                    
-                    if (leadId && newColId && newColId !== oldColId) {
-                        try {
-                            const { error } = await supabase.from('leads').update({ column_id: parseInt(newColId) }).eq('id', parseInt(leadId));
-                            if (error) { throw error; }
-                            itemEl.dataset.colid = newColId;
-                            console.log(`Lead ${leadId} moved from ${oldColId} to ${newColId}`);
-                            if (typeof fetchKanbanData === 'function') {
-                                setTimeout(fetchKanbanData, 500); 
-                            }
-                        } catch (e) {
-                            console.error(e);
-                            if (typeof Swal !== 'undefined') Swal.fire('Erro', 'Não foi possível salvar o card no banco de dados.', 'error');
-                            // Revert on error
-                            if (typeof fetchKanbanData === 'function') fetchKanbanData();
-                        }
-                    }
-                }
-            });
-        }
-
-        board.appendChild(colDiv);
-    });
-};
-window.renderKanban();
-
-
-
-requestAnimationFrame(() => {
-    const addLeadBtn = document.getElementById('add-lead-btn');
-    const addColumnBtn = document.getElementById('add-kanban-column-btn');
-
-    if (addColumnBtn) {
-        addColumnBtn.addEventListener('click', async () => {
-            const { value: title } = await Swal.fire({
-                title: 'Nova Coluna',
-                input: 'text',
-                inputPlaceholder: 'Nome da coluna...',
-                showCancelButton: true,
-                confirmButtonText: 'Criar'
-            });
-            if (!title) return;
-            const userId = await getCurrentUserId();
-            const { data, error } = await supabase.from('kanban_columns').insert([{
-                user_id: userId,
-                board_id: currentBoardId,
-                title: title,
-                position: kanbanData.length
-            }]).select();
-            
-            if (error) { Swal.fire('Erro', error.message, 'error'); return; }
-            if (data && data.length > 0) {
-                kanbanData.push({
-                    id: data[0].id,
-                    title: data[0].title,
-                    color: '#E13584',
-                    items: []
-                });
-                if (typeof renderKanban === 'function') renderKanban();
-                Swal.fire({
-                    icon: 'success',
-                    title: 'Coluna criada!',
-                    toast: true,
-                    position: 'top-end',
-                    showConfirmButton: false,
-                    timer: 2000,
-                    background: '#10B981',
-                    color: '#fff'
-                });
-            }
-        });
-    }
-
-    const addLeadForm = document.getElementById('add-lead-form');
-    const addLeadModal = document.getElementById('add-lead-modal');
-    const cancelLeadModalBtn = document.getElementById('cancel-lead-modal-btn');
-    
-    window.openAddLeadModal = function(colId = null) {
-        if(colId) window.currentAddLeadColId = colId;
-        else if (typeof kanbanData !== 'undefined' && kanbanData.length > 0) window.currentAddLeadColId = kanbanData[0].id;
-        else window.currentAddLeadColId = 0; 
-        
-        if(addLeadForm) addLeadForm.reset();
-        if(addLeadModal) {
-            addLeadModal.classList.remove('hidden');
-            addLeadModal.classList.add('flex');
-        }
-    };
-
-    if (addLeadBtn) {
-        addLeadBtn.addEventListener('click', () => {
-            window.openAddLeadModal();
-        });
-    }
-
-    if (cancelLeadModalBtn) {
-           cancelLeadModalBtn.addEventListener('click', () => {
-               if(addLeadModal) {
-                 addLeadModal.classList.add('hidden');
-                 addLeadModal.classList.remove('flex');
-               }
-           });
-    }
-
-    if (addLeadForm) {
-        addLeadForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            
-            const name = document.getElementById('lead-name-input').value;
-            const phone = document.getElementById('lead-phone-input').value;
-            const product = document.getElementById('lead-product-input').value;
-            const valueStr = document.getElementById('lead-value-input').value;
-            const email = document.getElementById('lead-email-input').value;
-            const value = parseFloat(valueStr) || 0;
-            
-            if(!supabase) return;
-            const { data: { session } } = await supabase.auth.getSession();
-            if (!session) return;
-            
-            showGlobalLoader();
-            
-            const newLead = {
-                user_id: session.user.id,
-                name: name,
-                phone: phone,
-                product: product,
-                value: value,
-                email: email,
-                column_id: window.currentAddLeadColId,
-                status: 'warm'
-            };
-            
-            const { error } = await supabase.from('leads').insert([newLead]);
-            hideGlobalLoader();
-            
-            if (error) {
-                console.error(error);
-                if (typeof Swal !== 'undefined') Swal.fire('Erro', 'Não foi possível salvar o lead. Verifica as políticas do Supabase RLS.', 'error');
-            } else {
-                addLeadModal.classList.add('hidden');
-                addLeadModal.classList.remove('flex');
-                if (typeof Swal !== 'undefined') Swal.fire({ toast: true, position: 'top-end', showConfirmButton: false, timer: 3000, icon: 'success', title: 'Lead adicionado' });
-                if (typeof fetchKanbanData === 'function') fetchKanbanData();
-            }
-        });
-    }
-});
-
-
-
-window.fetchAllData = async function() {
-    console.log('🔄 Fetching ALL global data...');
-    if (typeof showGlobalLoader === 'function') showGlobalLoader();
-    
-    try {
-        if (!supabase) throw new Error('Supabase not accessible');
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) return;
-
-        // Load Messages
-        const { data: msgs, error: msgsErr } = await supabase.from('messages').select('*').order('created_at', { ascending: false });
-        if (!msgsErr && msgs) {
-            messages = msgs.map(m => ({ id: m.id, title: m.title, content: m.content, isFavorite: m.is_favorite }));
-            if (typeof renderMessages === 'function') renderMessages();
-        }
-
-        // Load Funnels
-        const { data: funs, error: funsErr } = await supabase.from('funnels').select('*, funnel_items(*)').order('created_at', { ascending: false });
-        if (!funsErr && funs) {
-            funis = funs.map(f => ({ id: f.id, title: f.title, description: f.description, isFavorite: f.is_favorite, items: (f.funnel_items || []).map(fi => ({ dbId: fi.id, itemId: parseInt(fi.item_id), type: fi.type, delayMinutes: fi.delay_minutes, delaySeconds: fi.delay_seconds, position: fi.position })).sort((a,b)=>a.position - b.position) }));
-            if (typeof renderFunis === 'function') renderFunis();
-        }
-
-        // Trigger existing Kanban & Media routines
-        if (typeof fetchKanbanData === 'function') await fetchKanbanData();
-        
-        // Update dashboard
-        if (typeof updateDashboardCounters === 'function') updateDashboardCounters();
-        
-    } catch (e) {
-        console.error('Error fetching global data:', e);
-    } finally {
-        if (typeof hideGlobalLoader === 'function') hideGlobalLoader();
-    }
-};
-// Fecha o listener `DOMContentLoaded` iniciado no topo do arquivo
-});

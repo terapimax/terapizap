@@ -19,7 +19,21 @@ app.use('/uploads', express.static(uploadsDir));
 // Serve static frontend files from the parent directory
 app.use(express.static(path.join(__dirname, '../')));
 
-const upload = multer({ dest: uploadsDir });
+// Serve zapflow-painel.html at root (simulating vercel.json)
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, '../zapflow-painel.html'));
+});
+
+// Mantém a extensão original para que /uploads sirva o Content-Type correto (áudio/imagem/pdf)
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: uploadsDir,
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname || '').toLowerCase().replace(/[^a-z0-9.]/g, '');
+      cb(null, Date.now() + '-' + Math.random().toString(36).slice(2, 10) + ext);
+    },
+  }),
+});
 
 // Messages endpoints
 app.get('/api/messages', (req, res) => {
@@ -86,14 +100,56 @@ app.get('/api/midias', (req, res) => {
   res.json(rows);
 });
 
+// ---- Conversão de áudio para o formato de mensagem de voz do WhatsApp (OGG/Opus mono 48 kHz) ----
+const { execFile } = require('child_process');
+const FFMPEG = process.env.FFMPEG_PATH || 'ffmpeg';
+const FFPROBE = process.env.FFPROBE_PATH || 'ffprobe';
+const run = (bin, args) => new Promise((resolve, reject) =>
+  execFile(bin, args, { windowsHide: true, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) =>
+    err ? reject(new Error((stderr || err.message).toString().slice(-400))) : resolve(stdout.toString())));
+
+async function probeAudio(file) {
+  const out = await run(FFPROBE, ['-v', 'error', '-select_streams', 'a:0', '-show_entries',
+    'stream=codec_name,channels:format=format_name,duration', '-of', 'json', file]);
+  const j = JSON.parse(out);
+  const s = (j.streams || [])[0] || {};
+  return { codec: s.codec_name, channels: s.channels, format: (j.format || {}).format_name || '', duration: parseFloat((j.format || {}).duration) || 0 };
+}
+
+// Retorna { path, duration, converted }. Se o ffmpeg não existir, mantém o arquivo original.
+async function toWhatsAppVoice(inputPath) {
+  let info;
+  try { info = await probeAudio(inputPath); } catch (e) {
+    console.warn('⚠️ ffprobe indisponível ou arquivo inválido — áudio salvo sem conversão:', e.message);
+    return { path: inputPath, duration: 0, converted: false };
+  }
+  if (info.codec === 'opus' && info.format.includes('ogg') && info.channels === 1) {
+    return { path: inputPath, duration: info.duration, converted: false };
+  }
+  const outPath = inputPath.replace(/\.[^.\\/]*$/, '') + '-voice.ogg';
+  await run(FFMPEG, ['-y', '-v', 'error', '-i', inputPath, '-vn', '-map_metadata', '-1', '-ac', '1', '-ar', '48000',
+    '-c:a', 'libopus', '-b:a', '32k', '-application', 'voip', outPath]);
+  fs.unlink(inputPath, () => {});
+  const after = await probeAudio(outPath).catch(() => ({ duration: info.duration }));
+  return { path: outPath, duration: after.duration || info.duration, converted: true };
+}
+
 // Audios Endpoints
-app.post('/api/audios', upload.single('file'), (req, res) => {
+app.post('/api/audios', upload.single('file'), async (req, res) => {
   const file = req.file;
   const title = req.body.title || (file ? file.originalname : 'Sem título');
-  const duration = req.body.duration || 0;
 
   if (!file) return res.status(400).json({ error: 'file required' });
-  const url = `/uploads/${path.basename(file.path)}`;
+  let voice;
+  try {
+    voice = await toWhatsAppVoice(file.path);
+  } catch (e) {
+    fs.unlink(file.path, () => {});
+    return res.status(422).json({ error: 'Não foi possível converter o áudio: ' + e.message });
+  }
+  const url = `/uploads/${path.basename(voice.path)}`;
+  const duration = Math.round(voice.duration) || Number(req.body.duration) || 0;
+  if (voice.converted) console.log(`🎙️ Áudio convertido para OGG/Opus: ${title} (${duration}s)`);
 
   const info = db.prepare('INSERT INTO audios (title, url, duration) VALUES (?, ?, ?)')
     .run(title, url, duration);

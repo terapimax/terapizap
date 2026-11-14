@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Itens de Teste Locais</title>
+<style>
+  :root { --bg:#14152b; --card:#202240; --text:#e5e7eb; --muted:#9ca3af; --accent:#e13584; --ok:#10b981; --err:#ef4444; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui, sans-serif; padding:24px 16px; }
+  main { max-width:560px; margin:0 auto; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  p.note { color:var(--muted); margin:0 0 20px; font-size:13px; }
+  form, section { background:var(--card); border-radius:12px; padding:16px; margin-bottom:16px; }
+  label { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px; }
+  input, select, textarea { width:100%; padding:9px 10px; border-radius:8px; border:1px solid #3a3d66; background:#16182f; color:var(--text); font:inherit; }
+  textarea { min-height:90px; resize:vertical; }
+  button { margin-top:14px; width:100%; padding:10px; border:0; border-radius:8px; background:var(--accent); color:#fff; font-weight:600; cursor:pointer; }
+  #status { margin-top:10px; font-size:13px; min-height:1.2em; }
+  ul { margin:0; padding-left:18px; } li { margin:2px 0; } .muted { color:var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Itens de teste (sem banco)</h1>
+  <p class="note">Provisório: salva no servidor local (SQLite, porta 3001). A extensão lê daqui no login <b>admin@zapflow.local</b>. Depois de adicionar, clique em atualizar na extensão.</p>
+
+  <form id="f">
+    <label for="kind">Tipo</label>
+    <select id="kind">
+      <option value="messages">Mensagem de texto</option>
+      <option value="audios">Áudio (de preferência .ogg / Opus)</option>
+      <option value="midias">Imagem ou vídeo</option>
+      <option value="documents">Documento</option>
+    </select>
+    <label for="title">Título</label>
+    <input id="title" required placeholder="Ex.: Boas-vindas">
+    <div id="textBox"><label for="content">Texto</label><textarea id="content"></textarea></div>
+    <div id="fileBox" hidden><label for="file">Arquivo</label><input id="file" type="file"></div>
+    <button type="submit">Adicionar</button>
+    <div id="status"></div>
+  </form>
+
+  <section><b>Itens cadastrados</b><div id="list" class="muted">Carregando…</div></section>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const kinds = { messages: 'Mensagens', audios: 'Áudios', midias: 'Mídias', documents: 'Documentos' };
+  $('kind').onchange = () => {
+    const isText = $('kind').value === 'messages';
+    $('textBox').hidden = !isText; $('fileBox').hidden = isText;
+  };
+  async function refresh() {
+    const parts = await Promise.all(Object.keys(kinds).map(async (k) => {
+      const rows = await fetch('/api/' + k).then(r => r.json()).catch(() => []);
+      const items = rows.map(r => '<li>' + String(r.title).replace(/</g, '&lt;') + '</li>').join('') || '<li class="muted">nenhum</li>';
+      return '<p style="margin:10px 0 2px">' + kinds[k] + '</p><ul>' + items + '</ul>';
+    }));
+    $('list').innerHTML = parts.join('');
+  }
+  $('f').onsubmit = async (e) => {
+    e.preventDefault();
+    const kind = $('kind').value, title = $('title').value.trim();
+    $('status').style.color = ''; $('status').textContent = 'Enviando…';
+    try {
+      let res;
+      if (kind === 'messages') {
+        res = await fetch('/api/messages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, content: $('content').value }) });
+      } else {
+        const file = $('file').files[0];
+        if (!file) throw new Error('Escolha um arquivo.');
+        const fd = new FormData(); fd.append('file', file); fd.append('title', title);
+        res = await fetch('/api/' + kind, { method: 'POST', body: fd });
+      }
+      if (!res.ok) throw new Error('Erro ' + res.status);
+      $('status').style.color = 'var(--ok)'; $('status').textContent = 'Adicionado!';
+      $('f').reset(); $('kind').onchange(); refresh();
+    } catch (err) {
+      $('status').style.color = 'var(--err)'; $('status').textContent = err.message;
+    }
+  };
+  refresh();
+</script>
+</body>
+</html>
