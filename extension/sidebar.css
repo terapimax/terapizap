@@ -498,3 +498,4 @@ html[data-zf-theme="light"] .zf-sched-when input { color-scheme: light; }
 .zf-imp-done b { display: block; font-size: 14px; }
 .zf-imp-err { padding: 12px; border-radius: 10px; background: var(--zf-hot-soft); color: var(--zf-hot); font-size: 13px; margin-bottom: 12px; }
 .zf-lead .zf-set { padding: 4px 0; }
+.zf-lead-block { font-size: 13px; line-height: 1.45; padding: 10px 12px; border-radius: 10px; background: var(--zf-warn-soft); color: var(--zf-warn); margin: 12px 0 4px; }

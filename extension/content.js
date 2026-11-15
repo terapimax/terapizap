@@ -10,7 +10,7 @@
   let sb = null;
   let currentFilter = 'all', showFavOnly = false, searchQuery = '';
   let messagesData = [], mediaData = [], funnelsData = [], triggersData = [], funnelsError = false, loaded = false;
-  const settings = { hideBar: false, barFav: false, barFunnels: true, stopOnReply: true, keywords: true, capture: true, captureSkip: false, labelSync: true, theme: 'auto' };
+  const settings = { hideBar: false, barFav: false, barFunnels: true, stopOnReply: true, keywords: true, capture: true, captureSkip: false, labelSync: true, history: false, theme: 'auto' };
   const $ = (id) => document.getElementById(id);
 
   // ===== INÍCIO =====
@@ -45,6 +45,7 @@
     if ($('zf-s-capture')) $('zf-s-capture').checked = settings.capture !== false;
     if ($('zf-s-capture-skip')) $('zf-s-capture-skip').checked = !!settings.captureSkip;
     if ($('zf-s-label-sync')) $('zf-s-label-sync').checked = settings.labelSync !== false;
+    if ($('zf-s-history')) $('zf-s-history').checked = settings.history === true;
     applyTheme();
     renderQuickBar();
   }
@@ -327,6 +328,10 @@
     $('zf-s-capture').onchange = (e) => { settings.capture = e.target.checked; saveSettings(); };
     $('zf-s-capture-skip').onchange = (e) => { settings.captureSkip = e.target.checked; saveSettings(); };
     $('zf-s-label-sync').onchange = (e) => { settings.labelSync = e.target.checked; saveSettings(); };
+    $('zf-s-history').onchange = (e) => {
+      settings.history = e.target.checked; saveSettings();
+      if (settings.history && leadState.status === 'lead' && leadChat) backfillHistory(leadChat, true);
+    };
     $('zf-open-import').onclick = () => openImport();
     $('zf-import-back').onclick = () => switchTab('lead');
     $('zf-lead-open').onclick = () => { if (leadState.lead) openPanel('/dashboard/leads?lead=' + leadState.lead.id); };
@@ -1104,7 +1109,8 @@
   }
 
   // quiet: atualização em segundo plano (não mostra "carregando" nem atropela o que você está digitando)
-  async function loadLead({ quiet = false } = {}) {
+  // force: a mudança foi sua (botão, Enter): redesenha mesmo com um campo em foco
+  async function loadLead({ quiet = false, force = false } = {}) {
     const my = ++leadSeq;
     if (!sb || !loaded) { leadState = { status: 'idle' }; return renderLead(); }
     if (!leadChat) { leadState = { status: 'nochat' }; return renderLead(); }
@@ -1124,6 +1130,7 @@
       }
       if (my !== leadSeq) return;
       leadState = lead ? { status: 'lead', lead, tasks } : { status: 'none' };
+      if (lead) backfillHistory(leadChat);
     } catch (e) {
       if (my !== leadSeq) return;
       console.warn('ZapFlow: falha ao carregar o lead', e);
@@ -1131,7 +1138,7 @@
       leadState = { status: 'error', message: old ? 'O banco está na versão antiga. Rode o supabase/setup.sql de novo no Supabase.' : 'Não foi possível carregar o lead. Tente de novo em instantes.' };
     }
     const box = $('zf-lead');
-    const typing = quiet && box && box.contains(document.activeElement) && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+    const typing = quiet && !force && box && box.contains(document.activeElement) && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
     if (typing) { leadDirty = true; return; }
     renderLead();
   }
@@ -1177,7 +1184,9 @@
 
     if (st === 'none') {
       const col = inboxColumn();
+      const blockLabel = blockingLabelOf(leadChat.labels);
       box.innerHTML = `${head}
+        ${blockLabel ? `<p class="zf-lead-block">Tem a etiqueta “${escapeHtml(blockLabel.name)}” no WhatsApp: a captura automática ignora este contato.</p>` : ''}
         <p class="zf-lead-note">Este contato ainda não é um lead.</p>
         <button type="button" class="zf-btn-primary" id="zf-lead-save">Salvar como lead</button>
         <p class="zf-about zf-lead-where">${col ? 'Entra em ' + escapeHtml(stageLabel(col)) + '.' : 'Fica em Leads (você ainda não tem quadro no Kanban).'}</p>`;
@@ -1192,6 +1201,7 @@
     const tags = crm.tags.filter((t) => applied.has(t.id));
     const free = crm.tags.filter((t) => !applied.has(t.id));
     const boardsWithout = crm.boards.filter((b) => !cards.some((c) => c.board_id === b.id) && crm.columns.some((c) => c.board_id === b.id));
+    const blocking = tags.find((t) => t.is_blocking);
 
     const cardRows = cards.map((c) => {
       const b = crm.boards.find((x) => x.id === c.board_id);
@@ -1208,9 +1218,10 @@
     box.innerHTML = `${head}
       <div class="zf-seg zf-lead-temp" role="group" aria-label="Temperatura">${TEMP_OPTS.map(([v, l]) => `<button type="button" data-zf-temp="${v}" aria-pressed="${L.status === v}">${l}</button>`).join('')}</div>
 
+      ${blocking ? `<p class="zf-lead-block">Ignorado pela etiqueta “${escapeHtml(blocking.name)}”: não é capturado, não entra no Kanban e não guarda histórico. Tire a etiqueta para voltar ao normal.</p>` : `
       <h3 class="zf-lead-h">Kanban</h3>
       ${cardRows || (crm.boards.length ? '<p class="zf-lead-note">Fora do Kanban.</p>' : '<p class="zf-lead-note">Crie um quadro no Kanban do painel para acompanhar por etapa.</p>')}
-      ${addCard}
+      ${addCard}`}
 
       <h3 class="zf-lead-h">Etiquetas</h3>
       <div class="zf-tagrow">${tags.map((t) => `<span class="zf-tag"${t.wa_label_id ? ' title="Ligada à etiqueta do WhatsApp"' : ''}><i style="background:${escapeHtml(t.color)}"></i>${escapeHtml(t.name)}<button type="button" data-zf-untag="${t.id}" aria-label="Tirar a etiqueta ${escapeHtml(t.name)}">${window._zfSVG.close}</button></span>`).join('') || '<span class="zf-lead-note">Nenhuma etiqueta.</span>'}</div>
@@ -1247,7 +1258,9 @@
       console.warn('ZapFlow lead:', e);
       showToast('Não foi possível salvar: ' + ((e && e.message) || 'erro'));
     }
-    await loadLead({ quiet: true });
+    const refocus = document.activeElement && document.activeElement.id === 'zf-lead-tag';
+    await loadLead({ quiet: true, force: true });
+    if (refocus) $('zf-lead-tag')?.focus(); // dá para pôr várias etiquetas seguidas
   }
 
   function leadUpdate(patch, okMsg) {
@@ -1330,6 +1343,7 @@
       return;
     }
     showToast(data && data.stage ? `Lead salvo em ${data.stage}` : 'Lead salvo');
+    backfillHistory(leadChat, true);
     loadLead();
   }
 
@@ -1348,9 +1362,12 @@
     lastCapture.set(m.chatId, now);
     if (!capture) return;
     const preview = m.text ? m.text : (MSG_LABEL[m.msgType] || 'Mensagem');
-    const { data, error } = await sb.rpc('zf_capture_lead', { p_name: m.name, p_phone: m.phone || null, p_wa_id: m.chatId, p_message: preview, p_create: create });
+    const { data, error } = await sb.rpc('zf_capture_lead', { p_name: m.name, p_phone: m.phone || null, p_wa_id: m.chatId, p_message: preview, p_create: create, p_wa_labels: m.labels || null });
     if (error) { console.warn('ZapFlow: captura de lead falhou', error); return; }
-    if (data && data.created) showToast(`Novo lead: ${m.name}${data.stage ? ' → ' + data.stage : ''}`);
+    if (data && data.created) {
+      showToast(`Novo lead: ${m.name}${data.stage ? ' → ' + data.stage : ''}`);
+      backfillHistory({ chatId: m.chatId, phone: m.phone, isGroup: false });
+    }
     if (leadChat && leadChat.chatId === m.chatId) loadLead({ quiet: true });
   }
 
@@ -1401,10 +1418,12 @@
     renderImport();
   }
 
-  function importList() {
+  // withBlocked: inclui as conversas com etiqueta de ignorar ("Fora"...), que nunca são importadas
+  function importList(withBlocked) {
     const o = imp.opts;
     const since = o.days ? Date.now() - o.days * 86400000 : 0;
-    return imp.chats.filter((c) => (!since || c.t >= since) && (o.contacts || !c.isMyContact) && (o.archived || !c.archived) && (!o.label || (c.labels || []).includes(o.label)));
+    return imp.chats.filter((c) => (!since || c.t >= since) && (o.contacts || !c.isMyContact) && (o.archived || !c.archived)
+      && (!o.label || (c.labels || []).includes(o.label)) && (withBlocked || !blockingLabelOf(c.labels)));
   }
   function isKnown(c) {
     const k = phoneKeyOf(c.phone);
@@ -1488,8 +1507,9 @@
   function renderImportSummary() {
     const list = importList();
     const fresh = list.filter((c) => !isKnown(c));
+    const ignored = importList(true).length - list.length;
     const sum = $('zf-imp-sum');
-    if (sum) sum.innerHTML = `<b>${list.length} ${list.length === 1 ? 'conversa' : 'conversas'}</b><span>${fresh.length} ${fresh.length === 1 ? 'nova' : 'novas'} · ${list.length - fresh.length} já ${list.length - fresh.length === 1 ? 'é lead' : 'são leads'}</span>`;
+    if (sum) sum.innerHTML = `<b>${list.length} ${list.length === 1 ? 'conversa' : 'conversas'}</b><span>${fresh.length} ${fresh.length === 1 ? 'nova' : 'novas'} · ${list.length - fresh.length} já ${list.length - fresh.length === 1 ? 'é lead' : 'são leads'}${ignored ? ` · ${ignored} com etiqueta de ignorar (fica${ignored === 1 ? '' : 'm'} de fora)` : ''}</span>`;
     const go = $('zf-imp-go');
     if (go) { go.disabled = !list.length; go.textContent = list.length ? `Importar ${list.length} ${list.length === 1 ? 'conversa' : 'conversas'}` : 'Nenhuma conversa com esses filtros'; }
     const ul = $('zf-imp-list');
@@ -1574,6 +1594,63 @@
     if (e.source !== window || !e.data || e.data.type !== 'ZF_ENGINE_LABEL_CHANGE') return;
     onLabelChange(e.data).catch((err) => console.warn('ZapFlow etiqueta:', err && err.message));
   });
+
+  // ===== HISTÓRICO DE CONVERSAS (opcional) =====
+  // Com "Guardar histórico" ligado, as mensagens das conversas com leads (recebidas e enviadas, por você
+  // ou pelo ZapFlow) vão para o banco (zf_log_messages: últimas 50 por lead, 90 dias) e aparecem na
+  // ficha do lead no painel. Ao abrir a conversa de um lead, as mensagens recentes também são trazidas.
+  const historyQueue = new Map(); // chatId -> { phone, msgs: Map(id -> msg) }
+  let historyTimer = null;
+  const backfilled = new Set();
+
+  function queueHistory(chat, msg) {
+    if (settings.history !== true || !sb || !loaded || !chat || !chat.chatId || chat.isGroup || !msg || !msg.id) return;
+    let q = historyQueue.get(chat.chatId);
+    if (!q) { q = { phone: chat.phone || null, msgs: new Map() }; historyQueue.set(chat.chatId, q); }
+    q.msgs.set(msg.id, Object.assign({}, q.msgs.get(msg.id), msg));
+    // junta as mensagens de alguns segundos numa ida só ao banco
+    if (!historyTimer) historyTimer = setTimeout(flushHistory, 2500);
+  }
+
+  async function flushHistory() {
+    historyTimer = null;
+    const batch = [...historyQueue.entries()];
+    historyQueue.clear();
+    for (const [chatId, q] of batch) {
+      const { error } = await sb.rpc('zf_log_messages', { p_phone: q.phone, p_wa_id: chatId, p_msgs: [...q.msgs.values()] });
+      if (error) console.warn('ZapFlow: histórico não gravado', error);
+    }
+  }
+
+  // Traz as mensagens recentes da conversa (uma vez por conversa enquanto a página estiver aberta)
+  async function backfillHistory(chat, force) {
+    if (settings.history !== true || !sb || !chat || chat.isGroup) return;
+    if (backfilled.has(chat.chatId) && !force) return;
+    backfilled.add(chat.chatId);
+    try {
+      const r = await engineRequest('ZF_ENGINE_CHAT_HISTORY', { chatId: chat.chatId, count: 50 }, 20000);
+      if (!r.ok || !(r.messages || []).length) return;
+      const { error } = await sb.rpc('zf_log_messages', { p_phone: chat.phone || null, p_wa_id: chat.chatId, p_msgs: r.messages });
+      if (error) throw error;
+    } catch (e) {
+      backfilled.delete(chat.chatId);
+      console.warn('ZapFlow: não foi possível trazer o histórico', e);
+    }
+  }
+
+  window.addEventListener('message', (e) => {
+    if (e.source !== window || !e.data) return;
+    if (e.data.type === 'ZF_ENGINE_OUTGOING') queueHistory(e.data.chat, e.data.msg);
+    else if (e.data.type === 'ZF_ENGINE_INCOMING' && e.data.msg) {
+      queueHistory({ chatId: e.data.chatId, phone: e.data.phone, isGroup: false }, e.data.msg);
+    }
+  });
+
+  // Etiqueta de ignorar ("Fora", "Família"...) entre as etiquetas do WhatsApp da conversa
+  function blockingLabelOf(labels) {
+    const ids = new Set((labels || []).map(String));
+    return crm.tags.find((t) => t.is_blocking && t.wa_label_id && ids.has(String(t.wa_label_id))) || null;
+  }
 
   // ===== FUNIS =====
   // Disparo de funis na conversa aberta: esperas reais entre os passos, "digitando…/gravando…"

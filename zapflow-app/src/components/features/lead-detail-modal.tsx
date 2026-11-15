@@ -2,12 +2,13 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { X, MessageCircle, Trash2, Loader2, CalendarPlus, CalendarClock, Bell, Send, Flame, Thermometer, Snowflake, Columns3, Plus, AlertCircle } from "lucide-react";
+import { X, MessageCircle, Trash2, Loader2, CalendarClock, Bell, Send, Flame, Thermometer, Snowflake, Columns3, Plus, AlertCircle } from "lucide-react";
 import { isTopLayer, lockScroll, unlockScroll } from "@/components/ui/modal";
 import { TaskRow, useTaskSheets } from "@/components/features/task-sheets";
 import { TagPicker } from "@/components/features/tags";
+import { LeadHistory } from "@/components/features/lead-history";
 import { useTasks } from "@/hooks/use-tasks";
-import { useAddToBoard, useDeleteLeads, useLead, useUpdateLead } from "@/hooks/use-leads";
+import { useAddToBoard, useDeleteLeads, useLead, useTags, useUpdateLead } from "@/hooks/use-leads";
 import { useAllColumns, useBoards, useRemoveCard } from "@/hooks/use-kanban";
 import { isOpen } from "@/lib/tasks";
 import { ORIGINS, formatPhone, initials, waLink } from "@/lib/leads";
@@ -146,6 +147,9 @@ function LeadForm({ lead, onClose, initialTab }: { lead: LeadFull; onClose: () =
   const savedLead = { id: lead.id, name: lead.name, phone: lead.phone };
 
   const cards = lead.kanban_cards;
+  const { data: allTags = [] } = useTags();
+  // etiqueta de ignorar (salva no lead): ele não entra no Kanban
+  const blocking = allTags.find((t) => t.is_blocking && lead.lead_tags.some((x) => x.tag_id === t.id));
   const cardView = (c: LeadFull["kanban_cards"][number]): CardEdit =>
     cardEdits.get(c.id) ?? { column_id: c.column_id, value: Number(c.value) || 0, product: c.product ?? "" };
   const setCard = (id: number, patch: Partial<CardEdit>) => {
@@ -161,7 +165,6 @@ function LeadForm({ lead, onClose, initialTab }: { lead: LeadFull; onClose: () =
 
   const temp = TEMP[form.status] ?? TEMP.warm;
   const link = waLink(form.phone);
-  const created = lead.created_at ? new Date(lead.created_at) : null;
   const stageChips = useMemo(
     () => cards.map((c) => columns.find((col) => col.id === cardView(c).column_id)?.title).filter(Boolean) as string[],
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -294,7 +297,11 @@ function LeadForm({ lead, onClose, initialTab }: { lead: LeadFull; onClose: () =
               })
             )}
 
-            {boards.length === 0 ? (
+            {blocking ? (
+              <p className="rounded-xl bg-warn-soft text-warn p-3 text-sm">
+                Este lead tem a etiqueta “{blocking.name}”, que manda ignorar: não entra no Kanban, não é capturado pela extensão e não guarda histórico. Tire a etiqueta para voltar ao normal.
+              </p>
+            ) : boards.length === 0 ? (
               <p className="text-sm text-muted">Crie um quadro na tela Kanban para colocar leads nele.</p>
             ) : freeBoards.length > 0 && (
               <div className="rounded-xl bg-surface p-4 flex flex-col gap-3">
@@ -346,31 +353,7 @@ function LeadForm({ lead, onClose, initialTab }: { lead: LeadFull; onClose: () =
             )}
           </div>
         ) : (
-          <ol className="flex flex-col gap-5">
-            {lead.last_contact_at && (
-              <li className="flex gap-3">
-                <span className="w-8 h-8 rounded-full bg-accent-soft text-accent-fg grid place-items-center shrink-0"><MessageCircle className="w-4 h-4" /></span>
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold">Última mensagem recebida</p>
-                  <p className="text-xs text-muted">{new Date(lead.last_contact_at).toLocaleString("pt-BR", { dateStyle: "medium", timeStyle: "short" })}</p>
-                  {lead.last_message && <p className="mt-1.5 text-sm bg-surface rounded-lg px-3 py-2 whitespace-pre-wrap break-words">{lead.last_message}</p>}
-                </div>
-              </li>
-            )}
-            <li className="flex gap-3">
-              <span className="w-8 h-8 rounded-full bg-surface grid place-items-center text-muted shrink-0"><CalendarPlus className="w-4 h-4" /></span>
-              <div>
-                <p className="text-sm font-semibold">Lead criado</p>
-                <p className="text-xs text-muted">
-                  {created ? created.toLocaleString("pt-BR", { dateStyle: "medium", timeStyle: "short" }) : "Data não registrada"}
-                  {form.origin ? ` · origem: ${form.origin}` : ""}
-                </p>
-              </div>
-            </li>
-            <li className="p-4 rounded-xl bg-surface text-sm text-muted">
-              Mensagens, áudios e funis enviados pela extensão vão aparecer aqui quando o registro de envios estiver ativo.
-            </li>
-          </ol>
+          <LeadHistory lead={lead} origin={form.origin} />
         )}
       </div>
 

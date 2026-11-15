@@ -103,6 +103,22 @@ export interface Tag {
   color: string;
   /** etiqueta do WhatsApp Business ligada a esta (a extensão sincroniza as duas) */
   wa_label_id: string | null;
+  /** "ignorar": quem tem não vira lead pelo WhatsApp, não entra no Kanban e não guarda histórico */
+  is_blocking: boolean;
+  created_at: string;
+}
+
+/** Mensagem guardada no histórico do lead (a extensão grava, se o histórico estiver ligado). */
+export interface LeadMessage {
+  id: number;
+  user_id: string;
+  lead_id: number;
+  wa_msg_id: string;
+  from_me: boolean;
+  by_zapflow: boolean;
+  kind: "text" | "audio" | "image" | "video" | "document" | "sticker" | "location" | "contact";
+  body: string | null;
+  at: string;
   created_at: string;
 }
 

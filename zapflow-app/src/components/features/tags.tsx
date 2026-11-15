@@ -1,16 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Loader2, Pencil, Plus, Tag as TagIcon, Trash2, X } from "lucide-react";
+import { Ban, Check, Loader2, Pencil, Plus, Tag as TagIcon, Trash2, X } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/shared";
-import { useDeleteTag, useLeads, useSaveTag, useTags } from "@/hooks/use-leads";
+import { useDeleteTag, useLeads, useSaveTag, useSetTagBlocking, useTags } from "@/hooks/use-leads";
 import { TAG_COLORS, deaccent } from "@/lib/leads";
 import { cn } from "@/lib/utils";
 import type { Tag } from "@/types";
 
 /** Etiqueta: bolinha da cor + nome. */
-export function TagChip({ tag, onRemove, size = "md" }: { tag: Pick<Tag, "name" | "color">; onRemove?: () => void; size?: "sm" | "md" }) {
+export function TagChip({ tag, onRemove, size = "md" }: { tag: Pick<Tag, "name" | "color"> & { is_blocking?: boolean }; onRemove?: () => void; size?: "sm" | "md" }) {
   return (
     <span
       className={cn(
@@ -18,7 +18,9 @@ export function TagChip({ tag, onRemove, size = "md" }: { tag: Pick<Tag, "name" 
         size === "sm" ? "h-5 px-2 text-[11px]" : "h-6 px-2.5 text-xs"
       )}
     >
-      <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: tag.color }} aria-hidden="true" />
+      {tag.is_blocking
+        ? <span title="Etiqueta de ignorar"><Ban className="w-3 h-3 shrink-0 text-hot" aria-label="Ignorar" /></span>
+        : <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: tag.color }} aria-hidden="true" />}
       <span className="truncate">{tag.name}</span>
       {onRemove && (
         <button type="button" onClick={onRemove} aria-label={`Tirar a etiqueta ${tag.name}`} className="-mr-1 h-4 w-4 grid place-items-center rounded-full text-muted hover:text-fg cursor-pointer">
@@ -147,8 +149,11 @@ export function TagManager({ open, onClose }: { open: boolean; onClose: () => vo
   const { data: leads = [] } = useLeads();
   const save = useSaveTag();
   const del = useDeleteTag();
+  const setBlocking = useSetTagBlocking();
   const [editing, setEditing] = useState<{ id?: number; name: string; color: string } | null>(null);
   const [toDelete, setToDelete] = useState<Tag | null>(null);
+  const [toBlock, setToBlock] = useState<Tag | null>(null);
+  const kanbanCount = (tagId: number) => leads.filter((l) => l.lead_tags.some((x) => x.tag_id === tagId) && l.kanban_cards.length > 0).length;
 
   const counts = useMemo(() => {
     const m = new Map<number, number>();
@@ -192,6 +197,15 @@ export function TagManager({ open, onClose }: { open: boolean; onClose: () => vo
                     <span className="flex-1 min-w-0 text-sm font-medium truncate">{t.name}</span>
                     {t.wa_label_id && <span title="Ligada à etiqueta do WhatsApp Business: a extensão sincroniza as duas" className="text-[11px] font-semibold px-1.5 rounded-full bg-ok-soft text-ok">WhatsApp</span>}
                     <span className="text-xs text-muted tabular-nums">{counts.get(t.id) ?? 0} leads</span>
+                    <button
+                      type="button"
+                      aria-pressed={t.is_blocking}
+                      onClick={() => (t.is_blocking ? setBlocking.mutate({ id: t.id, blocking: false }) : setToBlock(t))}
+                      title="Ignorar: quem tem esta etiqueta não vira lead pelo WhatsApp, não entra no Kanban e não guarda histórico"
+                      className={cn("h-7 px-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1 cursor-pointer border", t.is_blocking ? "bg-hot-soft text-hot border-transparent" : "border-line text-muted hover:text-fg")}
+                    >
+                      <Ban className="w-3.5 h-3.5" /> {t.is_blocking ? "Ignorando" : "Ignorar"}
+                    </button>
                     <Button variant="ghost" size="icon" aria-label={`Editar ${t.name}`} onClick={() => setEditing({ id: t.id, name: t.name, color: t.color })}><Pencil className="w-4 h-4" /></Button>
                     <Button variant="ghost" size="icon" aria-label={`Excluir ${t.name}`} className="hover:text-hot" onClick={() => setToDelete(t)}><Trash2 className="w-4 h-4" /></Button>
                   </div>
@@ -201,6 +215,18 @@ export function TagManager({ open, onClose }: { open: boolean; onClose: () => vo
           </ul>
         )}
       </div>
+
+      <Modal open={!!toBlock} onClose={() => setToBlock(null)} title={`Ignorar quem tem “${toBlock?.name ?? ""}”?`} size="sm"
+        footer={<>
+          <Button variant="secondary" onClick={() => setToBlock(null)}>Cancelar</Button>
+          <Button variant="danger" onClick={() => { if (toBlock) setBlocking.mutate({ id: toBlock.id, blocking: true }); setToBlock(null); }}>Ignorar</Button>
+        </>}
+      >
+        <div className="flex flex-col gap-2 text-sm text-muted">
+          <p>Use para família, amigos e quem não é cliente. Contatos com esta etiqueta (aqui ou no WhatsApp Business) não viram leads pela extensão, não entram no Kanban e não guardam histórico.</p>
+          {toBlock && kanbanCount(toBlock.id) > 0 && <p className="text-fg font-medium">{kanbanCount(toBlock.id)} lead(s) com esta etiqueta saem do Kanban agora. Eles continuam salvos em Leads.</p>}
+        </div>
+      </Modal>
 
       <Modal open={!!toDelete} onClose={() => setToDelete(null)} title={`Excluir a etiqueta “${toDelete?.name ?? ""}”?`} size="sm"
         footer={<>

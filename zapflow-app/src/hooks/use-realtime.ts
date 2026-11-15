@@ -13,6 +13,7 @@ const KEYS: Record<string, string[][]> = {
   kanban_cards: [["kanban"], ["leads"]],
   lead_tags: [["leads"], ["kanban"]],
   tasks: [["tasks"]],
+  lead_messages: [["lead-messages"]],
 };
 
 /**

@@ -99,6 +99,8 @@
   -- etiqueta do WhatsApp Business ligada a esta (a extensão sincroniza as duas)
   ALTER TABLE public.tags ADD COLUMN IF NOT EXISTS wa_label_id TEXT;
   CREATE UNIQUE INDEX IF NOT EXISTS uq_tags_wa_label ON public.tags(user_id, wa_label_id) WHERE wa_label_id IS NOT NULL;
+  -- etiqueta que manda ignorar (ex.: "Fora", "Família"): quem tem não vira lead pelo WhatsApp e não entra no Kanban
+  ALTER TABLE public.tags ADD COLUMN IF NOT EXISTS is_blocking BOOLEAN NOT NULL DEFAULT false;
 
   CREATE TABLE IF NOT EXISTS public.lead_tags (
     id BIGSERIAL PRIMARY KEY,
@@ -145,6 +147,22 @@
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (lead_id, board_id),
     FOREIGN KEY (column_id, board_id) REFERENCES public.kanban_columns(id, board_id) ON DELETE CASCADE
+  );
+
+  -- HISTÓRICO DE CONVERSAS (só se você ligar na extensão). Guarda o texto das mensagens (mídias viram
+  -- "Áudio", "Foto"...), no máximo 50 por lead e por 90 dias; o resto é apagado sozinho.
+  CREATE TABLE IF NOT EXISTS public.lead_messages (
+    id BIGSERIAL PRIMARY KEY,
+    user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
+    lead_id BIGINT NOT NULL REFERENCES public.leads(id) ON DELETE CASCADE,
+    wa_msg_id TEXT NOT NULL,
+    from_me BOOLEAN NOT NULL DEFAULT false,
+    by_zapflow BOOLEAN NOT NULL DEFAULT false,
+    kind TEXT NOT NULL DEFAULT 'text',
+    body TEXT,
+    at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (user_id, wa_msg_id)
   );
 
   -- 5. GATILHOS --------------------------------------------------
@@ -272,8 +290,11 @@
   -- cria com origem WhatsApp e põe um card na etapa de entrada. Tudo numa ida ao banco: duas abas
   -- do WhatsApp abertas ao mesmo tempo não criam o lead duas vezes.
   -- p_message: prévia da mensagem recebida (vira a "última mensagem" do lead).
+  -- (versão anterior tinha um parâmetro a menos; duas versões juntas confundem o Supabase)
+  DROP FUNCTION IF EXISTS public.zf_capture_lead(TEXT, TEXT, TEXT, TEXT, BOOLEAN);
+  -- p_wa_labels: etiquetas do WhatsApp da conversa; se uma delas for de "ignorar", o contato não vira lead.
   CREATE OR REPLACE FUNCTION public.zf_capture_lead(
-    p_name TEXT, p_phone TEXT, p_wa_id TEXT, p_message TEXT DEFAULT NULL, p_create BOOLEAN DEFAULT true
+    p_name TEXT, p_phone TEXT, p_wa_id TEXT, p_message TEXT DEFAULT NULL, p_create BOOLEAN DEFAULT true, p_wa_labels TEXT[] DEFAULT NULL
   ) RETURNS JSONB
   LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
   DECLARE
@@ -294,6 +315,15 @@
     SELECT id INTO v_lead FROM leads
     WHERE user_id = v_uid AND ((v_key IS NOT NULL AND phone_key = v_key) OR (v_wa IS NOT NULL AND wa_id = v_wa))
     ORDER BY (phone_key IS NOT DISTINCT FROM v_key) DESC, id LIMIT 1;
+
+    -- etiqueta de ignorar: o lead não é atualizado e o contato novo não vira lead
+    IF v_lead IS NOT NULL AND EXISTS (SELECT 1 FROM lead_tags lt JOIN tags t ON t.id = lt.tag_id WHERE lt.lead_id = v_lead AND t.is_blocking) THEN
+      RETURN jsonb_build_object('lead_id', v_lead, 'blocked', true);
+    END IF;
+    IF v_lead IS NULL AND p_wa_labels IS NOT NULL
+       AND EXISTS (SELECT 1 FROM tags WHERE user_id = v_uid AND is_blocking AND wa_label_id = ANY (p_wa_labels)) THEN
+      RETURN jsonb_build_object('lead_id', NULL, 'blocked', true);
+    END IF;
 
     IF v_lead IS NULL THEN
       IF NOT coalesce(p_create, true) THEN RETURN jsonb_build_object('lead_id', NULL); END IF;
@@ -365,6 +395,7 @@
     v_tagged INT := 0;
     v_cards INT := 0;
     v_skipped INT := 0;
+    v_ignored INT := 0;
     v_n INT;
   BEGIN
     IF v_uid IS NULL THEN RAISE EXCEPTION 'Entre na sua conta.'; END IF;
@@ -401,6 +432,14 @@
       SELECT id INTO v_lead FROM leads
       WHERE user_id = v_uid AND ((v_key IS NOT NULL AND phone_key = v_key) OR (v_wa IS NOT NULL AND wa_id = v_wa))
       ORDER BY (phone_key IS NOT DISTINCT FROM v_key) DESC, id LIMIT 1;
+
+      -- conversa nova com etiqueta de ignorar (ex.: "Fora") não vira lead
+      IF v_lead IS NULL AND EXISTS (
+        SELECT 1 FROM jsonb_array_elements_text(coalesce(v_item->'labels', '[]'::jsonb)) x(lab)
+        JOIN tags t ON t.user_id = v_uid AND t.is_blocking AND t.wa_label_id = x.lab) THEN
+        v_ignored := v_ignored + 1;
+        CONTINUE;
+      END IF;
 
       IF v_lead IS NULL THEN
         BEGIN
@@ -443,7 +482,7 @@
       END LOOP;
     END LOOP;
 
-    RETURN jsonb_build_object('created', v_created, 'existing', v_existing, 'tagged', v_tagged, 'cards', v_cards, 'skipped', v_skipped);
+    RETURN jsonb_build_object('created', v_created, 'existing', v_existing, 'tagged', v_tagged, 'cards', v_cards, 'skipped', v_skipped, 'ignored', v_ignored);
   END $$;
 
   -- Tira a etiqueta (ligada à do WhatsApp) do lead da conversa. Devolve quantas tirou.
@@ -464,11 +503,95 @@
     RETURN v_n;
   END $$;
 
+  -- 6e. ETIQUETAS DE IGNORAR -----------------------------------------
+  -- Lead ganhou uma etiqueta de ignorar: sai do Kanban (o lead continua salvo, para nunca mais ser capturado).
+  CREATE OR REPLACE FUNCTION public.zf_blocking_tag_applied() RETURNS trigger
+  LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
+  BEGIN
+    IF EXISTS (SELECT 1 FROM tags WHERE id = NEW.tag_id AND is_blocking) THEN
+      DELETE FROM kanban_cards WHERE lead_id = NEW.lead_id;
+    END IF;
+    RETURN NEW;
+  END $$;
+  DROP TRIGGER IF EXISTS zf_blocking_tag_applied ON public.lead_tags;
+  CREATE TRIGGER zf_blocking_tag_applied AFTER INSERT ON public.lead_tags
+    FOR EACH ROW EXECUTE FUNCTION public.zf_blocking_tag_applied();
+
+  -- Etiqueta virou "de ignorar": quem já tem sai do Kanban.
+  CREATE OR REPLACE FUNCTION public.zf_tag_became_blocking() RETURNS trigger
+  LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
+  BEGIN
+    IF NEW.is_blocking AND NOT OLD.is_blocking THEN
+      DELETE FROM kanban_cards c USING lead_tags lt WHERE lt.tag_id = NEW.id AND c.lead_id = lt.lead_id;
+    END IF;
+    RETURN NEW;
+  END $$;
+  DROP TRIGGER IF EXISTS zf_tag_became_blocking ON public.tags;
+  CREATE TRIGGER zf_tag_became_blocking AFTER UPDATE OF is_blocking ON public.tags
+    FOR EACH ROW EXECUTE FUNCTION public.zf_tag_became_blocking();
+
+  -- Não deixa pôr no Kanban quem tem etiqueta de ignorar.
+  CREATE OR REPLACE FUNCTION public.zf_block_cards() RETURNS trigger
+  LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
+  DECLARE v_tag TEXT;
+  BEGIN
+    SELECT t.name INTO v_tag FROM lead_tags lt JOIN tags t ON t.id = lt.tag_id
+    WHERE lt.lead_id = NEW.lead_id AND t.is_blocking LIMIT 1;
+    IF v_tag IS NOT NULL THEN
+      RAISE EXCEPTION 'Este lead tem a etiqueta "%", que manda ignorar: ele não entra no Kanban.', v_tag;
+    END IF;
+    RETURN NEW;
+  END $$;
+  DROP TRIGGER IF EXISTS zf_block_cards ON public.kanban_cards;
+  CREATE TRIGGER zf_block_cards BEFORE INSERT ON public.kanban_cards
+    FOR EACH ROW EXECUTE FUNCTION public.zf_block_cards();
+
+  -- 6f. HISTÓRICO DE CONVERSAS ----------------------------------------
+  -- A extensão manda as mensagens de uma conversa: [{id, from_me, by_zapflow, kind, body, t (ms)}].
+  -- Só grava se a conversa for de um lead (sem etiqueta de ignorar). Não duplica (id da mensagem) e
+  -- mantém só as últimas p_keep mensagens do lead, dos últimos p_days dias.
+  CREATE OR REPLACE FUNCTION public.zf_log_messages(p_phone TEXT, p_wa_id TEXT, p_msgs JSONB, p_keep INT DEFAULT 50, p_days INT DEFAULT 90)
+  RETURNS JSONB
+  LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
+  DECLARE
+    v_uid UUID := auth.uid();
+    v_key TEXT := zf_phone_key(p_phone);
+    v_wa TEXT := nullif(trim(coalesce(p_wa_id, '')), '');
+    v_lead BIGINT;
+    v_n INT;
+  BEGIN
+    IF v_uid IS NULL THEN RAISE EXCEPTION 'Entre na sua conta.'; END IF;
+    IF v_key IS NULL AND v_wa IS NULL THEN RETURN jsonb_build_object('lead_id', NULL, 'saved', 0); END IF;
+    SELECT id INTO v_lead FROM leads
+    WHERE user_id = v_uid AND ((v_key IS NOT NULL AND phone_key = v_key) OR (v_wa IS NOT NULL AND wa_id = v_wa))
+    ORDER BY (phone_key IS NOT DISTINCT FROM v_key) DESC, id LIMIT 1;
+    IF v_lead IS NULL THEN RETURN jsonb_build_object('lead_id', NULL, 'saved', 0); END IF;
+    IF EXISTS (SELECT 1 FROM lead_tags lt JOIN tags t ON t.id = lt.tag_id WHERE lt.lead_id = v_lead AND t.is_blocking) THEN
+      RETURN jsonb_build_object('lead_id', v_lead, 'saved', 0, 'blocked', true);
+    END IF;
+
+    INSERT INTO lead_messages (user_id, lead_id, wa_msg_id, from_me, by_zapflow, kind, body, at)
+    SELECT v_uid, v_lead, m->>'id', coalesce((m->>'from_me')::boolean, false), coalesce((m->>'by_zapflow')::boolean, false),
+           coalesce(nullif(m->>'kind', ''), 'text'), left(nullif(m->>'body', ''), 1000),
+           to_timestamp(coalesce((m->>'t')::double precision, extract(epoch FROM now()) * 1000) / 1000)
+    FROM jsonb_array_elements(coalesce(p_msgs, '[]'::jsonb)) m
+    WHERE coalesce(m->>'id', '') <> ''
+      AND to_timestamp(coalesce((m->>'t')::double precision, extract(epoch FROM now()) * 1000) / 1000) > now() - make_interval(days => p_days)
+    ON CONFLICT (user_id, wa_msg_id) DO UPDATE SET by_zapflow = lead_messages.by_zapflow OR EXCLUDED.by_zapflow;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+
+    DELETE FROM lead_messages WHERE lead_id = v_lead AND (
+      at < now() - make_interval(days => p_days)
+      OR id IN (SELECT id FROM lead_messages WHERE lead_id = v_lead ORDER BY at DESC, id DESC OFFSET greatest(p_keep, 1))
+    );
+    RETURN jsonb_build_object('lead_id', v_lead, 'saved', v_n);
+  END $$;
+
   -- 7. SEGURANÇA: cada usuário só vê e altera os próprios dados (RLS)
   DO $$
   DECLARE t TEXT;
   BEGIN
-    FOREACH t IN ARRAY ARRAY['messages','media_library','funnels','funnel_items','kanban_boards','kanban_columns','leads','tags','lead_tags','kanban_cards','triggers','appointments','tasks']
+    FOREACH t IN ARRAY ARRAY['messages','media_library','funnels','funnel_items','kanban_boards','kanban_columns','leads','tags','lead_tags','kanban_cards','lead_messages','triggers','appointments','tasks']
     LOOP
       EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
       EXECUTE format('DROP POLICY IF EXISTS "own_rows" ON public.%I', t);
@@ -481,7 +604,7 @@
   DECLARE t TEXT;
   BEGIN
     IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
-      FOREACH t IN ARRAY ARRAY['leads','kanban_cards','lead_tags','tasks']
+      FOREACH t IN ARRAY ARRAY['leads','kanban_cards','lead_tags','tasks','lead_messages']
       LOOP
         IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = t) THEN
           EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE public.%I', t);
@@ -522,6 +645,7 @@
   CREATE INDEX IF NOT EXISTS idx_cards_lead ON public.kanban_cards(lead_id);
   CREATE INDEX IF NOT EXISTS idx_tags_user ON public.tags(user_id);
   CREATE INDEX IF NOT EXISTS idx_lead_tags_tag ON public.lead_tags(tag_id);
+  CREATE INDEX IF NOT EXISTS idx_lead_messages_lead ON public.lead_messages(lead_id, at DESC);
   CREATE INDEX IF NOT EXISTS idx_leads_user ON public.leads(user_id);
   CREATE INDEX IF NOT EXISTS idx_triggers_user ON public.triggers(user_id);
   CREATE INDEX IF NOT EXISTS idx_appointments_user_date ON public.appointments(user_id, date);
@@ -539,4 +663,4 @@
   FROM public.appointments a
   WHERE NOT EXISTS (SELECT 1 FROM public.tasks t WHERE t.options->>'from_appointment' = a.id::text);
 
-  -- Pronto. Confira em Table Editor: devem aparecer 13 tabelas.
+  -- Pronto. Confira em Table Editor: devem aparecer 14 tabelas.

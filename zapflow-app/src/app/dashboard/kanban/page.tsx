@@ -27,7 +27,7 @@ import {
   useBoards, useCreateBoard, useDeleteBoard, useBoardData,
   useCreateColumn, useDeleteColumn, useMoveCard, useInboxColumn, useSetInboxColumn,
 } from "@/hooks/use-kanban";
-import { useAddToBoard, useCreateLead, useLeads, useTags } from "@/hooks/use-leads";
+import { blockedLeadIds, useAddToBoard, useCreateLead, useLeads, useTags } from "@/hooks/use-leads";
 import { Modal } from "@/components/ui/modal";
 import { LeadDetailModal, TEMP, TempPicker, inputCls } from "@/components/features/lead-detail-modal";
 import { TagList, TagPicker } from "@/components/features/tags";
@@ -279,7 +279,12 @@ function AddToBoardSheet({ open, onClose, boardId, columns, columnId, setColumnI
   const reset = () => { setQ(""); setPicked([]); setForm({ name: "", phone: "", status: "warm", value: 0, product: "" }); setTagIds([]); };
   const close = () => { reset(); onClose(); };
 
-  const outside = useMemo(() => leads.filter((l) => !l.kanban_cards.some((c) => c.board_id === boardId)), [leads, boardId]);
+  const { data: allTags = [] } = useTags();
+  // quem tem etiqueta de ignorar não entra no Kanban
+  const outside = useMemo(() => {
+    const blocked = blockedLeadIds(leads, allTags);
+    return leads.filter((l) => !blocked.has(l.id) && !l.kanban_cards.some((c) => c.board_id === boardId));
+  }, [leads, allTags, boardId]);
   const nq = deaccent(q).toLowerCase().trim();
   const found = outside.filter((l) => !nq || deaccent(l.name).toLowerCase().includes(nq) || (l.phone ?? "").replace(/\D/g, "").includes(nq.replace(/\D/g, "") || "\u0000")).slice(0, 60);
   const key = phoneKey(form.phone);

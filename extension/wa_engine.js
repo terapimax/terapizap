@@ -19,6 +19,10 @@
 //   → ZF_ENGINE_LABELS                    ← ZF_ENGINE_RESULT { ok, labels: [{ id, name, color, count }], isBusiness }
 //   → ZF_ENGINE_SET_LABEL { chatId, labelId, add } ← ZF_ENGINE_RESULT { ok, error? }  (só WhatsApp Business)
 //   ← ZF_ENGINE_LABEL_CHANGE { chat: contato, change: 'add'|'remove', labels }  (sem requestId: você etiquetou no WhatsApp)
+//   → ZF_ENGINE_CHAT_HISTORY { chatId, count } ← ZF_ENGINE_RESULT { ok, messages: [msg] }  (mensagens recentes da conversa)
+//   ← ZF_ENGINE_OUTGOING { chat: contato, msg }  (sem requestId: mensagem enviada por você ou pelo ZapFlow)
+// msg = { id, from_me, by_zapflow, kind: text|audio|image|video|document|sticker|location|contact, body (texto ou legenda), t (ms) }
+// contato também traz labels: ids das etiquetas do WhatsApp Business da conversa
 // contato = { chatId, name, phone, isGroup, isMyContact }; phone = só dígitos com DDI, ou null quando o
 // WhatsApp esconde o número (conversas @lid sem número conhecido).
 (function () {
@@ -35,6 +39,7 @@
 
     const cancelled = new Set();
     let busy = false;
+    let sendingChat = null; // conversa em que o ZapFlow está enviando agora (marca as mensagens como "pelo ZapFlow")
 
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -76,7 +81,29 @@
         const c = chat && chat.contact;
         // contato salvo: o nome da agenda; senão o nome que a pessoa usa no WhatsApp
         const name = (c && (c.name || c.pushname || c.verifiedName)) || base.name;
-        return { chatId: base.chatId, name, phone: phone ? String(phone).replace(/\D/g, '') : null, isGroup, isMyContact: !!(c && c.isMyContact) };
+        return {
+            chatId: base.chatId, name, phone: phone ? String(phone).replace(/\D/g, '') : null, isGroup,
+            isMyContact: !!(c && c.isMyContact), labels: ((chat && chat.labels) || []).map(String),
+        };
+    }
+
+    // Mensagem do WhatsApp -> formato do histórico. Mídia vira só o tipo + legenda (o arquivo não é guardado).
+    const MSG_KIND = { chat: 'text', ptt: 'audio', audio: 'audio', image: 'image', video: 'video', document: 'document', sticker: 'sticker', location: 'location', vcard: 'contact', multi_vcard: 'contact' };
+    function msgOut(m) {
+        const kind = m && MSG_KIND[m.type];
+        const id = kind && m.id && (m.id._serialized || String(m.id));
+        if (!id) return null;
+        const text = m.type === 'chat' ? m.body : m.caption; // em mídia, "body" é a miniatura: nunca usar
+        return { id, from_me: !!m.id.fromMe, kind, body: text ? String(text).slice(0, 1000) : null, t: (Number(m.t) || 0) * 1000 };
+    }
+    async function chatHistory(chatId, count) {
+        let list = [];
+        try { list = (await WPP.chat.getMessages(chatId, { count })) || []; } catch (e) { /* usa só as carregadas */ }
+        const chat = WPP.chat.get(chatId);
+        const loaded = chat && chat.msgs ? (chat.msgs.getModelsArray ? chat.msgs.getModelsArray() : (chat.msgs.models || [])) : [];
+        const byId = new Map();
+        for (const m of list.concat(loaded)) { const o = msgOut(m); if (o) byId.set(o.id, o); }
+        return [...byId.values()].sort((a, b) => a.t - b.t).slice(-count);
     }
 
     // ----- Etiquetas (WhatsApp Business) e lista de conversas -----
@@ -150,6 +177,7 @@
         if (busy) return reply(requestId, { ok: false, error: 'Já existe um envio em andamento.' });
         busy = true;
         const chatId = msg.chatId;
+        sendingChat = chatId;
         try {
             if (!(await waitReady(10000))) {
                 return reply(requestId, { ok: false, notReady: true, error: 'Motor do WhatsApp (WA-JS) não carregou.' });
@@ -192,6 +220,8 @@
         } finally {
             cancelled.delete(requestId);
             if (chatId && wppReady()) { try { await WPP.chat.markIsPaused(chatId); } catch (e) { /* sem impacto */ } }
+            // a confirmação da mensagem enviada pode chegar um instante depois
+            setTimeout(() => { if (!busy) sendingChat = null; }, 1500);
             busy = false;
         }
     }
@@ -255,6 +285,15 @@
                 }
                 break;
             }
+            case 'ZF_ENGINE_CHAT_HISTORY': {
+                if (!(await waitReady(5000))) return reply(msg.requestId, { ok: false, notReady: true, error: 'Motor do WhatsApp não carregou.' });
+                try {
+                    reply(msg.requestId, { ok: true, messages: await chatHistory(msg.chatId, Math.min(Number(msg.count) || 50, 100)) });
+                } catch (e) {
+                    reply(msg.requestId, { ok: false, error: (e && e.message) || 'Não foi possível ler as mensagens.' });
+                }
+                break;
+            }
             case 'ZF_ENGINE_LABELS': {
                 if (!(await waitReady(5000))) return reply(msg.requestId, { ok: false, notReady: true, error: 'Motor do WhatsApp não carregou.' });
                 reply(msg.requestId, { ok: true, labels: await allLabels(), isBusiness: isBusiness() });
@@ -288,12 +327,21 @@
         try {
             WPP.on('chat.new_message', (m) => {
                 try {
-                    if (!m || !m.id || m.id.fromMe || m.isNewMsg === false) return;
+                    if (!m || !m.id || m.isNewMsg === false) return;
                     const remote = m.id.remote;
                     const chatId = remote && (remote._serialized || String(remote));
                     if (!chatId || !/@(c\.us|lid)$/.test(chatId)) return; // grupos, status, canais: nunca
                     const t = (Number(m.t) || 0) * 1000;
                     if (t && (t < ENGINE_START - 5000 || t < Date.now() - 120000)) return;
+                    if (m.id.fromMe) {
+                        const out = msgOut(m);
+                        if (!out) return;
+                        out.by_zapflow = sendingChat === chatId;
+                        contactInfo(chatId).catch(() => null).then((info) => {
+                            if (info) window.postMessage({ type: 'ZF_ENGINE_OUTGOING', chat: info, msg: out }, '*');
+                        });
+                        return;
+                    }
                     const text = m.type === 'chat' ? (m.body || '') : (m.caption || '');
                     const msgId = m.id._serialized || String(m.id);
                     contactInfo(chatId).catch(() => null).then((info) => {
@@ -302,6 +350,8 @@
                             name: (info && info.name) || m.notifyName || chatId.split('@')[0], text, msgType: m.type, t: t || Date.now(),
                             phone: info ? info.phone : (/@c\.us$/.test(chatId) ? chatId.split('@')[0] : null),
                             isMyContact: !!(info && info.isMyContact),
+                            labels: info ? info.labels : [],
+                            msg: msgOut(m),
                         }, '*');
                     });
                 } catch (e) { console.warn('ZapFlow engine: mensagem recebida ignorada:', e && e.message); }

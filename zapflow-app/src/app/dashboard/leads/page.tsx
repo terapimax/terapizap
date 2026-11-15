@@ -8,7 +8,7 @@ import { Modal } from "@/components/ui/modal";
 import { Button, Chip, EmptyState, SearchInput } from "@/components/ui/shared";
 import { LeadDetailModal, TEMP, TempPicker, inputCls } from "@/components/features/lead-detail-modal";
 import { TagList, TagManager, TagMenu, TagPicker } from "@/components/features/tags";
-import { invalidateLeads, useAddToBoard, useBulkTag, useCreateLead, useDeleteLeads, useLeads, useTags } from "@/hooks/use-leads";
+import { blockedLeadIds, invalidateLeads, useAddToBoard, useBulkTag, useCreateLead, useDeleteLeads, useLeads, useTags } from "@/hooks/use-leads";
 import { useAllColumns, useBoards } from "@/hooks/use-kanban";
 import { useOpenFromQuery } from "@/hooks/use-open-from-query";
 import { FIELD_LABEL, ORIGINS, deaccent, formatPhone, initials, phoneKey, tagsOf } from "@/lib/leads";
@@ -307,6 +307,8 @@ export default function LeadsPage() {
   const shown = filtered.slice(0, limit);
   const filtering = !!(query.trim() || temp || tagFilter !== "" || kanban !== "" || origin);
   const selIds = [...selected].filter((id) => leads.some((l) => l.id === id));
+  const blocked = useMemo(() => blockedLeadIds(leads, tags), [leads, tags]);
+  const bulkAllowed = selIds.filter((id) => !blocked.has(id));
   const allShownSelected = shown.length > 0 && shown.every((l) => selected.has(l.id));
 
   const toggle = (id: number) => setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
@@ -483,7 +485,7 @@ export default function LeadsPage() {
       <Modal open={boardOpen} onClose={() => setBoardOpen(false)} title={`Colocar ${selIds.length} ${selIds.length === 1 ? "lead" : "leads"} no Kanban`} size="sm"
         footer={<>
           <Button variant="secondary" onClick={() => setBoardOpen(false)}>Cancelar</Button>
-          <Button disabled={!bulkBoard || addToBoard.isPending} onClick={() => bulkBoard && addToBoard.mutate({ leadIds: selIds, boardId: bulkBoard.boardId, columnId: bulkBoard.columnId }, { onSuccess: () => { setBoardOpen(false); setSelected(new Set()); } })}>
+          <Button disabled={!bulkBoard || addToBoard.isPending || bulkAllowed.length === 0} onClick={() => bulkBoard && addToBoard.mutate({ leadIds: bulkAllowed, boardId: bulkBoard.boardId, columnId: bulkBoard.columnId }, { onSuccess: () => { setBoardOpen(false); setSelected(new Set()); } })}>
             {addToBoard.isPending && <Loader2 className="w-4 h-4 animate-spin" />} Colocar no quadro
           </Button>
         </>}
@@ -491,6 +493,7 @@ export default function LeadsPage() {
         <div className="flex flex-col gap-3">
           <BoardStagePicker boards={boards} columns={columns} value={bulkBoard} onChange={setBulkBoard} optional={false} />
           <p className="text-xs text-muted">Quem já está neste quadro continua na etapa em que está.</p>
+          {bulkAllowed.length < selIds.length && <p className="text-xs text-warn">{selIds.length - bulkAllowed.length} lead(s) com etiqueta de ignorar ficam de fora.</p>}
         </div>
       </Modal>
 

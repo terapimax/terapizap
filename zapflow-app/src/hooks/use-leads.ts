@@ -2,7 +2,7 @@
 
 import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
-import type { LeadFull, Tag } from "@/types";
+import type { LeadFull, LeadMessage, Tag } from "@/types";
 import { cleanLeadInput, leadErrorMessage, type LeadInput } from "@/lib/leads";
 import { removeLeadTaskFiles } from "@/hooks/use-tasks";
 import { toast } from "sonner";
@@ -221,6 +221,51 @@ export function useSaveTag() {
       return data as Tag;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["leads"] }),
+    onError: (e) => toast.error(leadErrorMessage(e)),
+  });
+}
+
+/** Liga/desliga o "ignorar" da etiqueta. Ligar tira do Kanban quem tem a etiqueta (o banco faz). */
+export function useSetTagBlocking() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, blocking }: { id: number; blocking: boolean }) => {
+      const { error } = await supabase.from("tags").update({ is_blocking: blocking }).eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: (_d, v) => { invalidateLeads(qc); toast.success(v.blocking ? "Quem tem esta etiqueta passa a ser ignorado" : "A etiqueta voltou a ser comum"); },
+    onError: (e) => toast.error(leadErrorMessage(e)),
+  });
+}
+
+/** Leads que têm alguma etiqueta de ignorar (para não oferecer pôr no Kanban). */
+export function blockedLeadIds(leads: LeadFull[], tags: Tag[]) {
+  const blocking = new Set(tags.filter((t) => t.is_blocking).map((t) => t.id));
+  return new Set(leads.filter((l) => l.lead_tags.some((t) => blocking.has(t.tag_id))).map((l) => l.id));
+}
+
+/* ============================ HISTÓRICO ============================ */
+
+export function useLeadMessages(leadId: number | null) {
+  return useQuery({
+    queryKey: ["lead-messages", leadId],
+    enabled: !!leadId,
+    queryFn: async () => {
+      const { data, error } = await supabase.from("lead_messages").select("*").eq("lead_id", leadId!).order("at", { ascending: false }).limit(100);
+      if (error) throw error;
+      return ((data ?? []) as LeadMessage[]).reverse();
+    },
+  });
+}
+
+export function useClearLeadMessages() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (leadId: number) => {
+      const { error } = await supabase.from("lead_messages").delete().eq("lead_id", leadId);
+      if (error) throw error;
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["lead-messages"] }); toast.success("Histórico apagado"); },
     onError: (e) => toast.error(leadErrorMessage(e)),
   });
 }
