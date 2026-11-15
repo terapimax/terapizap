@@ -1,4 +1,4 @@
-// ZapFlow v3.4 — Content Script (interface + envio via motor WA-JS em wa_engine.js)
+// ZapFlow v3.5 — Content Script (interface + envio via motor WA-JS em wa_engine.js)
 (function () {
   'use strict';
   const SUPABASE_URL = window.SUPABASE_URL || '';
@@ -244,9 +244,12 @@
   function positionQuickBar() {
     const bar = $('zf-quickbar');
     if (!bar) return;
+    // a barra fica só embaixo da conversa, nunca embaixo da lista de conversas
     const chat = $('main') || document.querySelector('[data-tab="8"]');
     const side = $('side') || document.querySelector('[data-tab="3"]');
-    bar.style.left = (chat ? chat.getBoundingClientRect().left : side ? side.getBoundingClientRect().right : window.innerWidth * 0.3) + 'px';
+    const left = chat ? chat.getBoundingClientRect().left : side ? side.getBoundingClientRect().right : 0;
+    bar.style.left = Math.max(0, Math.round(left)) + 'px';
+    applyLayoutPush();
   }
 
   function updateQuickBarVisibility() {
@@ -254,6 +257,21 @@
     if (!bar) return;
     const open = !$('zf-sidebar-root')?.classList.contains('zf-hidden');
     bar.classList.toggle('zf-qb-hidden', !open || settings.hideBar);
+    applyLayoutPush();
+  }
+
+  // Reserva espaço no WhatsApp para a barra lateral e a barra rápida, em vez de cobrir a conversa.
+  function applyLayoutPush() {
+    const html = document.documentElement;
+    const sidebar = $('zf-sidebar-root');
+    const bar = $('zf-quickbar');
+    const right = sidebar && !sidebar.classList.contains('zf-hidden') ? sidebar.offsetWidth : 0;
+    const bottom = bar && !bar.classList.contains('zf-qb-hidden') ? bar.offsetHeight : 0;
+    const r = right + 'px', b = bottom + 'px';
+    if (html.style.getPropertyValue('--zf-push-right') !== r) html.style.setProperty('--zf-push-right', r);
+    if (html.style.getPropertyValue('--zf-push-bottom') !== b) html.style.setProperty('--zf-push-bottom', b);
+    html.classList.toggle('zf-push', right > 0);
+    html.classList.toggle('zf-push-bottom', bottom > 0);
   }
 
   function renderQuickBar() {

@@ -1,6 +1,6 @@
-// ZapFlow v3.4 — HTML da barra lateral (só estrutura; a lógica fica em content.js)
+// ZapFlow v3.5 — HTML da barra lateral (só estrutura; a lógica fica em content.js)
 
-const ZF_VERSION = '3.4.0';
+const ZF_VERSION = '3.5.0';
 
 const _zfIcon = (paths, size = 16, extra = '') =>
   `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" ${extra}>${paths}</svg>`;
