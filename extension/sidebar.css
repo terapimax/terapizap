@@ -478,3 +478,23 @@ html[data-zf-theme="light"] .zf-sched-when input { color-scheme: light; }
 .zf-lead-task b { display: block; font-weight: 600; }
 .zf-lead-task small { display: block; font-size: 12px; color: var(--zf-muted); }
 .zf-lead-last { font-size: 13px; line-height: 1.45; background: var(--zf-surface); border-radius: 8px; padding: 8px 10px; margin: 0; white-space: pre-wrap; word-break: break-word; }
+
+/* ===== Importar conversas ===== */
+.zf-subhead { display: flex; align-items: center; gap: 6px; padding: 10px 12px 0; }
+.zf-subhead h2 { font-size: 15px; font-weight: 700; margin: 0; }
+#zf-open-import { display: inline-flex; align-items: center; gap: 8px; }
+.zf-imp-sum { display: flex; flex-direction: column; gap: 2px; padding: 12px; border-radius: 10px; background: var(--zf-surface); margin: 14px 0 4px; }
+.zf-imp-sum b { font-size: 18px; font-weight: 700; }
+.zf-imp-sum span { font-size: 12px; color: var(--zf-muted); }
+.zf-imp-list { list-style: none; margin: 8px 0 0; padding: 0; max-height: 220px; overflow-y: auto; border: 1px solid var(--zf-line); border-radius: 10px; }
+.zf-imp-list li { display: flex; align-items: center; gap: 8px; padding: 7px 10px; font-size: 13px; border-bottom: 1px solid var(--zf-line); }
+.zf-imp-list li:last-child { border-bottom: 0; }
+.zf-imp-list li span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.zf-imp-list li small { color: var(--zf-muted); font-size: 11px; flex-shrink: 0; }
+.zf-imp-list li em { font-style: normal; font-size: 11px; font-weight: 600; color: var(--zf-muted); background: var(--zf-surface); border-radius: 999px; padding: 1px 7px; flex-shrink: 0; }
+.zf-progress { height: 8px; border-radius: 999px; background: var(--zf-surface); overflow: hidden; margin: 18px 0 8px; }
+.zf-progress i { display: block; height: 100%; background: var(--zf-primary); transition: width 0.2s; }
+.zf-imp-done { padding: 14px; border-radius: 10px; background: var(--zf-ok-soft); color: var(--zf-ok); font-size: 13px; line-height: 1.5; margin-bottom: 12px; }
+.zf-imp-done b { display: block; font-size: 14px; }
+.zf-imp-err { padding: 12px; border-radius: 10px; background: var(--zf-hot-soft); color: var(--zf-hot); font-size: 13px; margin-bottom: 12px; }
+.zf-lead .zf-set { padding: 4px 0; }

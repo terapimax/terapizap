@@ -34,6 +34,8 @@ window._zfSVG = {
   clock: _zfIcon('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
   chevron: _zfIcon('<path d="m6 9 6 6 6-6"/>'),
   minus: _zfIcon('<path d="M5 12h14"/>'),
+  download: _zfIcon('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>'),
+  back: _zfIcon('<path d="m15 18-6-6 6-6"/>'),
 };
 
 // Atalhos do menu ☰: caminho no painel (ou ação local da extensão)
@@ -48,6 +50,7 @@ const ZF_MENU = [
   { label: 'Tarefas', icon: 'tasks', path: '/dashboard/tarefas' },
   { label: 'Leads', icon: 'users', path: '/dashboard/leads' },
   { label: 'Kanban', icon: 'kanban', path: '/dashboard/kanban' },
+  { label: 'Importar conversas', icon: 'download', action: 'importar' },
   '-',
   { label: 'Ajustes', icon: 'gear', action: 'ajustes' },
   { label: 'Sair', icon: 'logout', action: 'logout', id: 'zf-menu-logout' },
@@ -126,6 +129,14 @@ function zfBuildSidebar() {
     </footer>
   </section>
 
+  <section class="zf-page" data-page="importar" aria-label="Importar conversas">
+    <div class="zf-subhead">
+      <button type="button" class="zf-icon-btn" id="zf-import-back" aria-label="Voltar">${S.back}</button>
+      <h2>Importar conversas</h2>
+    </div>
+    <div class="zf-lead" id="zf-import" aria-live="polite"></div>
+  </section>
+
   <section class="zf-page" data-page="funis" aria-label="Funis">
     <div class="zf-tools">
       <label class="zf-search">${S.search}<input type="search" id="zf-funnel-search" placeholder="Buscar funis" aria-label="Buscar funis"></label>
@@ -157,7 +168,9 @@ function zfBuildSidebar() {
         <h3>Leads</h3>
         ${toggle('zf-s-capture', 'Capturar novos contatos', 'Quem mandar mensagem e ainda não for lead vira lead e entra no Kanban. Só conversas individuais.')}
         ${toggle('zf-s-capture-skip', 'Ignorar contatos salvos na agenda', 'Útil se você usa o mesmo WhatsApp para amigos e família.')}
+        ${toggle('zf-s-label-sync', 'Sincronizar etiquetas do WhatsApp Business', 'Etiquetar uma conversa no WhatsApp põe a etiqueta no lead, e o contrário pela aba Lead.')}
         <p class="zf-about" id="zf-capture-where" style="margin-top:6px"></p>
+        <button type="button" class="zf-btn" id="zf-open-import" style="margin-top:10px">${S.download} Importar conversas do WhatsApp</button>
       </div>
       <div class="zf-sec">
         <h3>Funis</h3>

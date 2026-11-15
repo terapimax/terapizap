@@ -15,6 +15,10 @@
 //   → ZF_ENGINE_CONTACT { chatId }        ← ZF_ENGINE_RESULT { ok, ...contato }  (ver contactInfo)
 //   ← ZF_ENGINE_INCOMING { msgId, chatId, name, text, msgType, t, phone, isMyContact }  (sem requestId: mensagem nova recebida)
 //   ← ZF_ENGINE_ACTIVE { chat: contato | null }  (sem requestId: você abriu outra conversa)
+//   → ZF_ENGINE_LIST_CHATS                ← ZF_ENGINE_RESULT { ok, chats: [contato + { t, archived, labels }], labels, isBusiness }
+//   → ZF_ENGINE_LABELS                    ← ZF_ENGINE_RESULT { ok, labels: [{ id, name, color, count }], isBusiness }
+//   → ZF_ENGINE_SET_LABEL { chatId, labelId, add } ← ZF_ENGINE_RESULT { ok, error? }  (só WhatsApp Business)
+//   ← ZF_ENGINE_LABEL_CHANGE { chat: contato, change: 'add'|'remove', labels }  (sem requestId: você etiquetou no WhatsApp)
 // contato = { chatId, name, phone, isGroup, isMyContact }; phone = só dígitos com DDI, ou null quando o
 // WhatsApp esconde o número (conversas @lid sem número conhecido).
 (function () {
@@ -73,6 +77,38 @@
         // contato salvo: o nome da agenda; senão o nome que a pessoa usa no WhatsApp
         const name = (c && (c.name || c.pushname || c.verifiedName)) || base.name;
         return { chatId: base.chatId, name, phone: phone ? String(phone).replace(/\D/g, '') : null, isGroup, isMyContact: !!(c && c.isMyContact) };
+    }
+
+    // ----- Etiquetas (WhatsApp Business) e lista de conversas -----
+    function isBusiness() {
+        try { return !!(WPP.profile && WPP.profile.isBusiness && WPP.profile.isBusiness()); } catch (e) { return false; }
+    }
+    function labelOut(l) {
+        return { id: String(l.id), name: l.name || '', color: l.hexColor || l.color || null, count: Number(l.count) || 0 };
+    }
+    async function allLabels() {
+        try { return ((await WPP.labels.getAllLabels()) || []).map(labelOut).filter((l) => l.name); } catch (e) { return []; }
+    }
+    // Conversas individuais (sem grupos, canais, status e a conversa com você mesmo)
+    async function listChats() {
+        const list = await WPP.chat.list({ onlyUsers: true, ignoreGroupMetadata: true });
+        let me = null;
+        try { me = WPP.conn.getMyUserId && WPP.conn.getMyUserId(); } catch (e) { /* sem o próprio número */ }
+        const meUser = me && (me.user || String(me).split('@')[0]);
+        const out = [];
+        for (const chat of list) {
+            const id = chat && chat.id && (chat.id._serialized || String(chat.id));
+            if (!id || !/@(c\.us|lid)$/.test(id) || id === '0@c.us') continue;
+            if (meUser && id.split('@')[0] === meUser) continue;
+            const info = await contactInfo(id).catch(() => null);
+            if (!info) continue;
+            out.push(Object.assign(info, {
+                t: (Number(chat.t) || 0) * 1000,
+                archived: !!chat.archive,
+                labels: (chat.labels || []).map(String),
+            }));
+        }
+        return out;
     }
 
     function reply(requestId, payload) {
@@ -209,6 +245,32 @@
             case 'ZF_ENGINE_SEND':
                 handleSend(msg);
                 break;
+            case 'ZF_ENGINE_LIST_CHATS': {
+                if (!(await waitReady(5000))) return reply(msg.requestId, { ok: false, notReady: true, error: 'Motor do WhatsApp não carregou.' });
+                try {
+                    const [chats, labels] = await Promise.all([listChats(), allLabels()]);
+                    reply(msg.requestId, { ok: true, chats, labels, isBusiness: isBusiness() });
+                } catch (e) {
+                    reply(msg.requestId, { ok: false, error: (e && e.message) || 'Não foi possível ler as conversas.' });
+                }
+                break;
+            }
+            case 'ZF_ENGINE_LABELS': {
+                if (!(await waitReady(5000))) return reply(msg.requestId, { ok: false, notReady: true, error: 'Motor do WhatsApp não carregou.' });
+                reply(msg.requestId, { ok: true, labels: await allLabels(), isBusiness: isBusiness() });
+                break;
+            }
+            case 'ZF_ENGINE_SET_LABEL': {
+                if (!(await waitReady(5000))) return reply(msg.requestId, { ok: false, notReady: true, error: 'Motor do WhatsApp não carregou.' });
+                if (!isBusiness()) return reply(msg.requestId, { ok: false, error: 'Etiquetas só existem no WhatsApp Business.' });
+                try {
+                    await WPP.labels.addOrRemoveLabels(msg.chatId, [{ labelId: String(msg.labelId), type: msg.add ? 'add' : 'remove' }]);
+                    reply(msg.requestId, { ok: true });
+                } catch (e) {
+                    reply(msg.requestId, { ok: false, error: (e && e.message) || 'Não foi possível mudar a etiqueta no WhatsApp.' });
+                }
+                break;
+            }
             case 'ZF_ENGINE_REPLIED':
                 reply(msg.requestId, { ok: true, replied: contactReplied(msg.chatId, Number(msg.since) || 0) });
                 break;
@@ -262,8 +324,28 @@
         } catch (e) { console.warn('ZapFlow engine: não foi possível acompanhar a conversa aberta:', e && e.message); }
     }
 
+    // Você pôs/tirou uma etiqueta numa conversa pelo próprio WhatsApp (Business)
+    function watchLabels() {
+        try {
+            WPP.on('chat.update_label', async (ev) => {
+                try {
+                    const chat = ev && ev.chat;
+                    const id = chat && chat.id && (chat.id._serialized || String(chat.id));
+                    if (!id || !/@(c\.us|lid)$/.test(id)) return;
+                    const info = await contactInfo(id).catch(() => null);
+                    if (!info) return;
+                    window.postMessage({
+                        type: 'ZF_ENGINE_LABEL_CHANGE', chat: info,
+                        change: ev.type === 'remove' ? 'remove' : 'add',
+                        labels: (ev.labels || []).filter(Boolean).map(labelOut),
+                    }, '*');
+                } catch (e) { console.warn('ZapFlow engine: etiqueta ignorada:', e && e.message); }
+            });
+        } catch (e) { console.warn('ZapFlow engine: não foi possível acompanhar as etiquetas:', e && e.message); }
+    }
+
     waitReady(120000).then((ok) => {
-        if (ok) { watchIncoming(); watchActiveChat(); }
+        if (ok) { watchIncoming(); watchActiveChat(); watchLabels(); }
         if (ok) console.log('✅ ZapFlow engine pronto — WA-JS', WPP.version);
         else console.warn('⚠️ ZapFlow engine: WA-JS não ficou pronta em 120s. Versão do WhatsApp Web pode ser incompatível.');
     });

@@ -101,6 +101,8 @@ export interface Tag {
   user_id: string;
   name: string;
   color: string;
+  /** etiqueta do WhatsApp Business ligada a esta (a extensão sincroniza as duas) */
+  wa_label_id: string | null;
   created_at: string;
 }
 

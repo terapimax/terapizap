@@ -10,7 +10,7 @@
   let sb = null;
   let currentFilter = 'all', showFavOnly = false, searchQuery = '';
   let messagesData = [], mediaData = [], funnelsData = [], triggersData = [], funnelsError = false, loaded = false;
-  const settings = { hideBar: false, barFav: false, barFunnels: true, stopOnReply: true, keywords: true, capture: true, captureSkip: false, theme: 'auto' };
+  const settings = { hideBar: false, barFav: false, barFunnels: true, stopOnReply: true, keywords: true, capture: true, captureSkip: false, labelSync: true, theme: 'auto' };
   const $ = (id) => document.getElementById(id);
 
   // ===== INÍCIO =====
@@ -44,6 +44,7 @@
     if ($('zf-s-keywords')) $('zf-s-keywords').checked = settings.keywords !== false;
     if ($('zf-s-capture')) $('zf-s-capture').checked = settings.capture !== false;
     if ($('zf-s-capture-skip')) $('zf-s-capture-skip').checked = !!settings.captureSkip;
+    if ($('zf-s-label-sync')) $('zf-s-label-sync').checked = settings.labelSync !== false;
     applyTheme();
     renderQuickBar();
   }
@@ -255,6 +256,7 @@
       close();
       if (it.dataset.zfGo) return openPanel(it.dataset.zfGo);
       if (it.dataset.zfAction === 'ajustes') return switchTab('ajustes');
+      if (it.dataset.zfAction === 'importar') return openImport();
       if (it.dataset.zfAction === 'logout' && sb) await sb.auth.signOut();
     };
     menu.onkeydown = (e) => {
@@ -324,6 +326,9 @@
     $('zf-s-keywords').onchange = (e) => { settings.keywords = e.target.checked; saveSettings(); };
     $('zf-s-capture').onchange = (e) => { settings.capture = e.target.checked; saveSettings(); };
     $('zf-s-capture-skip').onchange = (e) => { settings.captureSkip = e.target.checked; saveSettings(); };
+    $('zf-s-label-sync').onchange = (e) => { settings.labelSync = e.target.checked; saveSettings(); };
+    $('zf-open-import').onclick = () => openImport();
+    $('zf-import-back').onclick = () => switchTab('lead');
     $('zf-lead-open').onclick = () => { if (leadState.lead) openPanel('/dashboard/leads?lead=' + leadState.lead.id); };
     $('zf-funnel-search').oninput = (e) => { funnelSearch = e.target.value.trim().toLowerCase(); renderFunnels(); };
     document.querySelectorAll('#zf-sidebar-root .zf-foot [data-zf-go]').forEach((b) => { b.onclick = () => openPanel(b.dataset.zfGo); });
@@ -1048,7 +1053,7 @@
     const [b, c, t] = await Promise.all([
       sb.from('kanban_boards').select('id,title,created_at').order('created_at').order('id'),
       sb.from('kanban_columns').select('id,board_id,title,color,position,is_inbox').order('position').order('id'),
-      sb.from('tags').select('id,name,color').order('name'),
+      sb.from('tags').select('*').order('name'),
     ]);
     if (b.error || c.error || t.error) {
       crm.error = true;
@@ -1208,7 +1213,7 @@
       ${addCard}
 
       <h3 class="zf-lead-h">Etiquetas</h3>
-      <div class="zf-tagrow">${tags.map((t) => `<span class="zf-tag"><i style="background:${escapeHtml(t.color)}"></i>${escapeHtml(t.name)}<button type="button" data-zf-untag="${t.id}" aria-label="Tirar a etiqueta ${escapeHtml(t.name)}">${window._zfSVG.close}</button></span>`).join('') || '<span class="zf-lead-note">Nenhuma etiqueta.</span>'}</div>
+      <div class="zf-tagrow">${tags.map((t) => `<span class="zf-tag"${t.wa_label_id ? ' title="Ligada à etiqueta do WhatsApp"' : ''}><i style="background:${escapeHtml(t.color)}"></i>${escapeHtml(t.name)}<button type="button" data-zf-untag="${t.id}" aria-label="Tirar a etiqueta ${escapeHtml(t.name)}">${window._zfSVG.close}</button></span>`).join('') || '<span class="zf-lead-note">Nenhuma etiqueta.</span>'}</div>
       <div class="zf-lead-row">
         <input id="zf-lead-tag" list="zf-lead-taglist" placeholder="Adicionar etiqueta" aria-label="Adicionar etiqueta" autocomplete="off">
         <datalist id="zf-lead-taglist">${free.map((t) => `<option value="${escapeHtml(t.name)}"></option>`).join('')}</datalist>
@@ -1289,6 +1294,7 @@
       }
       const { error } = await sb.from('lead_tags').upsert({ lead_id: lead.id, tag_id: tag.id, user_id: uid }, { onConflict: 'lead_id,tag_id', ignoreDuplicates: true });
       if (error) throw error;
+      await mirrorLabel(tag, true);
     });
   }
 
@@ -1298,6 +1304,7 @@
     return leadAction(async () => {
       const { error } = await sb.from('lead_tags').delete().eq('lead_id', lead.id).eq('tag_id', tagId);
       if (error) throw error;
+      await mirrorLabel(crm.tags.find((t) => t.id === tagId), false);
     });
   }
 
@@ -1351,6 +1358,221 @@
     if (e.source !== window || !e.data) return;
     if (e.data.type === 'ZF_ENGINE_ACTIVE') setLeadChat(e.data.chat);
     else if (e.data.type === 'ZF_ENGINE_INCOMING') onIncomingLead(e.data).catch((err) => console.warn('ZapFlow lead:', err && err.message));
+  });
+
+  // ===== IMPORTAR CONVERSAS DO WHATSAPP =====
+  // Lê as conversas individuais do WhatsApp Web, mostra quantas são novas e importa em lotes de 200
+  // (função zf_import_chats no banco: não duplica quem já é lead e traz as etiquetas do Business).
+  const IMPORT_DAYS = [[7, '7 dias'], [30, '30 dias'], [90, '3 meses'], [365, '1 ano'], [0, 'Todas as conversas']];
+  let imp = { stage: 'idle', chats: [], labels: [], isBusiness: false, known: null, error: '', progress: null, result: null,
+    opts: { days: 90, contacts: true, archived: true, label: '', withLabels: true, column: 'inbox' } };
+
+  function openImport() {
+    toggleSidebar(true);
+    switchTab('importar');
+    if (imp.stage !== 'scanning' && imp.stage !== 'importing') scanChats();
+  }
+
+  async function knownLeads() {
+    const keys = new Set(), was = new Set();
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await sb.from('leads').select('phone_key,wa_id').range(from, from + 999);
+      if (error) throw error;
+      for (const l of data || []) { if (l.phone_key) keys.add(l.phone_key); if (l.wa_id) was.add(l.wa_id); }
+      if (!data || data.length < 1000) return { keys, was };
+    }
+  }
+
+  async function scanChats() {
+    if (!sb || !loaded) { imp.stage = 'error'; imp.error = 'Entre na sua conta do ZapFlow primeiro.'; return renderImport(); }
+    imp.stage = 'scanning';
+    imp.result = null;
+    renderImport();
+    try {
+      const r = await engineRequest('ZF_ENGINE_LIST_CHATS', {}, 90000);
+      if (!r.ok) throw new Error(r.notReady ? 'O WhatsApp ainda está carregando. Espere a lista de conversas aparecer e tente de novo.' : r.error);
+      const [known] = await Promise.all([knownLeads(), loadCrm()]);
+      Object.assign(imp, { stage: 'ready', chats: r.chats || [], labels: r.labels || [], isBusiness: !!r.isBusiness, known });
+      if (imp.opts.label && !imp.labels.some((l) => l.id === imp.opts.label)) imp.opts.label = '';
+    } catch (e) {
+      imp.stage = 'error';
+      imp.error = /column|schema|function/i.test((e && e.message) || '') ? 'O banco está na versão antiga. Rode o supabase/setup.sql de novo no Supabase.' : ((e && e.message) || 'Não foi possível ler as conversas.');
+    }
+    renderImport();
+  }
+
+  function importList() {
+    const o = imp.opts;
+    const since = o.days ? Date.now() - o.days * 86400000 : 0;
+    return imp.chats.filter((c) => (!since || c.t >= since) && (o.contacts || !c.isMyContact) && (o.archived || !c.archived) && (!o.label || (c.labels || []).includes(o.label)));
+  }
+  function isKnown(c) {
+    const k = phoneKeyOf(c.phone);
+    return !!imp.known && ((k && imp.known.keys.has(k)) || imp.known.was.has(c.chatId));
+  }
+  function importColumnId() {
+    if (imp.opts.column === 'inbox') { const c = inboxColumn(); return c ? c.id : null; }
+    return Number(imp.opts.column) || null;
+  }
+
+  function setRow(id, label, hint, checked) {
+    return `<div class="zf-set"><span>${label}${hint ? `<small>${hint}</small>` : ''}</span><label class="zf-switch"><input type="checkbox" id="${id}" aria-label="${label}"${checked ? ' checked' : ''}><span></span></label></div>`;
+  }
+
+  function renderImport() {
+    const box = $('zf-import');
+    if (!box) return;
+    if (imp.stage === 'idle' || imp.stage === 'scanning') {
+      box.innerHTML = '<p class="zf-lead-note">Lendo suas conversas do WhatsApp…</p><div class="zf-skel"></div><div class="zf-skel"></div><div class="zf-skel"></div>';
+      return;
+    }
+    if (imp.stage === 'error') {
+      box.innerHTML = `<div class="zf-imp-err" role="alert">${escapeHtml(imp.error)}</div><button type="button" class="zf-btn" id="zf-imp-retry">Tentar de novo</button>`;
+      $('zf-imp-retry').onclick = scanChats;
+      return;
+    }
+    if (imp.stage === 'importing') {
+      const p = imp.progress || { done: 0, total: 1 };
+      box.innerHTML = `<p class="zf-lead-note">Importando… não feche o WhatsApp.</p><div class="zf-progress" role="progressbar" aria-valuemin="0" aria-valuemax="${p.total}" aria-valuenow="${p.done}"><i style="width:${Math.round((p.done / Math.max(1, p.total)) * 100)}%"></i></div><p class="zf-about">${p.done} de ${p.total} conversas</p>`;
+      return;
+    }
+    if (imp.stage === 'done') {
+      const r = imp.result;
+      box.innerHTML = `<div class="zf-imp-done" role="status"><b>Importação concluída</b>${r.created} ${r.created === 1 ? 'lead novo' : 'leads novos'}${r.cards ? ` · ${r.cards} no Kanban` : ''}<br>${r.existing} já ${r.existing === 1 ? 'era lead' : 'eram leads'} (completados)${r.tagged ? ` · ${r.tagged} etiquetas aplicadas` : ''}${r.skipped ? `<br>${r.skipped} sem número nem conversa válida foram pulados` : ''}</div>
+        <button type="button" class="zf-btn-primary" id="zf-imp-panel">Ver no painel</button>
+        <button type="button" class="zf-btn" id="zf-imp-again" style="margin-top:10px;width:100%">Importar outras</button>`;
+      $('zf-imp-panel').onclick = () => openPanel('/dashboard/leads');
+      $('zf-imp-again').onclick = scanChats;
+      return;
+    }
+
+    // ----- pronto para importar -----
+    const o = imp.opts;
+    const inbox = inboxColumn();
+    const colOptions = crm.boards.map((b) => {
+      const cols = crm.columns.filter((c) => c.board_id === b.id);
+      return cols.length ? `<optgroup label="${escapeHtml(b.title)}">${cols.map((c) => `<option value="${c.id}"${String(o.column) === String(c.id) ? ' selected' : ''}>${escapeHtml(b.title + ' › ' + c.title)}</option>`).join('')}</optgroup>` : '';
+    }).join('');
+    box.innerHTML = `
+      <h3 class="zf-lead-h" style="margin-top:4px">Quais conversas</h3>
+      <label class="zf-lead-field"><span>Com mensagens nos últimos</span>
+        <select id="zf-imp-days">${IMPORT_DAYS.map(([v, l]) => `<option value="${v}"${o.days === v ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
+      ${imp.labels.length ? `<label class="zf-lead-field"><span>Etiqueta do WhatsApp</span>
+        <select id="zf-imp-label"><option value="">Com ou sem etiqueta</option>${imp.labels.map((l) => `<option value="${escapeHtml(l.id)}"${o.label === l.id ? ' selected' : ''}>Só “${escapeHtml(l.name)}”${l.count ? ` (${l.count})` : ''}</option>`).join('')}</select></label>` : ''}
+      ${setRow('zf-imp-contacts', 'Incluir contatos salvos na agenda', '', o.contacts)}
+      ${setRow('zf-imp-archived', 'Incluir conversas arquivadas', '', o.archived)}
+      <div class="zf-imp-sum" id="zf-imp-sum"></div>
+
+      <h3 class="zf-lead-h">Leads novos vão para</h3>
+      <select id="zf-imp-col" aria-label="Etapa do Kanban">
+        ${inbox ? `<option value="inbox"${o.column === 'inbox' ? ' selected' : ''}>Etapa de entrada (${escapeHtml(stageLabel(inbox))})</option>` : ''}
+        <option value=""${!o.column || (o.column === 'inbox' && !inbox) ? ' selected' : ''}>Só em Leads (fora do Kanban)</option>
+        ${colOptions}
+      </select>
+      ${imp.labels.length ? setRow('zf-imp-tags', 'Trazer as etiquetas do WhatsApp', 'Viram etiquetas do ZapFlow e ficam ligadas às do WhatsApp.', o.withLabels) : ''}
+
+      <button type="button" class="zf-btn-primary" id="zf-imp-go" style="margin-top:16px"></button>
+      <p class="zf-about" style="margin-top:8px">Quem já é lead não é duplicado: só ganha a conversa, o último contato e as etiquetas. Grupos não entram.</p>
+      <ul class="zf-imp-list" id="zf-imp-list" aria-label="Conversas que serão importadas"></ul>`;
+
+    const days = $('zf-imp-days'); days.onchange = () => { o.days = Number(days.value); renderImportSummary(); };
+    if ($('zf-imp-label')) $('zf-imp-label').onchange = (e) => { o.label = e.target.value; renderImportSummary(); };
+    $('zf-imp-contacts').onchange = (e) => { o.contacts = e.target.checked; renderImportSummary(); };
+    $('zf-imp-archived').onchange = (e) => { o.archived = e.target.checked; renderImportSummary(); };
+    $('zf-imp-col').onchange = (e) => { o.column = e.target.value; };
+    if ($('zf-imp-tags')) $('zf-imp-tags').onchange = (e) => { o.withLabels = e.target.checked; };
+    $('zf-imp-go').onclick = runImport;
+    renderImportSummary();
+  }
+
+  function renderImportSummary() {
+    const list = importList();
+    const fresh = list.filter((c) => !isKnown(c));
+    const sum = $('zf-imp-sum');
+    if (sum) sum.innerHTML = `<b>${list.length} ${list.length === 1 ? 'conversa' : 'conversas'}</b><span>${fresh.length} ${fresh.length === 1 ? 'nova' : 'novas'} · ${list.length - fresh.length} já ${list.length - fresh.length === 1 ? 'é lead' : 'são leads'}</span>`;
+    const go = $('zf-imp-go');
+    if (go) { go.disabled = !list.length; go.textContent = list.length ? `Importar ${list.length} ${list.length === 1 ? 'conversa' : 'conversas'}` : 'Nenhuma conversa com esses filtros'; }
+    const ul = $('zf-imp-list');
+    if (ul) {
+      const shown = list.slice(0, 60);
+      ul.innerHTML = shown.map((c) => `<li><span>${escapeHtml(c.name)}</span><small>${c.phone ? escapeHtml(fmtPhone(c.phone)) : 'número escondido'}</small>${isKnown(c) ? '<em>já é lead</em>' : ''}</li>`).join('')
+        + (list.length > shown.length ? `<li><small>e mais ${list.length - shown.length}…</small></li>` : '');
+      ul.hidden = !list.length;
+    }
+  }
+
+  async function runImport() {
+    const list = importList();
+    if (!list.length) return;
+    const labels = imp.opts.withLabels ? imp.labels.map((l) => ({ id: l.id, name: l.name, color: l.color })) : [];
+    const columnId = importColumnId();
+    const total = { created: 0, existing: 0, tagged: 0, cards: 0, skipped: 0 };
+    imp.stage = 'importing';
+    imp.progress = { done: 0, total: list.length };
+    renderImport();
+    try {
+      for (let i = 0; i < list.length; i += 200) {
+        const chats = list.slice(i, i + 200).map((c) => ({
+          wa_id: c.chatId, phone: c.phone || null, name: c.name,
+          last_at: c.t ? new Date(c.t).toISOString() : null,
+          labels: imp.opts.withLabels ? (c.labels || []) : [],
+        }));
+        const { data, error } = await sb.rpc('zf_import_chats', { p_chats: chats, p_labels: labels, p_column_id: columnId });
+        if (error) throw error;
+        for (const k of Object.keys(total)) total[k] += Number(data && data[k]) || 0;
+        imp.progress = { done: Math.min(list.length, i + 200), total: list.length };
+        renderImport();
+      }
+      imp.stage = 'done';
+      imp.result = total;
+      showToast(`${total.created} ${total.created === 1 ? 'lead importado' : 'leads importados'}`);
+    } catch (e) {
+      console.warn('ZapFlow: importação falhou', e);
+      imp.stage = 'error';
+      imp.error = (total.created ? `Parou no meio (${total.created} já foram importados; pode importar de novo sem duplicar). ` : '') + (/function|schema/i.test((e && e.message) || '') ? 'Rode o supabase/setup.sql de novo no Supabase.' : ((e && e.message) || 'Erro desconhecido.'));
+    }
+    renderImport();
+    loadCrm().then(() => loadLead({ quiet: true }));
+  }
+
+  // ===== ETIQUETAS SINCRONIZADAS COM O WHATSAPP BUSINESS =====
+  // No WhatsApp -> ZapFlow: o motor avisa quando você etiqueta uma conversa (ZF_ENGINE_LABEL_CHANGE).
+  // No ZapFlow -> WhatsApp: pela aba Lead, ao pôr/tirar uma etiqueta ligada (tags.wa_label_id).
+  async function onLabelChange(ev) {
+    if (!sb || !loaded || settings.labelSync === false || !ev.chat || ev.chat.isGroup || !(ev.labels || []).length) return;
+    try {
+      for (const l of ev.labels) {
+        if (ev.change === 'remove') {
+          const { error } = await sb.rpc('zf_untag_chat', { p_phone: ev.chat.phone || null, p_wa_id: ev.chat.chatId, p_wa_label_id: l.id });
+          if (error) throw error;
+        } else {
+          const col = inboxColumn();
+          const { data, error } = await sb.rpc('zf_import_chats', {
+            p_chats: [{ wa_id: ev.chat.chatId, phone: ev.chat.phone || null, name: ev.chat.name, last_at: null, labels: [l.id] }],
+            p_labels: [{ id: l.id, name: l.name, color: l.color }],
+            p_column_id: col ? col.id : null,
+          });
+          if (error) throw error;
+          if (data && data.created) showToast(`Novo lead: ${ev.chat.name} (etiqueta ${l.name})`);
+        }
+      }
+    } catch (e) { console.warn('ZapFlow: sincronizar etiqueta falhou', e); return; }
+    await loadCrm();
+    if (leadChat && leadChat.chatId === ev.chat.chatId) loadLead({ quiet: true });
+  }
+
+  // Espelha no WhatsApp a etiqueta posta/tirada pela aba Lead (só se ela estiver ligada e a conversa aberta for do lead)
+  async function mirrorLabel(tag, add) {
+    if (settings.labelSync === false || !tag || !tag.wa_label_id || !leadChat || leadChat.isGroup) return;
+    try {
+      const r = await engineRequest('ZF_ENGINE_SET_LABEL', { chatId: leadChat.chatId, labelId: tag.wa_label_id, add }, 15000);
+      if (!r.ok && !/Business/.test(r.error || '')) showToast('A etiqueta mudou aqui, mas não no WhatsApp: ' + r.error);
+    } catch (e) { /* motor ocupado: fica só no ZapFlow */ }
+  }
+
+  window.addEventListener('message', (e) => {
+    if (e.source !== window || !e.data || e.data.type !== 'ZF_ENGINE_LABEL_CHANGE') return;
+    onLabelChange(e.data).catch((err) => console.warn('ZapFlow etiqueta:', err && err.message));
   });
 
   // ===== FUNIS =====

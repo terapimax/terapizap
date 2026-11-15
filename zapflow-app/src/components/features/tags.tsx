@@ -190,6 +190,7 @@ export function TagManager({ open, onClose }: { open: boolean; onClose: () => vo
                   <div className="flex items-center gap-3">
                     <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: t.color }} aria-hidden="true" />
                     <span className="flex-1 min-w-0 text-sm font-medium truncate">{t.name}</span>
+                    {t.wa_label_id && <span title="Ligada à etiqueta do WhatsApp Business: a extensão sincroniza as duas" className="text-[11px] font-semibold px-1.5 rounded-full bg-ok-soft text-ok">WhatsApp</span>}
                     <span className="text-xs text-muted tabular-nums">{counts.get(t.id) ?? 0} leads</span>
                     <Button variant="ghost" size="icon" aria-label={`Editar ${t.name}`} onClick={() => setEditing({ id: t.id, name: t.name, color: t.color })}><Pencil className="w-4 h-4" /></Button>
                     <Button variant="ghost" size="icon" aria-label={`Excluir ${t.name}`} className="hover:text-hot" onClick={() => setToDelete(t)}><Trash2 className="w-4 h-4" /></Button>

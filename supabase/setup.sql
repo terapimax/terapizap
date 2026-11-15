@@ -96,6 +96,9 @@
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   );
   CREATE UNIQUE INDEX IF NOT EXISTS uq_tags_name ON public.tags(user_id, lower(name));
+  -- etiqueta do WhatsApp Business ligada a esta (a extensão sincroniza as duas)
+  ALTER TABLE public.tags ADD COLUMN IF NOT EXISTS wa_label_id TEXT;
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_tags_wa_label ON public.tags(user_id, wa_label_id) WHERE wa_label_id IS NOT NULL;
 
   CREATE TABLE IF NOT EXISTS public.lead_tags (
     id BIGSERIAL PRIMARY KEY,
@@ -333,6 +336,132 @@
     END IF;
 
     RETURN jsonb_build_object('lead_id', v_lead, 'created', v_created, 'card', v_card, 'stage', CASE WHEN v_card THEN v_stage END);
+  END $$;
+
+  -- Importa um lote de conversas do WhatsApp (a extensão manda de 200 em 200).
+  -- p_labels: etiquetas do WhatsApp Business [{id, name, color}] -> viram etiquetas daqui (ligadas pelo id;
+  --   se já existir uma com o mesmo nome, ela é ligada em vez de criar outra).
+  -- p_chats: [{wa_id, phone, name, last_at, labels: [ids das etiquetas]}]. Quem já é lead não é duplicado:
+  --   só completa conversa/telefone, último contato e etiquetas.
+  -- p_column_id: etapa onde os leads NOVOS entram (null = não coloca no Kanban).
+  CREATE OR REPLACE FUNCTION public.zf_import_chats(p_chats JSONB, p_labels JSONB DEFAULT '[]', p_column_id BIGINT DEFAULT NULL)
+  RETURNS JSONB
+  LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
+  DECLARE
+    v_uid UUID := auth.uid();
+    v_item JSONB;
+    v_lab TEXT;
+    v_name TEXT;
+    v_tag BIGINT;
+    v_map JSONB := '{}';
+    v_key TEXT;
+    v_wa TEXT;
+    v_at TIMESTAMPTZ;
+    v_lead BIGINT;
+    v_board BIGINT;
+    v_pos INT := 0;
+    v_created INT := 0;
+    v_existing INT := 0;
+    v_tagged INT := 0;
+    v_cards INT := 0;
+    v_skipped INT := 0;
+    v_n INT;
+  BEGIN
+    IF v_uid IS NULL THEN RAISE EXCEPTION 'Entre na sua conta.'; END IF;
+
+    FOR v_item IN SELECT * FROM jsonb_array_elements(coalesce(p_labels, '[]'::jsonb)) LOOP
+      v_lab := nullif(v_item->>'id', '');
+      v_name := nullif(trim(coalesce(v_item->>'name', '')), '');
+      CONTINUE WHEN v_lab IS NULL OR v_name IS NULL;
+      SELECT id INTO v_tag FROM tags WHERE user_id = v_uid AND wa_label_id = v_lab;
+      IF v_tag IS NULL THEN
+        SELECT id INTO v_tag FROM tags WHERE user_id = v_uid AND lower(name) = lower(v_name) LIMIT 1;
+        IF v_tag IS NOT NULL THEN
+          UPDATE tags SET wa_label_id = v_lab WHERE id = v_tag AND wa_label_id IS NULL;
+        ELSE
+          INSERT INTO tags (user_id, name, color, wa_label_id)
+          VALUES (v_uid, v_name, coalesce(nullif(v_item->>'color', ''), '#6b7280'), v_lab)
+          RETURNING id INTO v_tag;
+        END IF;
+      END IF;
+      v_map := v_map || jsonb_build_object(v_lab, v_tag);
+    END LOOP;
+
+    IF p_column_id IS NOT NULL THEN
+      SELECT board_id INTO v_board FROM kanban_columns WHERE id = p_column_id AND user_id = v_uid;
+      SELECT coalesce(max(position) + 1, 0) INTO v_pos FROM kanban_cards WHERE column_id = p_column_id;
+    END IF;
+
+    FOR v_item IN SELECT * FROM jsonb_array_elements(coalesce(p_chats, '[]'::jsonb)) LOOP
+      v_key := zf_phone_key(v_item->>'phone');
+      v_wa := nullif(trim(coalesce(v_item->>'wa_id', '')), '');
+      v_at := nullif(v_item->>'last_at', '')::timestamptz;
+      IF v_key IS NULL AND v_wa IS NULL THEN v_skipped := v_skipped + 1; CONTINUE; END IF;
+
+      SELECT id INTO v_lead FROM leads
+      WHERE user_id = v_uid AND ((v_key IS NOT NULL AND phone_key = v_key) OR (v_wa IS NOT NULL AND wa_id = v_wa))
+      ORDER BY (phone_key IS NOT DISTINCT FROM v_key) DESC, id LIMIT 1;
+
+      IF v_lead IS NULL THEN
+        BEGIN
+          INSERT INTO leads (user_id, name, phone, wa_id, origin, status, last_contact_at)
+          VALUES (v_uid, coalesce(nullif(trim(v_item->>'name'), ''), v_key, 'Contato do WhatsApp'), v_key, v_wa, 'WhatsApp', 'warm', v_at)
+          RETURNING id INTO v_lead;
+        EXCEPTION WHEN unique_violation THEN
+          v_skipped := v_skipped + 1;
+          CONTINUE;
+        END;
+        v_created := v_created + 1;
+        IF v_board IS NOT NULL THEN
+          INSERT INTO kanban_cards (user_id, lead_id, board_id, column_id, position)
+          VALUES (v_uid, v_lead, v_board, p_column_id, v_pos)
+          ON CONFLICT (lead_id, board_id) DO NOTHING;
+          IF FOUND THEN v_cards := v_cards + 1; v_pos := v_pos + 1; END IF;
+        END IF;
+      ELSE
+        v_existing := v_existing + 1;
+        IF v_wa IS NOT NULL THEN
+          UPDATE leads SET wa_id = v_wa WHERE id = v_lead AND wa_id IS NULL
+            AND NOT EXISTS (SELECT 1 FROM leads o WHERE o.user_id = v_uid AND o.wa_id = v_wa);
+        END IF;
+        IF v_key IS NOT NULL THEN
+          UPDATE leads SET phone = v_key WHERE id = v_lead AND phone_key IS NULL
+            AND NOT EXISTS (SELECT 1 FROM leads o WHERE o.user_id = v_uid AND o.phone_key = v_key);
+        END IF;
+        IF v_at IS NOT NULL THEN
+          UPDATE leads SET last_contact_at = v_at WHERE id = v_lead AND (last_contact_at IS NULL OR last_contact_at < v_at);
+        END IF;
+      END IF;
+
+      FOR v_lab IN SELECT jsonb_array_elements_text(coalesce(v_item->'labels', '[]'::jsonb)) LOOP
+        IF v_map ? v_lab THEN
+          INSERT INTO lead_tags (user_id, lead_id, tag_id) VALUES (v_uid, v_lead, (v_map->>v_lab)::bigint)
+          ON CONFLICT (lead_id, tag_id) DO NOTHING;
+          GET DIAGNOSTICS v_n = ROW_COUNT;
+          v_tagged := v_tagged + v_n;
+        END IF;
+      END LOOP;
+    END LOOP;
+
+    RETURN jsonb_build_object('created', v_created, 'existing', v_existing, 'tagged', v_tagged, 'cards', v_cards, 'skipped', v_skipped);
+  END $$;
+
+  -- Tira a etiqueta (ligada à do WhatsApp) do lead da conversa. Devolve quantas tirou.
+  CREATE OR REPLACE FUNCTION public.zf_untag_chat(p_phone TEXT, p_wa_id TEXT, p_wa_label_id TEXT)
+  RETURNS INT
+  LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
+  DECLARE
+    v_uid UUID := auth.uid();
+    v_key TEXT := zf_phone_key(p_phone);
+    v_n INT;
+  BEGIN
+    IF v_uid IS NULL THEN RAISE EXCEPTION 'Entre na sua conta.'; END IF;
+    DELETE FROM lead_tags lt USING leads l, tags t
+    WHERE lt.lead_id = l.id AND lt.tag_id = t.id
+      AND l.user_id = v_uid AND t.user_id = v_uid AND t.wa_label_id = p_wa_label_id
+      AND ((v_key IS NOT NULL AND l.phone_key = v_key) OR (nullif(p_wa_id, '') IS NOT NULL AND l.wa_id = p_wa_id));
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    RETURN v_n;
   END $$;
 
   -- 7. SEGURANÇA: cada usuário só vê e altera os próprios dados (RLS)
