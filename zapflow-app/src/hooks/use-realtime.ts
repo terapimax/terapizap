@@ -14,6 +14,7 @@ const KEYS: Record<string, string[][]> = {
   lead_tags: [["leads"], ["kanban"]],
   tasks: [["tasks"]],
   lead_messages: [["lead-messages"]],
+  trigger_fires: [["trigger-fires"]],
 };
 
 /**
@@ -49,6 +50,11 @@ export function useRealtimeSync() {
       channel.on("postgres_changes", { event: "*", schema: "public", table }, (payload) => {
         schedule(table);
         const row = payload.new as { id?: number; name?: string; origin?: string } | undefined;
+        // "Me avisar" de um gatilho de lead: lembrete criado agora
+        const task = payload.new as { kind?: string; title?: string; options?: { from_trigger?: number } } | undefined;
+        if (table === "tasks" && payload.eventType === "INSERT" && task?.kind === "reminder" && task.options?.from_trigger) {
+          toast(`⚡ ${task.title ?? "Gatilho disparou"}`, { action: { label: "Ver", onClick: () => router.push("/dashboard/tarefas") } });
+        }
         if (table === "leads" && payload.eventType === "INSERT" && row?.origin === "WhatsApp") {
           toast.success(`Novo lead do WhatsApp: ${row.name ?? "contato"}`, {
             action: row.id ? { label: "Abrir", onClick: () => router.push(`/dashboard/leads?lead=${row.id}`) } : undefined,

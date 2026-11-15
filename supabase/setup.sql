@@ -181,7 +181,7 @@
   -- event_config do keyword: { keywords: text[], match: 'contains'|'exact'|'starts', cooldown_hours: 24 (0 = toda vez, -1 = uma vez por conversa) }
   ALTER TABLE public.triggers DROP CONSTRAINT IF EXISTS triggers_event_check;
   ALTER TABLE public.triggers ADD CONSTRAINT triggers_event_check
-    CHECK (event IN ('keyword', 'lead_created', 'lead_moved', 'lead_status_changed', 'appointment_due', 'manual'));
+    CHECK (event IN ('keyword', 'lead_created', 'lead_moved', 'lead_status_changed', 'tag_added', 'appointment_due', 'manual'));
   ALTER TABLE public.triggers DROP CONSTRAINT IF EXISTS triggers_action_check;
   ALTER TABLE public.triggers ADD CONSTRAINT triggers_action_check
     CHECK (action IN ('send_message', 'send_audio', 'send_media', 'send_document', 'send_funnel', 'move_lead', 'notify'));
@@ -374,7 +374,9 @@
   -- p_chats: [{wa_id, phone, name, last_at, labels: [ids das etiquetas]}]. Quem já é lead não é duplicado:
   --   só completa conversa/telefone, último contato e etiquetas.
   -- p_column_id: etapa onde os leads NOVOS entram (null = não coloca no Kanban).
-  CREATE OR REPLACE FUNCTION public.zf_import_chats(p_chats JSONB, p_labels JSONB DEFAULT '[]', p_column_id BIGINT DEFAULT NULL)
+  -- p_fire: dispara os gatilhos de lead (só a sincronia de etiqueta usa; importar em lote nunca dispara)
+  DROP FUNCTION IF EXISTS public.zf_import_chats(JSONB, JSONB, BIGINT);
+  CREATE OR REPLACE FUNCTION public.zf_import_chats(p_chats JSONB, p_labels JSONB DEFAULT '[]', p_column_id BIGINT DEFAULT NULL, p_fire BOOLEAN DEFAULT false)
   RETURNS JSONB
   LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
   DECLARE
@@ -399,6 +401,7 @@
     v_n INT;
   BEGIN
     IF v_uid IS NULL THEN RAISE EXCEPTION 'Entre na sua conta.'; END IF;
+    IF NOT coalesce(p_fire, false) THEN PERFORM set_config('zapflow.no_triggers', 'on', true); END IF;
 
     FOR v_item IN SELECT * FROM jsonb_array_elements(coalesce(p_labels, '[]'::jsonb)) LOOP
       v_lab := nullif(v_item->>'id', '');
@@ -587,11 +590,204 @@
     RETURN jsonb_build_object('lead_id', v_lead, 'saved', v_n);
   END $$;
 
+  -- 6g. GATILHOS DE LEAD ---------------------------------------------
+  -- Quando um lead é criado, entra numa etapa, muda de temperatura ou ganha uma etiqueta, os gatilhos
+  -- ativos que combinam fazem a ação:
+  --   envios (mensagem, áudio, mídia, documento, funil) -> viram tarefas de envio; a extensão envia
+  --     com o WhatsApp Web aberto (com "digitando…", cancela se o contato responder antes);
+  --   mover de etapa -> aqui mesmo; me avisar -> lembrete em Tarefas (o painel avisa na hora).
+  -- Proteções: só ações com UM lead disparam (importar, restaurar backup e ações em massa não);
+  -- cada gatilho dispara uma vez por lead (a não ser que diga "toda vez"); no máximo 30 envios por
+  -- gatilho a cada 10 min; leads com etiqueta de ignorar nunca disparam; correntes de "mover" param
+  -- depois de 3 níveis.
+  CREATE TABLE IF NOT EXISTS public.trigger_fires (
+    id BIGSERIAL PRIMARY KEY,
+    user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
+    trigger_id BIGINT NOT NULL REFERENCES public.triggers(id) ON DELETE CASCADE,
+    lead_id BIGINT NOT NULL REFERENCES public.leads(id) ON DELETE CASCADE,
+    event TEXT NOT NULL,
+    result TEXT NOT NULL,
+    task_id BIGINT REFERENCES public.tasks(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+
+  CREATE OR REPLACE FUNCTION public.zf_fire_lead_event(p_event TEXT, p_lead BIGINT, p_ctx JSONB DEFAULT '{}')
+  RETURNS INT
+  LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
+  DECLARE
+    v_lead leads%ROWTYPE;
+    t RECORD;
+    v_cfg JSONB;
+    v_act JSONB;
+    v_result TEXT;
+    v_task BIGINT;
+    v_type TEXT;
+    v_text TEXT;
+    v_media BIGINT;
+    v_funnel BIGINT;
+    v_col BIGINT;
+    v_board BIGINT;
+    v_card BIGINT;
+    v_recent INT;
+    v_n INT := 0;
+  BEGIN
+    IF current_setting('zapflow.no_triggers', true) = 'on' OR pg_trigger_depth() > 3 THEN RETURN 0; END IF;
+    SELECT * INTO v_lead FROM leads WHERE id = p_lead;
+    IF NOT FOUND THEN RETURN 0; END IF;
+    IF EXISTS (SELECT 1 FROM lead_tags lt JOIN tags g ON g.id = lt.tag_id WHERE lt.lead_id = p_lead AND g.is_blocking) THEN RETURN 0; END IF;
+
+    FOR t IN SELECT * FROM triggers WHERE user_id = v_lead.user_id AND is_active AND event = p_event ORDER BY id LOOP
+      v_cfg := coalesce(t.event_config, '{}'::jsonb);
+      v_act := coalesce(t.action_config, '{}'::jsonb);
+      -- condições do gatilho (vazio = qualquer)
+      CONTINUE WHEN p_event = 'lead_moved' AND nullif(v_cfg->>'column_id', '') IS NOT NULL AND v_cfg->>'column_id' <> coalesce(p_ctx->>'column_id', '');
+      CONTINUE WHEN p_event = 'lead_status_changed' AND nullif(v_cfg->>'status', '') IS NOT NULL AND v_cfg->>'status' <> coalesce(p_ctx->>'status', '');
+      CONTINUE WHEN p_event = 'tag_added' AND nullif(v_cfg->>'tag_id', '') IS NOT NULL AND v_cfg->>'tag_id' <> coalesce(p_ctx->>'tag_id', '');
+      CONTINUE WHEN p_event = 'lead_created' AND nullif(v_cfg->>'origin', '') IS NOT NULL AND v_cfg->>'origin' <> coalesce(v_lead.origin, '');
+      -- uma vez por lead, a não ser que o gatilho diga "toda vez"
+      CONTINUE WHEN coalesce((v_cfg->>'repeat')::boolean, false) = false
+        AND EXISTS (SELECT 1 FROM trigger_fires f WHERE f.trigger_id = t.id AND f.lead_id = p_lead);
+
+      v_result := NULL; v_task := NULL; v_text := NULL; v_media := NULL; v_funnel := NULL;
+      IF t.action IN ('send_message', 'send_audio', 'send_media', 'send_document', 'send_funnel') THEN
+        SELECT count(*) INTO v_recent FROM trigger_fires f
+        WHERE f.trigger_id = t.id AND f.task_id IS NOT NULL AND f.created_at > now() - interval '10 minutes';
+        IF v_lead.phone_key IS NULL AND v_lead.wa_id IS NULL THEN
+          v_result := 'lead sem WhatsApp';
+        ELSIF v_recent >= 30 THEN
+          v_result := 'limite de segurança: 30 envios em 10 minutos';
+        ELSE
+          IF t.action = 'send_message' THEN
+            v_type := 'text';
+            SELECT content INTO v_text FROM messages WHERE id = nullif(v_act->>'message_id', '')::bigint AND user_id = v_lead.user_id;
+            IF coalesce(v_text, '') = '' THEN v_result := 'mensagem apagada'; END IF;
+          ELSIF t.action = 'send_funnel' THEN
+            v_type := 'funnel';
+            SELECT id INTO v_funnel FROM funnels WHERE id = nullif(v_act->>'funnel_id', '')::bigint AND user_id = v_lead.user_id;
+            IF v_funnel IS NULL THEN v_result := 'funil apagado'; END IF;
+          ELSE
+            v_type := CASE t.action WHEN 'send_audio' THEN 'audio' WHEN 'send_document' THEN 'document' ELSE 'media' END;
+            SELECT id INTO v_media FROM media_library WHERE id = nullif(v_act->>'media_id', '')::bigint AND user_id = v_lead.user_id;
+            IF v_media IS NULL THEN v_result := 'arquivo apagado'; END IF;
+          END IF;
+          IF v_result IS NULL THEN
+            INSERT INTO tasks (user_id, lead_id, kind, title, due_at, contact, phone, content_type, text, media_id, funnel_id, color, options)
+            VALUES (v_lead.user_id, p_lead, 'send', 'Gatilho: ' || t.title,
+                    now() + make_interval(mins => greatest(coalesce(nullif(v_act->>'delay_minutes', '')::int, 0), 0)),
+                    v_lead.name, v_lead.phone, v_type, v_text, v_media, v_funnel, '#d1236f',
+                    jsonb_strip_nulls(jsonb_build_object('from_trigger', t.id, 'chat_id', v_lead.wa_id, 'humanize', false, 'cancel_on_reply', true)))
+            RETURNING id INTO v_task;
+            v_result := 'envio agendado';
+          END IF;
+        END IF;
+      ELSIF t.action = 'move_lead' THEN
+        SELECT id, board_id INTO v_col, v_board FROM kanban_columns WHERE id = nullif(v_act->>'column_id', '')::bigint AND user_id = v_lead.user_id;
+        IF v_col IS NULL THEN
+          v_result := 'etapa apagada';
+        ELSE
+          SELECT id INTO v_card FROM kanban_cards WHERE lead_id = p_lead AND board_id = v_board;
+          IF v_card IS NULL THEN
+            INSERT INTO kanban_cards (user_id, lead_id, board_id, column_id, position)
+            VALUES (v_lead.user_id, p_lead, v_board, v_col, coalesce((SELECT max(position) + 1 FROM kanban_cards WHERE column_id = v_col), 0));
+          ELSE
+            UPDATE kanban_cards SET column_id = v_col, position = coalesce((SELECT max(position) + 1 FROM kanban_cards WHERE column_id = v_col), 0)
+            WHERE id = v_card AND column_id <> v_col;
+          END IF;
+          v_result := 'movido';
+        END IF;
+      ELSIF t.action = 'notify' THEN
+        INSERT INTO tasks (user_id, lead_id, kind, title, due_at, contact, phone, color, options)
+        VALUES (v_lead.user_id, p_lead, 'reminder', 'Gatilho “' || t.title || '”: ' || v_lead.name, now(), v_lead.name, v_lead.phone, '#d1236f',
+                jsonb_build_object('from_trigger', t.id))
+        RETURNING id INTO v_task;
+        v_result := 'aviso criado';
+      ELSE
+        v_result := 'ação não suportada';
+      END IF;
+
+      INSERT INTO trigger_fires (user_id, trigger_id, lead_id, event, result, task_id)
+      VALUES (v_lead.user_id, t.id, p_lead, p_event, v_result, v_task);
+      v_n := v_n + 1;
+    END LOOP;
+    RETURN v_n;
+  END $$;
+
+  -- Quem avisa: só quando UMA linha muda no comando (ações em massa e importações não disparam).
+  CREATE OR REPLACE FUNCTION public.zf_after_leads_insert() RETURNS trigger
+  LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
+  DECLARE v_id BIGINT;
+  BEGIN
+    IF (SELECT count(*) FROM zf_new) = 1 THEN
+      SELECT id INTO v_id FROM zf_new;
+      PERFORM zf_fire_lead_event('lead_created', v_id, '{}'::jsonb);
+    END IF;
+    RETURN NULL;
+  END $$;
+  DROP TRIGGER IF EXISTS zf_after_leads_insert ON public.leads;
+  CREATE TRIGGER zf_after_leads_insert AFTER INSERT ON public.leads
+    REFERENCING NEW TABLE AS zf_new FOR EACH STATEMENT EXECUTE FUNCTION public.zf_after_leads_insert();
+
+  CREATE OR REPLACE FUNCTION public.zf_after_lead_status() RETURNS trigger
+  LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
+  BEGIN
+    IF NEW.status IS DISTINCT FROM OLD.status THEN
+      PERFORM zf_fire_lead_event('lead_status_changed', NEW.id, jsonb_build_object('status', NEW.status));
+    END IF;
+    RETURN NULL;
+  END $$;
+  DROP TRIGGER IF EXISTS zf_after_lead_status ON public.leads;
+  CREATE TRIGGER zf_after_lead_status AFTER UPDATE OF status ON public.leads
+    FOR EACH ROW EXECUTE FUNCTION public.zf_after_lead_status();
+
+  CREATE OR REPLACE FUNCTION public.zf_after_cards_insert() RETURNS trigger
+  LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
+  DECLARE r RECORD;
+  BEGIN
+    IF (SELECT count(*) FROM zf_new) = 1 THEN
+      SELECT lead_id, column_id, board_id INTO r FROM zf_new;
+      PERFORM zf_fire_lead_event('lead_moved', r.lead_id, jsonb_build_object('column_id', r.column_id, 'board_id', r.board_id));
+    END IF;
+    RETURN NULL;
+  END $$;
+  DROP TRIGGER IF EXISTS zf_after_cards_insert ON public.kanban_cards;
+  CREATE TRIGGER zf_after_cards_insert AFTER INSERT ON public.kanban_cards
+    REFERENCING NEW TABLE AS zf_new FOR EACH STATEMENT EXECUTE FUNCTION public.zf_after_cards_insert();
+
+  -- Arrastar no Kanban grava a posição de vários cards, mas só um muda de etapa: é ele que conta.
+  CREATE OR REPLACE FUNCTION public.zf_after_cards_update() RETURNS trigger
+  LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
+  DECLARE r RECORD; v_n INT;
+  BEGIN
+    SELECT count(*) INTO v_n FROM zf_new n JOIN zf_old o ON o.id = n.id WHERE n.column_id IS DISTINCT FROM o.column_id;
+    IF v_n = 1 THEN
+      SELECT n.lead_id, n.column_id, n.board_id INTO r FROM zf_new n JOIN zf_old o ON o.id = n.id WHERE n.column_id IS DISTINCT FROM o.column_id;
+      PERFORM zf_fire_lead_event('lead_moved', r.lead_id, jsonb_build_object('column_id', r.column_id, 'board_id', r.board_id));
+    END IF;
+    RETURN NULL;
+  END $$;
+  DROP TRIGGER IF EXISTS zf_after_cards_update ON public.kanban_cards;
+  CREATE TRIGGER zf_after_cards_update AFTER UPDATE ON public.kanban_cards
+    REFERENCING OLD TABLE AS zf_old NEW TABLE AS zf_new FOR EACH STATEMENT EXECUTE FUNCTION public.zf_after_cards_update();
+
+  CREATE OR REPLACE FUNCTION public.zf_after_tags_insert() RETURNS trigger
+  LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
+  DECLARE r RECORD;
+  BEGIN
+    IF (SELECT count(*) FROM zf_new) = 1 THEN
+      SELECT lead_id, tag_id INTO r FROM zf_new;
+      PERFORM zf_fire_lead_event('tag_added', r.lead_id, jsonb_build_object('tag_id', r.tag_id));
+    END IF;
+    RETURN NULL;
+  END $$;
+  DROP TRIGGER IF EXISTS zf_after_tags_insert ON public.lead_tags;
+  CREATE TRIGGER zf_after_tags_insert AFTER INSERT ON public.lead_tags
+    REFERENCING NEW TABLE AS zf_new FOR EACH STATEMENT EXECUTE FUNCTION public.zf_after_tags_insert();
+
   -- 7. SEGURANÇA: cada usuário só vê e altera os próprios dados (RLS)
   DO $$
   DECLARE t TEXT;
   BEGIN
-    FOREACH t IN ARRAY ARRAY['messages','media_library','funnels','funnel_items','kanban_boards','kanban_columns','leads','tags','lead_tags','kanban_cards','lead_messages','triggers','appointments','tasks']
+    FOREACH t IN ARRAY ARRAY['messages','media_library','funnels','funnel_items','kanban_boards','kanban_columns','leads','tags','lead_tags','kanban_cards','lead_messages','triggers','trigger_fires','appointments','tasks']
     LOOP
       EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
       EXECUTE format('DROP POLICY IF EXISTS "own_rows" ON public.%I', t);
@@ -604,7 +800,7 @@
   DECLARE t TEXT;
   BEGIN
     IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
-      FOREACH t IN ARRAY ARRAY['leads','kanban_cards','lead_tags','tasks','lead_messages']
+      FOREACH t IN ARRAY ARRAY['leads','kanban_cards','lead_tags','tasks','lead_messages','trigger_fires']
       LOOP
         IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = t) THEN
           EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE public.%I', t);
@@ -648,6 +844,7 @@
   CREATE INDEX IF NOT EXISTS idx_lead_messages_lead ON public.lead_messages(lead_id, at DESC);
   CREATE INDEX IF NOT EXISTS idx_leads_user ON public.leads(user_id);
   CREATE INDEX IF NOT EXISTS idx_triggers_user ON public.triggers(user_id);
+  CREATE INDEX IF NOT EXISTS idx_trigger_fires ON public.trigger_fires(trigger_id, lead_id);
   CREATE INDEX IF NOT EXISTS idx_appointments_user_date ON public.appointments(user_id, date);
   CREATE INDEX IF NOT EXISTS idx_tasks_user_due ON public.tasks(user_id, status, due_at);
   CREATE INDEX IF NOT EXISTS idx_tasks_lead ON public.tasks(lead_id);
@@ -663,4 +860,4 @@
   FROM public.appointments a
   WHERE NOT EXISTS (SELECT 1 FROM public.tasks t WHERE t.options->>'from_appointment' = a.id::text);
 
-  -- Pronto. Confira em Table Editor: devem aparecer 14 tabelas.
+  -- Pronto. Confira em Table Editor: devem aparecer 15 tabelas.

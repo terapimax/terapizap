@@ -2,17 +2,19 @@
 
 import { useMemo, useState } from "react";
 import { AlertCircle, ArrowRight, Info, Loader2, Plus, Trash2, Zap } from "lucide-react";
-import { useTriggers, useCreateTrigger, useUpdateTrigger, useDeleteTrigger } from "@/hooks/use-triggers";
+import { useTriggers, useCreateTrigger, useUpdateTrigger, useDeleteTrigger, useTriggerFires } from "@/hooks/use-triggers";
 import { useMessages } from "@/hooks/use-messages";
 import { useAllMedia } from "@/hooks/use-media";
 import { useFunnels } from "@/hooks/use-funnels";
-import { useBoards, useBoardData } from "@/hooks/use-kanban";
+import { useAllColumns, useBoards } from "@/hooks/use-kanban";
+import { useTags } from "@/hooks/use-leads";
+import { ORIGINS } from "@/lib/leads";
 import { Modal } from "@/components/ui/modal";
 import { Button, EmptyState, Panel, SearchInput } from "@/components/ui/shared";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { LibraryPicker } from "@/components/features/media-preview";
-import type { MediaItem, Message, Trigger } from "@/types";
+import type { MediaItem, Message, Tag, Trigger, TriggerFire } from "@/types";
 
 type EventKey = Trigger["event"];
 type ActionKey = Trigger["action"];
@@ -22,9 +24,17 @@ const EVENTS: Record<EventKey, string> = {
   lead_created: "Um lead novo for criado",
   lead_moved: "Um lead mudar de etapa",
   lead_status_changed: "A temperatura de um lead mudar",
+  tag_added: "Uma etiqueta for posta num lead",
   appointment_due: "Chegar a hora de uma tarefa",
   manual: "Eu disparar manualmente",
 };
+
+/** Eventos que dá para escolher (os dois últimos são antigos e não disparam: use Tarefas). */
+const EVENT_CHOICES: EventKey[] = ["keyword", "lead_created", "lead_moved", "lead_status_changed", "tag_added"];
+const LEAD_EVENTS: EventKey[] = ["lead_created", "lead_moved", "lead_status_changed", "tag_added"];
+
+/** Quanto esperar antes de enviar (gatilhos de lead). */
+const DELAYS: [number, string][] = [[0, "Na hora"], [5, "5 minutos depois"], [30, "30 minutos depois"], [60, "1 hora depois"], [180, "3 horas depois"], [1440, "1 dia depois"]];
 
 const ACTIONS: Record<ActionKey, string> = {
   send_message: "Enviar uma mensagem",
@@ -82,7 +92,16 @@ export default function GatilhosPage() {
   const { data: media = [] } = useAllMedia();
   const { data: funnels = [] } = useFunnels();
   const { data: boards = [] } = useBoards();
-  const { data: columns = [] } = useBoardData(boards[0]?.id ?? null);
+  const { data: allColumns = [] } = useAllColumns();
+  const { data: tags = [] } = useTags();
+  const { data: fires = [] } = useTriggerFires();
+  // etapas de todos os quadros, com o nome do quadro: "Vendas › Proposta"
+  const columns = useMemo(() => boards.flatMap((b) => allColumns.filter((c) => c.board_id === b.id).map((c) => ({ id: c.id, title: `${b.title} › ${c.title}` }))), [boards, allColumns]);
+  const firesBy = useMemo(() => {
+    const m = new Map<number, TriggerFire[]>();
+    for (const f of fires) { const l = m.get(f.trigger_id) ?? []; l.push(f); m.set(f.trigger_id, l); }
+    return m;
+  }, [fires]);
 
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<Trigger | "new" | null>(null);
@@ -93,7 +112,8 @@ export default function GatilhosPage() {
     media: (id: number) => media.find((m) => m.id === id)?.title,
     funnel: (id: number) => funnels.find((f) => f.id === id)?.title,
     column: (id: number) => columns.find((c) => c.id === id)?.title,
-  }), [messages, media, funnels, columns]);
+    tag: (id: number) => tags.find((t) => t.id === id)?.name,
+  }), [messages, media, funnels, columns, tags]);
 
   const when = (t: Trigger) => {
     if (t.event === "keyword") {
@@ -110,18 +130,27 @@ export default function GatilhosPage() {
       const s = String(t.event_config.status ?? "") as keyof typeof TEMPS;
       return TEMPS[s] ? `A temperatura virar ${TEMPS[s].toLowerCase()}` : EVENTS.lead_status_changed;
     }
+    if (t.event === "tag_added") {
+      const g = num(t.event_config.tag_id);
+      return g ? `A etiqueta “${lookups.tag(g) ?? "removida"}” for posta num lead` : EVENTS.tag_added;
+    }
+    if (t.event === "lead_created" && t.event_config.origin) return `Um lead novo de ${String(t.event_config.origin)} for criado`;
     return EVENTS[t.event];
+  };
+  const delayText = (t: Trigger) => {
+    const d = num(t.action_config.delay_minutes);
+    return d ? ` (${DELAYS.find(([v]) => v === d)?.[1] ?? `${d} min depois`})` : "";
   };
 
   const then = (t: Trigger) => {
     const c = t.action_config;
     const gone = "item removido";
     switch (t.action) {
-      case "send_message": return `Enviar a mensagem “${lookups.message(num(c.message_id)) ?? gone}”`;
-      case "send_audio": return `Enviar o áudio “${lookups.media(num(c.media_id)) ?? gone}”`;
+      case "send_message": return `Enviar a mensagem “${lookups.message(num(c.message_id)) ?? gone}”${delayText(t)}`;
+      case "send_audio": return `Enviar o áudio “${lookups.media(num(c.media_id)) ?? gone}”${delayText(t)}`;
       case "send_media":
-      case "send_document": return `Enviar “${lookups.media(num(c.media_id)) ?? gone}”`;
-      case "send_funnel": return `Iniciar o funil “${lookups.funnel(num(c.funnel_id)) ?? gone}”`;
+      case "send_document": return `Enviar “${lookups.media(num(c.media_id)) ?? gone}”${delayText(t)}`;
+      case "send_funnel": return `Iniciar o funil “${lookups.funnel(num(c.funnel_id)) ?? gone}”${delayText(t)}`;
       case "move_lead": return `Mover para “${lookups.column(num(c.column_id)) ?? "etapa removida"}”`;
       default: return ACTIONS.notify;
     }
@@ -141,8 +170,9 @@ export default function GatilhosPage() {
       <div className="flex gap-3 p-4 rounded-xl bg-warn-soft text-warn text-sm" role="note">
         <Info className="w-5 h-5 shrink-0 mt-0.5" aria-hidden="true" />
         <p>
-          <b className="font-semibold">Gatilhos de palavra-chave respondem sozinhos enquanto o WhatsApp Web estiver aberto com a extensão.</b>{" "}
-          Os de lead (criado, mudou de etapa ou de temperatura) ficam salvos, mas ainda não disparam.
+          <b className="font-semibold">Os envios saem pelo WhatsApp Web aberto com a extensão.</b>{" "}
+          Gatilhos de lead disparam quando <i>um</i> lead é criado, muda de etapa, de temperatura ou ganha uma etiqueta (importações e ações em massa não disparam).
+          Cada gatilho vale uma vez por lead, a não ser que você escolha “toda vez”. Os envios aparecem em Tarefas.
         </p>
       </div>
 
@@ -174,6 +204,8 @@ export default function GatilhosPage() {
                   <ArrowRight className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                   <span>{then(t)}</span>
                 </p>
+                {!EVENT_CHOICES.includes(t.event) && <p className="text-xs text-warn mt-0.5">Este tipo de gatilho não dispara. Use Tarefas para envios com hora marcada.</p>}
+                <FireSummary list={firesBy.get(t.id)} />
               </button>
               <label className="relative w-10 h-6 shrink-0 cursor-pointer" title={t.is_active ? "Ativo" : "Pausado"}>
                 <input
@@ -199,7 +231,7 @@ export default function GatilhosPage() {
           key={editing === "new" ? "new" : editing.id}
           trigger={editing === "new" ? null : editing}
           saving={createT.isPending || updateT.isPending}
-          data={{ messages, media, funnels, columns }}
+          data={{ messages, media, funnels, columns, tags }}
           onClose={() => setEditing(null)}
           onSave={async (v) => {
             if (editing === "new") await createT.mutateAsync({ ...v, is_active: true });
@@ -228,6 +260,29 @@ interface FormData {
   media: MediaItem[];
   funnels: { id: number; title: string }[];
   columns: { id: number; title: string }[];
+  tags: Tag[];
+}
+
+const ago = (iso: string) => {
+  const min = Math.round((Date.now() - Date.parse(iso)) / 60000);
+  if (min < 1) return "agora";
+  if (min < 60) return `há ${min} min`;
+  if (min < 1440) return `há ${Math.round(min / 60)} h`;
+  return `há ${Math.round(min / 1440)} dia(s)`;
+};
+
+/** "Disparou 3 vezes · último há 2 h para Maria (envio agendado)" */
+function FireSummary({ list }: { list?: TriggerFire[] }) {
+  if (!list?.length) return null;
+  const last = list[0];
+  const ok = /agendado|movido|aviso/.test(last.result);
+  return (
+    <p className="text-xs text-muted mt-0.5 truncate">
+      Disparou {list.length === 500 ? "muitas" : list.length} {list.length === 1 ? "vez" : "vezes"} · último {ago(last.created_at)}
+      {last.lead?.name ? ` para ${last.lead.name}` : ""}
+      <span className={ok ? "" : "text-warn"}> ({last.result})</span>
+    </p>
+  );
 }
 
 function Select({ id, label, value, onChange, children }: { id: string; label: string; value: string | number; onChange: (v: string) => void; children: React.ReactNode }) {
@@ -252,6 +307,10 @@ function TriggerForm({ trigger, data, saving, onClose, onSave }: {
   const [evColumn, setEvColumn] = useState(num(trigger?.event_config.column_id));
   const [evStatus, setEvStatus] = useState(String(trigger?.event_config.status ?? ""));
   const [itemId, setItemId] = useState(num(trigger?.action_config.message_id ?? trigger?.action_config.media_id ?? trigger?.action_config.funnel_id ?? trigger?.action_config.column_id));
+  const [evTag, setEvTag] = useState(num(trigger?.event_config.tag_id));
+  const [evOrigin, setEvOrigin] = useState(String(trigger?.event_config.origin ?? ""));
+  const [repeat, setRepeat] = useState(trigger?.event_config.repeat === true);
+  const [delay, setDelay] = useState(num(trigger?.action_config.delay_minutes));
 
   const options =
     action === "send_message" ? data.messages
@@ -265,6 +324,8 @@ function TriggerForm({ trigger, data, saving, onClose, onSave }: {
   const fromLibrary = action === "send_message" || action === "send_audio" || action === "send_media" || action === "send_document";
   const itemLabel = { send_message: "Mensagem", send_audio: "Áudio", send_media: "Imagem ou vídeo", send_document: "Documento", send_funnel: "Funil", move_lead: "Etapa", notify: "" }[action];
   const isKeyword = event === "keyword";
+  const isLeadEvent = LEAD_EVENTS.includes(event);
+  const isSend = action.startsWith("send_");
   const actionKeys = isKeyword ? KEYWORD_ACTIONS : (Object.keys(ACTIONS) as ActionKey[]);
   const changeEvent = (v: EventKey) => {
     setEvent(v);
@@ -277,13 +338,19 @@ function TriggerForm({ trigger, data, saving, onClose, onSave }: {
     if (isKeyword && !words.length) return toast.error("Escreva pelo menos uma palavra-chave.");
     if (needsItem && !itemId) return toast.error(`Escolha ${action === "move_lead" ? "a etapa" : action === "send_funnel" ? "o funil" : action === "send_message" ? "a mensagem" : "o item"} da ação.`);
     const key = { send_message: "message_id", send_audio: "media_id", send_media: "media_id", send_document: "media_id", send_funnel: "funnel_id", move_lead: "column_id", notify: "" }[action];
+    if (action === "move_lead" && event === "lead_moved" && evColumn && evColumn === itemId) return toast.error("A etapa de destino é a mesma do “quando”: o gatilho não faria nada.");
+    const condition: Record<string, unknown> =
+      event === "lead_moved" && evColumn ? { column_id: evColumn }
+      : event === "lead_status_changed" && evStatus ? { status: evStatus }
+      : event === "tag_added" && evTag ? { tag_id: evTag }
+      : event === "lead_created" && evOrigin ? { origin: evOrigin }
+      : {};
     onSave({
       title: title.trim(),
       event,
       action,
-      event_config: isKeyword ? { keywords: words, match, cooldown_hours: cooldown }
-        : event === "lead_moved" && evColumn ? { column_id: evColumn } : event === "lead_status_changed" && evStatus ? { status: evStatus } : {},
-      action_config: needsItem ? { [key]: itemId } : {},
+      event_config: isKeyword ? { keywords: words, match, cooldown_hours: cooldown } : { ...condition, ...(repeat ? { repeat: true } : {}) },
+      action_config: { ...(needsItem ? { [key]: itemId } : {}), ...(isLeadEvent && isSend && delay ? { delay_minutes: delay } : {}) },
     });
   };
 
@@ -303,7 +370,7 @@ function TriggerForm({ trigger, data, saving, onClose, onSave }: {
         <section className="flex flex-col gap-3" aria-label="Quando">
           <h4 className="font-sans text-sm font-semibold tracking-normal">Quando</h4>
           <Select id="t-event" label="Isto acontecer" value={event} onChange={(v) => changeEvent(v as EventKey)}>
-            {(Object.keys(EVENTS) as EventKey[]).map((k) => <option key={k} value={k}>{EVENTS[k]}</option>)}
+            {[...EVENT_CHOICES, ...(EVENT_CHOICES.includes(event) ? [] : [event])].map((k) => <option key={k} value={k}>{EVENTS[k]}{EVENT_CHOICES.includes(k) ? "" : " (não dispara)"}</option>)}
           </Select>
           {isKeyword && (
             <>
@@ -322,7 +389,7 @@ function TriggerForm({ trigger, data, saving, onClose, onSave }: {
             </>
           )}
           {event === "lead_moved" && (
-            <Select id="t-ev-col" label="Etapa de destino" value={evColumn} onChange={(v) => setEvColumn(Number(v))}>
+            <Select id="t-ev-col" label="Entrar na etapa" value={evColumn} onChange={(v) => setEvColumn(Number(v))}>
               <option value={0}>Qualquer etapa</option>
               {data.columns.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
             </Select>
@@ -331,6 +398,24 @@ function TriggerForm({ trigger, data, saving, onClose, onSave }: {
             <Select id="t-ev-status" label="Nova temperatura" value={evStatus} onChange={setEvStatus}>
               <option value="">Qualquer temperatura</option>
               {Object.entries(TEMPS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </Select>
+          )}
+          {event === "tag_added" && (
+            <Select id="t-ev-tag" label="Etiqueta" value={evTag} onChange={(v) => setEvTag(Number(v))}>
+              <option value={0}>Qualquer etiqueta</option>
+              {data.tags.filter((t) => !t.is_blocking).map((t) => <option key={t.id} value={t.id}>{t.name}{t.wa_label_id ? " (WhatsApp)" : ""}</option>)}
+            </Select>
+          )}
+          {event === "lead_created" && (
+            <Select id="t-ev-origin" label="Origem do lead" value={evOrigin} onChange={setEvOrigin}>
+              <option value="">Qualquer origem</option>
+              {ORIGINS.map((o) => <option key={o} value={o}>{o === "WhatsApp" ? "WhatsApp (capturado pela extensão)" : o}</option>)}
+            </Select>
+          )}
+          {isLeadEvent && (
+            <Select id="t-repeat" label="Para o mesmo lead" value={repeat ? "1" : "0"} onChange={(v) => setRepeat(v === "1")}>
+              <option value="0">Só na primeira vez</option>
+              <option value="1">Toda vez que acontecer</option>
             </Select>
           )}
         </section>
@@ -356,9 +441,18 @@ function TriggerForm({ trigger, data, saving, onClose, onSave }: {
                 <option value={0} disabled>Escolha…</option>
                 {options.map((o) => <option key={o.id} value={o.id}>{o.title}</option>)}
               </Select>
-              {options.length === 0 && <p className="text-xs text-muted">Nada disponível ainda. Crie primeiro na Biblioteca{action === "send_funnel" ? " ou em Funis" : action === "move_lead" ? " ou em Leads" : ""}.</p>}
+              {options.length === 0 && <p className="text-xs text-muted">Nada disponível ainda. Crie primeiro na Biblioteca{action === "send_funnel" ? " ou em Funis" : action === "move_lead" ? " ou no Kanban" : ""}.</p>}
             </>
           )}
+          {isLeadEvent && isSend && (
+            <>
+              <Select id="t-delay" label="Quando enviar" value={delay} onChange={(v) => setDelay(Number(v))}>
+                {DELAYS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </Select>
+              <p className="text-xs text-muted">O envio entra em Tarefas e sai pelo WhatsApp Web aberto com a extensão, com “digitando…”. Se o contato responder antes, não é enviado.</p>
+            </>
+          )}
+          {action === "notify" && <p className="text-xs text-muted">Cria um lembrete em Tarefas e avisa na tela do painel.</p>}
         </section>
       </div>
     </Modal>

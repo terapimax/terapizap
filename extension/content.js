@@ -150,6 +150,7 @@
       if (ev === 'SIGNED_OUT') {
         stopAllRuns();
         messagesData = []; mediaData = []; funnelsData = []; triggersData = []; loaded = false; setAccount(''); clearBlobCache();
+        if (taskChannel) { try { sb.removeChannel(taskChannel); } catch (e) { /* já fechado */ } taskChannel = null; }
         crm = { boards: [], columns: [], tags: [], error: false }; leadState = { status: 'idle' }; renderLead();
         renderItems(); renderFunnels(); renderQuickBar(); showAuth();
       }
@@ -179,6 +180,7 @@
       // funis com problema não derrubam a lista de itens
       if (funnels.error) console.warn('ZapFlow: falha ao carregar funis', funnels.error);
       lastLoadAt = Date.now();
+      watchNewTasks();
       loadCrm().then(() => (leadChat ? loadLead({ quiet: true }) : syncLeadChat())).catch((e) => console.warn('ZapFlow: Kanban', e));
       const sig = JSON.stringify([msgs.data, media.data, funnels.data, !!funnels.error]);
       if (silent && loaded && sig === dataSignature) return;
@@ -834,13 +836,21 @@
           return;
         }
       }
+      if (t.content_type === 'funnel') {
+        const funnel = funnelsData.find((f) => f.id === Number(t.funnel_id));
+        if (!funnel) throw new Error('O funil foi apagado ou ainda não carregou.');
+        if (!startFunnelRun(funnel, { chatId, name: name || 'Contato' }, { stopOnReply: settings.stopOnReply })) throw new Error('O funil não tem passos para enviar.');
+        await updateTask(t.id, { status: 'sent', error: null, finished_at: new Date().toISOString() });
+        showToast(`⚡ Funil “${funnel.title}” iniciado para ${name || 'o contato'}`);
+        return;
+      }
       const payload = await buildPayload(taskItem(t), name);
       payload.chatId = chatId;
       payload.createChat = !opts.chat_id; // tarefa criada no painel: o número pode nunca ter conversado antes
       const res = await withEngine(() => engineRequest('ZF_ENGINE_SEND', payload, (payload.presenceMs || 0) + 120000));
       if (!res.ok) throw new Error(res.error || 'Falha ao enviar');
       await updateTask(t.id, { status: 'sent', error: null, finished_at: new Date().toISOString() });
-      showToast(`✅ Agendado enviado para ${name || 'o contato'}`);
+      showToast(opts.from_trigger ? `⚡ ${t.title} — enviado para ${name || 'o contato'}` : `✅ Agendado enviado para ${name || 'o contato'}`);
     } catch (e) {
       console.error('❌ ZapFlow envio agendado:', e);
       try { await updateTask(t.id, { status: 'failed', error: (e && e.message) || 'Falha ao enviar', finished_at: new Date().toISOString() }); } catch (e2) { /* sem rede */ }
@@ -921,6 +931,18 @@
 
   setTimeout(pollTasks, 8000);
   setInterval(pollTasks, TASK_POLL_MS);
+
+  let taskChannel = null;
+  function watchNewTasks() {
+    if (taskChannel || !sb || typeof sb.channel !== 'function') return;
+    try {
+      taskChannel = sb.channel('zapflow-tarefas')
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'tasks' }, (p) => {
+          if (p && p.new && p.new.kind === 'send') setTimeout(pollTasks, 1200);
+        })
+        .subscribe();
+    } catch (e) { taskChannel = null; /* sem tempo real: continua de 30 em 30 s */ }
+  }
 
   // ===== GATILHOS POR PALAVRA-CHAVE =====
   // O motor avisa cada mensagem nova recebida (só conversas individuais). Se o texto tiver uma
@@ -1571,6 +1593,7 @@
             p_chats: [{ wa_id: ev.chat.chatId, phone: ev.chat.phone || null, name: ev.chat.name, last_at: null, labels: [l.id] }],
             p_labels: [{ id: l.id, name: l.name, color: l.color }],
             p_column_id: col ? col.id : null,
+            p_fire: true, // etiquetar uma conversa é uma ação sua: gatilhos de "etiqueta" e "lead novo" valem
           });
           if (error) throw error;
           if (data && data.created) showToast(`Novo lead: ${ev.chat.name} (etiqueta ${l.name})`);

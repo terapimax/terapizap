@@ -2,7 +2,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
-import type { Trigger } from "@/types";
+import type { Trigger, TriggerFire } from "@/types";
 import { toast } from "sonner";
 
 const supabase = createClient();
@@ -61,5 +61,21 @@ export function useDeleteTrigger() {
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["triggers"] }); toast.success("Gatilho removido!"); },
     onError: (e) => toast.error(`Erro: ${e.message}`),
+  });
+}
+
+/** Últimos disparos dos gatilhos de lead (para mostrar "disparou N vezes" e o que aconteceu). */
+export function useTriggerFires() {
+  return useQuery({
+    queryKey: ["trigger-fires"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("trigger_fires")
+        .select("id, trigger_id, lead_id, event, result, task_id, created_at, lead:leads(name)")
+        .order("created_at", { ascending: false })
+        .limit(500);
+      if (error) throw error;
+      return (data ?? []) as unknown as TriggerFire[];
+    },
   });
 }

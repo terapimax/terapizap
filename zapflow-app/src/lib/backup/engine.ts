@@ -413,6 +413,7 @@ export async function restoreBackup(db: SupabaseClient, src: BackupSource, mode:
       fix("message_id", maps.messages);
       fix("media_id", maps.media_library);
       fix("funnel_id", maps.funnels);
+      fix("tag_id", maps.tags);
       return c;
     };
     await insertRows("triggers", split("triggers", T.triggers, (r) => ({
