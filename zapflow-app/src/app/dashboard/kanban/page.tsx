@@ -175,6 +175,8 @@ function StageColumn({
 
 // ── Página ───────────────────────────────────────────────
 
+const NO_COLUMNS: KanbanColumnWithLeads[] = [];
+
 export default function KanbanPage() {
   const { data: boards = [], isLoading: boardsLoading, isError: boardsError } = useBoards();
   const createBoard = useCreateBoard();
@@ -212,7 +214,9 @@ export default function KanbanPage() {
   const [query, setQuery] = useState("");
 
   const currentBoardId = activeBoardId || boards[0]?.id || null;
-  const { data: columns = [], isLoading: colsLoading } = useBoardData(currentBoardId);
+  const { data: loadedColumns, isLoading: colsLoading } = useBoardData(currentBoardId);
+  // Lista vazia estável: um `= []` novo a cada render fazia o efeito abaixo rodar sem parar enquanto os dados carregavam
+  const columns = loadedColumns ?? NO_COLUMNS;
 
   const [localColumns, setLocalColumns] = useState<KanbanColumnWithLeads[]>([]);
 
