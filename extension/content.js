@@ -1,4 +1,4 @@
-// ZapFlow v3.6 — Content Script (interface + envio via motor WA-JS em wa_engine.js)
+// ZapFlow v3.7 — Content Script (interface + envio via motor WA-JS em wa_engine.js)
 (function () {
   'use strict';
   const SUPABASE_URL = window.SUPABASE_URL || '';
@@ -9,8 +9,8 @@
 
   let sb = null;
   let currentFilter = 'all', showFavOnly = false, searchQuery = '';
-  let messagesData = [], mediaData = [], loaded = false;
-  const settings = { hideBar: false, barFav: false, theme: 'auto' };
+  let messagesData = [], mediaData = [], funnelsData = [], funnelsError = false, loaded = false;
+  const settings = { hideBar: false, barFav: false, barFunnels: true, stopOnReply: true, theme: 'auto' };
   const $ = (id) => document.getElementById(id);
 
   // ===== INÍCIO =====
@@ -26,6 +26,7 @@
         pollEngine();
         initAuth();
         watchReturnToTab();
+        watchUnload();
       }
     }, 1000);
   }
@@ -38,6 +39,8 @@
     } catch (e) { /* sem storage: usa padrões */ }
     if ($('zf-s-hide-bar')) $('zf-s-hide-bar').checked = !!settings.hideBar;
     if ($('zf-s-bar-fav')) $('zf-s-bar-fav').checked = !!settings.barFav;
+    if ($('zf-s-bar-funnels')) $('zf-s-bar-funnels').checked = !!settings.barFunnels;
+    if ($('zf-s-stop-reply')) $('zf-s-stop-reply').checked = !!settings.stopOnReply;
     applyTheme();
     renderQuickBar();
   }
@@ -64,6 +67,7 @@
   }
 
   // ===== STATUS DO MOTOR =====
+  let engineReady = false;
   async function pollEngine() {
     const pill = $('zf-engine');
     const set = (state, text) => { if (pill) { pill.dataset.state = state; pill.lastElementChild.textContent = text; } };
@@ -71,7 +75,9 @@
       try {
         const r = await engineRequest('ZF_ENGINE_STATUS', {}, 3000);
         if (r.ready) {
+          engineReady = true;
           set('ready', 'Pronto');
+          updateFiringIndicators();
           if ($('zf-engine-version')) $('zf-engine-version').textContent = `Motor de envio WA-JS ${r.version || ''}`.trim();
           return;
         }
@@ -137,8 +143,9 @@
     if (session) { hideAuth(); loadAllData(); } else showAuth();
     sb.auth.onAuthStateChange((ev) => {
       if (ev === 'SIGNED_OUT') {
-        messagesData = []; mediaData = []; loaded = false; setAccount(''); clearBlobCache();
-        renderItems(); renderQuickBar(); showAuth();
+        stopAllRuns();
+        messagesData = []; mediaData = []; funnelsData = []; loaded = false; setAccount(''); clearBlobCache();
+        renderItems(); renderFunnels(); renderQuickBar(); showAuth();
       }
     });
   }
@@ -153,22 +160,31 @@
       const { data: { session } } = await sb.auth.getSession();
       if (!session) return;
       setAccount(session.user?.email);
-      const [msgs, media] = await Promise.all([
+      const [msgs, media, funnels] = await Promise.all([
         sb.from('messages').select('*').order('created_at', { ascending: false }),
         sb.from('media_library').select('*').order('created_at', { ascending: false }),
+        sb.from('funnels').select('*, funnel_items(*)').order('created_at', { ascending: false }),
       ]);
       if (msgs.error || media.error) throw msgs.error || media.error;
+      // funis com problema não derrubam a lista de itens
+      if (funnels.error) console.warn('ZapFlow: falha ao carregar funis', funnels.error);
       lastLoadAt = Date.now();
-      const sig = JSON.stringify([msgs.data, media.data]);
+      const sig = JSON.stringify([msgs.data, media.data, funnels.data, !!funnels.error]);
       if (silent && loaded && sig === dataSignature) return;
       dataSignature = sig;
       messagesData = msgs.data || [];
       mediaData = media.data || [];
+      funnelsError = !!funnels.error;
+      if (!funnels.error) funnelsData = funnels.data || [];
       loaded = true;
       const list = $('zf-items-list');
       const scroll = list ? list.scrollTop : 0;
       renderItems();
       if (list) list.scrollTop = scroll;
+      const flist = $('zf-funnel-list');
+      const fscroll = flist ? flist.scrollTop : 0;
+      renderFunnels();
+      if (flist) flist.scrollTop = fscroll;
       renderQuickBar();
     } catch (e) {
       console.error('❌ ZapFlow: falha ao carregar itens', e);
@@ -176,6 +192,8 @@
       loaded = true;
       const list = $('zf-items-list');
       if (list) list.innerHTML = '<li class="zf-empty"><b>Não foi possível carregar seus itens</b><span>Clique em Atualizar para tentar de novo.</span></li>';
+      funnelsError = true;
+      renderFunnels();
     } finally {
       loading = false;
     }
@@ -292,6 +310,10 @@
 
     $('zf-s-hide-bar').onchange = (e) => { settings.hideBar = e.target.checked; saveSettings(); updateQuickBarVisibility(); };
     $('zf-s-bar-fav').onchange = (e) => { settings.barFav = e.target.checked; saveSettings(); renderQuickBar(); };
+    $('zf-s-bar-funnels').onchange = (e) => { settings.barFunnels = e.target.checked; saveSettings(); renderQuickBar(); };
+    $('zf-s-stop-reply').onchange = (e) => { settings.stopOnReply = e.target.checked; saveSettings(); stopReplyChoice.clear(); renderFunnels(); };
+    $('zf-funnel-search').oninput = (e) => { funnelSearch = e.target.value.trim().toLowerCase(); renderFunnels(); };
+    document.querySelectorAll('#zf-sidebar-root .zf-foot [data-zf-go]').forEach((b) => { b.onclick = () => openPanel(b.dataset.zfGo); });
     document.querySelectorAll('[data-zf-theme-opt]').forEach((b) => {
       b.onclick = () => { settings.theme = b.dataset.zfThemeOpt; saveSettings(); applyTheme(); };
     });
@@ -300,6 +322,7 @@
   function switchTab(tab) {
     document.querySelectorAll('[data-zf-tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.zfTab === tab)));
     document.querySelectorAll('#zf-sidebar-root .zf-page').forEach((p) => p.classList.toggle('zf-page-active', p.dataset.page === tab));
+    if (tab === 'funis') refreshActiveChat();
   }
 
   function toggleSidebar(forceOpen) {
@@ -313,7 +336,7 @@
     updateQuickBarVisibility();
     positionQuickBar();
     for (const t of [100, 200, 300]) setTimeout(positionQuickBar, t);
-    if (open) flushPendingThumbs();
+    if (open) { flushPendingThumbs(); refreshActiveChat(); }
   }
 
   // ===== BARRA RÁPIDA =====
@@ -368,16 +391,26 @@
     if (!scroll) return;
     updateQuickBarVisibility();
     let items = buildItemsList();
-    if (settings.barFav) items = items.filter((i) => i.isFavorite);
+    let funnels = settings.barFunnels ? funnelsData.filter((f) => (f.funnel_items || []).length) : [];
+    if (settings.barFav) { items = items.filter((i) => i.isFavorite); funnels = funnels.filter((f) => f.is_favorite); }
+    funnels = funnels.slice(0, 8);
     items = items.slice(0, 20);
     const S = window._zfSVG;
-    scroll.innerHTML = items.map((i) =>
+    // funis primeiro, com o raio: um clique liga o motor (3 s para cancelar na central de disparos)
+    scroll.innerHTML = funnels.map((f) =>
+      `<button type="button" class="zf-qb-item zf-qb-funnel" data-qb-funnel="${f.id}" title="Disparar o funil ${escapeHtml(f.title)} nesta conversa">${S.bolt}${escapeHtml(String(f.title || '').substring(0, 30))}</button>`
+    ).join('') + items.map((i) =>
       `<button type="button" class="zf-qb-item" data-qb-id="${i.id}" data-qb-type="${i.type}" title="Enviar ${escapeHtml(i.title)}">${S[TYPE_ICON[i.type]] || ''}${escapeHtml(i.title.substring(0, 30))}</button>`
     ).join('');
     scroll.querySelectorAll('.zf-qb-item').forEach((btn) => {
       btn.onclick = (e) => {
         e.preventDefault();
         e.stopPropagation();
+        if (btn.dataset.qbFunnel) {
+          const f = funnelsData.find((x) => String(x.id) === btn.dataset.qbFunnel);
+          if (f) fireFunnel(f, { stopOnReply: settings.stopOnReply });
+          return;
+        }
         const item = items.find((x) => String(x.id) === btn.dataset.qbId && x.type === btn.dataset.qbType);
         if (item) sendItem(item);
       };
@@ -583,8 +616,10 @@
             <span class="zf-tt">${escapeHtml(item.title)}${item.isFavorite ? `<span class="zf-star">${S.star}</span>` : ''}</span>
             <span class="zf-mm">${escapeHtml(item.meta)}</span>
           </button>
+          <button type="button" class="zf-cal" aria-label="Agendar ${escapeHtml(item.title)}" aria-expanded="false" title="Agendar o envio">${S.calendar}</button>
           <button type="button" class="zf-send" aria-label="Enviar ${escapeHtml(item.title)}" title="Enviar nesta conversa">${S.play}</button>
         </div>
+        <div class="zf-sched" hidden></div>
         <div class="zf-preview">${previewHtml(item)}</div>
       </li>`).join('');
 
@@ -594,6 +629,7 @@
       const th = li.querySelector('[data-thumb]');
       if (th && item) { th.__zfItem = item; observer.observe(th); }
       li.querySelector('.zf-send').onclick = (e) => { e.preventDefault(); e.stopPropagation(); if (item) sendItem(item); };
+      li.querySelector('.zf-cal').onclick = (e) => { e.preventDefault(); e.stopPropagation(); if (item) toggleSchedule(li, item); };
       li.querySelector('.zf-txt').onclick = async () => {
         const open = li.classList.toggle('zf-open');
         li.querySelector('.zf-txt').setAttribute('aria-expanded', String(open));
@@ -611,6 +647,757 @@
         }
       };
     });
+  }
+
+  // ===== AGENDAR ENVIO =====
+  // O calendário de cada item cria uma tarefa de envio (tabela `tasks`, a mesma da Agenda e de
+  // Tarefas no painel) para a conversa que estiver aberta agora.
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const dateStr = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  const timeStr = (d) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+
+  function schedulePresets() {
+    const now = new Date();
+    const at = (days, h, m = 0) => { const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + days, h, m); return d; };
+    const inOneHour = new Date(Math.ceil((now.getTime() + 3600000) / 300000) * 300000); // próximo múltiplo de 5 min
+    const list = [['Em 1 hora', inOneHour]];
+    if (now.getHours() < 17) list.push(['Hoje 18:00', at(0, 18)]);
+    list.push(['Amanhã 9:00', at(1, 9)], ['Amanhã 14:00', at(1, 14)], ['Em 3 dias', at(3, 9)]);
+    return list;
+  }
+
+  async function toggleSchedule(li, item) {
+    const box = li.querySelector('.zf-sched');
+    const btn = li.querySelector('.zf-cal');
+    if (!box.hidden) { box.hidden = true; btn.setAttribute('aria-expanded', 'false'); return; }
+    // só uma caixa aberta por vez
+    document.querySelectorAll('#zf-items-list .zf-sched:not([hidden])').forEach((b) => {
+      b.hidden = true; b.closest('.zf-item')?.querySelector('.zf-cal')?.setAttribute('aria-expanded', 'false');
+    });
+    btn.setAttribute('aria-expanded', 'true');
+    box.hidden = false;
+    box.innerHTML = '<p class="zf-sched-note">Verificando a conversa aberta…</p>';
+
+    let chat = null;
+    try { const r = await engineRequest('ZF_ENGINE_ACTIVE_CHAT', {}, 8000); if (r.ok) chat = { chatId: r.chatId, name: r.name }; } catch (e) { /* sem conversa */ }
+    if (box.hidden) return;
+    if (!chat) { box.innerHTML = '<p class="zf-sched-note">Abra uma conversa no WhatsApp para agendar o envio.</p>'; return; }
+
+    const first = schedulePresets()[0][1];
+    box.innerHTML = `
+      <p class="zf-sched-to">Enviar para <b>${escapeHtml(chat.name)}</b></p>
+      <div class="zf-sched-chips">${schedulePresets().map(([label, d], i) => `<button type="button" data-p="${i}">${label}</button>`).join('')}</div>
+      <div class="zf-sched-when">
+        <label>Dia<input type="date" class="zf-s-date" min="${dateStr(new Date())}" value="${dateStr(first)}"></label>
+        <label>Hora<input type="time" class="zf-s-time" value="${timeStr(first)}"></label>
+      </div>
+      <label class="zf-sched-ck"><input type="checkbox" class="zf-s-cancel" checked><span>Cancelar se o contato responder antes</span></label>
+      <label class="zf-sched-ck"><input type="checkbox" class="zf-s-human" checked><span>Variar alguns minutos no horário</span></label>
+      <p class="zf-sched-err" role="alert"></p>
+      <div class="zf-sched-actions">
+        <button type="button" class="zf-btn zf-s-cancel-btn">Cancelar</button>
+        <button type="button" class="zf-btn-primary zf-s-ok">${window._zfSVG.calendar}<span>Agendar</span></button>
+      </div>`;
+    const presets = schedulePresets();
+    const dateEl = box.querySelector('.zf-s-date'), timeEl = box.querySelector('.zf-s-time'), errEl = box.querySelector('.zf-sched-err');
+    box.querySelectorAll('[data-p]').forEach((b) => {
+      b.onclick = () => { const d = presets[+b.dataset.p][1]; dateEl.value = dateStr(d); timeEl.value = timeStr(d); errEl.textContent = ''; };
+    });
+    box.querySelector('.zf-s-cancel-btn').onclick = () => { box.hidden = true; btn.setAttribute('aria-expanded', 'false'); };
+    const ok = box.querySelector('.zf-s-ok');
+    ok.onclick = async () => {
+      errEl.textContent = '';
+      if (!dateEl.value || !timeEl.value) { errEl.textContent = 'Escolha o dia e o horário.'; return; }
+      const due = new Date(`${dateEl.value}T${timeEl.value}:00`);
+      if (isNaN(due) || due.getTime() < Date.now() - 60000) { errEl.textContent = 'Escolha um horário no futuro.'; return; }
+      ok.disabled = true;
+      try {
+        await createScheduledTask(item, chat, due, { cancel_on_reply: box.querySelector('.zf-s-cancel').checked, humanize: box.querySelector('.zf-s-human').checked });
+        box.hidden = true; btn.setAttribute('aria-expanded', 'false');
+        const d = due, today = dateStr(new Date()), tomorrow = dateStr(new Date(Date.now() + 86400000));
+        const day = dateStr(d) === today ? 'hoje' : dateStr(d) === tomorrow ? 'amanhã' : d.toLocaleDateString('pt-BR');
+        showToast(`📅 Agendado para ${day} às ${timeStr(d)} · ${chat.name}`);
+      } catch (e) {
+        ok.disabled = false;
+        errEl.textContent = /relation .*tasks|tasks.*(does not exist|schema cache)/i.test(e.message || '')
+          ? 'A tabela de tarefas ainda não existe no banco. Rode o supabase/setup.sql.' : 'Não foi possível agendar: ' + (e.message || 'erro');
+      }
+    };
+  }
+
+  async function createScheduledTask(item, chat, due, opts) {
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) throw new Error('Entre na sua conta para agendar.');
+    const content = { msg: 'text', audio: 'audio', media: 'media', doc: 'document' }[item.type];
+    const label = { text: 'Texto', audio: 'Áudio', media: 'Mídia', document: 'Documento' }[content];
+    const phone = /@c\.us$/.test(chat.chatId) ? chat.chatId.split('@')[0] : null;
+    const row = {
+      user_id: session.user.id,
+      kind: 'send',
+      title: `${label}: ${(item.title || '').slice(0, 40)}`.trim(),
+      due_at: due.toISOString(),
+      contact: chat.name,
+      phone,
+      content_type: content,
+      text: content === 'text' ? item.content : null,
+      media_id: content === 'text' ? null : item.id,
+      options: { ...opts, chat_id: chat.chatId, created_at_ms: Date.now() },
+    };
+    const { error } = await sb.from('tasks').insert(row);
+    if (error) throw error;
+  }
+
+  // ===== EXECUTOR DOS ENVIOS AGENDADOS =====
+  // Enquanto o WhatsApp Web estiver aberto (computador ligado), a cada 30 s procura tarefas de envio
+  // vencidas e as envia com o mesmo motor (digitando/gravando). Regras:
+  //  - "variar horário": cada tarefa espera de 0 a 4 min depois do marcado (fixo por tarefa);
+  //  - passou de 5 min do horário (computador desligado, WhatsApp fechado): NUNCA envia sozinho,
+  //    pergunta se envia agora ou cancela;
+  //  - antes de enviar, "estado = enviando" garante que duas abas não mandem em dobro;
+  //  - "cancelar se responder": confere se o contato escreveu depois que a tarefa foi criada.
+  const TASK_POLL_MS = 30000;
+  const TASK_GRACE_MS = 5 * 60 * 1000;
+  const TASK_STUCK_MS = 15 * 60 * 1000;
+  let taskPolling = false;
+  let tasksBroken = false;
+  const overdueDismissed = new Set();
+  let overdueList = [];
+
+  const TASK_SELECT = '*, lead:leads(id,name,phone), media:media_library(id,title,type,url,caption)';
+
+  function taskJitterMs(t) {
+    if (t.options && t.options.humanize === false) return 0;
+    return (Math.imul(Number(t.id) | 0, 2654435761) >>> 0) % 240000;
+  }
+
+  function phoneToChatId(phone) {
+    let d = String(phone || '').replace(/\D/g, '');
+    if (d.length < 10) return null;
+    if (d.length <= 11) d = '55' + d;
+    return d + '@c.us';
+  }
+
+  function taskItem(t) {
+    if (t.content_type === 'text') return { type: 'msg', title: t.title, content: t.text };
+    if (t.file_url) return { type: 'audio', title: t.title, url: t.file_url };
+    const m = t.media;
+    if (!m || !m.url) throw new Error('O arquivo da biblioteca foi apagado.');
+    const type = m.type === 'audio' ? 'audio' : (m.type === 'image' || m.type === 'video') ? 'media' : 'doc';
+    return { type, title: m.title, url: m.url, content: m.caption, mediaType: m.type };
+  }
+
+  async function updateTask(id, patch, onlyIf) {
+    let q = sb.from('tasks').update(patch).eq('id', id);
+    if (onlyIf) q = q.eq('status', onlyIf);
+    const { data, error } = await q.select('id');
+    if (error) throw error;
+    return (data || []).length > 0;
+  }
+
+  async function runScheduledTask(t, { force = false } = {}) {
+    const opts = t.options || {};
+    const claimed = await updateTask(t.id, { status: 'sending', attempts: (t.attempts || 0) + 1, options: { ...opts, claimed_at: Date.now() } }, 'scheduled');
+    if (!claimed) return; // outra aba pegou
+    const name = (t.lead && t.lead.name) || t.contact || '';
+    try {
+      const chatId = opts.chat_id || phoneToChatId(t.phone || (t.lead && t.lead.phone));
+      if (!chatId) throw new Error('Esta tarefa não tem número de WhatsApp.');
+      if (!force && opts.cancel_on_reply !== false) {
+        const r = await engineRequest('ZF_ENGINE_REPLIED', { chatId, since: Date.parse(t.created_at) || 0 }, 6000);
+        if (r.ok && r.replied) {
+          await updateTask(t.id, { status: 'cancelled', error: 'O contato respondeu antes do horário.', finished_at: new Date().toISOString() });
+          showToast(`↩️ Envio para ${name || 'o contato'} cancelado: ele respondeu antes.`);
+          return;
+        }
+      }
+      const payload = await buildPayload(taskItem(t), name);
+      payload.chatId = chatId;
+      payload.createChat = !opts.chat_id; // tarefa criada no painel: o número pode nunca ter conversado antes
+      const res = await withEngine(() => engineRequest('ZF_ENGINE_SEND', payload, (payload.presenceMs || 0) + 120000));
+      if (!res.ok) throw new Error(res.error || 'Falha ao enviar');
+      await updateTask(t.id, { status: 'sent', error: null, finished_at: new Date().toISOString() });
+      showToast(`✅ Agendado enviado para ${name || 'o contato'}`);
+    } catch (e) {
+      console.error('❌ ZapFlow envio agendado:', e);
+      try { await updateTask(t.id, { status: 'failed', error: (e && e.message) || 'Falha ao enviar', finished_at: new Date().toISOString() }); } catch (e2) { /* sem rede */ }
+      showToast(`❌ Envio agendado para ${name || 'o contato'} falhou: ${(e && e.message) || 'erro'}`);
+    }
+  }
+
+  async function pollTasks() {
+    if (taskPolling || tasksBroken || !sb) return;
+    taskPolling = true;
+    try {
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session) return;
+      const { data, error } = await sb.from('tasks').select(TASK_SELECT)
+        .eq('kind', 'send').in('status', ['scheduled', 'sending'])
+        .lte('due_at', new Date().toISOString()).order('due_at');
+      if (error) {
+        if (/tasks|relation|schema cache/i.test(error.message || '')) tasksBroken = true; // tabela ainda não criada
+        console.warn('ZapFlow: não foi possível consultar os envios agendados:', error.message);
+        return;
+      }
+      const now = Date.now();
+      const due = [];
+      overdueList = [];
+      for (const t of data || []) {
+        const dueMs = Date.parse(t.due_at);
+        if (t.status === 'sending') {
+          // travada: o WhatsApp foi fechado no meio do envio
+          const at = Number(t.options && t.options.claimed_at) || dueMs;
+          if (now - at > TASK_STUCK_MS) await updateTask(t.id, { status: 'failed', error: 'O envio foi interrompido (WhatsApp fechado no meio). Confira se a mensagem chegou.', finished_at: new Date().toISOString() }, 'sending').catch(() => {});
+          continue;
+        }
+        if (now - dueMs > TASK_GRACE_MS) { if (!overdueDismissed.has(t.id)) overdueList.push(t); continue; }
+        if (now >= dueMs + taskJitterMs(t)) due.push(t);
+      }
+      renderOverdue();
+      if (!due.length) return;
+      let ready = false;
+      try { const st = await engineRequest('ZF_ENGINE_STATUS', {}, 4000); ready = !!(st && st.ready); } catch (e) { /* motor não respondeu */ }
+      if (!ready) return; // tenta de novo no próximo ciclo, sem gastar a tarefa
+      for (const t of due) await runScheduledTask(t);
+    } catch (e) {
+      console.warn('ZapFlow: erro no executor de agendados:', e && e.message);
+    } finally {
+      taskPolling = false;
+    }
+  }
+
+  // Aviso de envios que passaram do horário: nunca mandamos mensagem velha sem você decidir.
+  function renderOverdue() {
+    let el = document.getElementById('zf-overdue');
+    if (!overdueList.length) { if (el) el.remove(); return; }
+    if (!el) { el = document.createElement('div'); el.id = 'zf-overdue'; el.setAttribute('role', 'alertdialog'); el.setAttribute('aria-label', 'Envios atrasados'); document.body.appendChild(el); }
+    const fmt = (iso) => { const d = new Date(iso); return `${d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} ${timeStr(d)}`; };
+    const rows = overdueList.slice(0, 4).map((t) => `
+      <li data-id="${t.id}">
+        <span><b>${escapeHtml((t.lead && t.lead.name) || t.contact || 'Contato')}</b><small>${escapeHtml(t.title)} · era para ${fmt(t.due_at)}</small></span>
+        <button type="button" class="zf-btn-primary" data-act="now">Enviar agora</button>
+        <button type="button" class="zf-btn" data-act="cancel">Cancelar</button>
+      </li>`).join('');
+    const more = overdueList.length > 4 ? `<p class="zf-od-more">+ ${overdueList.length - 4} outros no painel (Tarefas)</p>` : '';
+    el.innerHTML = `<div class="zf-od-head"><b>${overdueList.length === 1 ? '1 envio passou do horário' : overdueList.length + ' envios passaram do horário'}</b><button type="button" class="zf-icon-btn" data-act="later" aria-label="Decidir depois" title="Decidir depois">${window._zfSVG.close}</button></div>
+      <p class="zf-od-hint">O WhatsApp estava fechado na hora marcada. Não envio mensagem atrasada sozinho.</p><ul>${rows}</ul>${more}`;
+    el.onclick = async (e) => {
+      const b = e.target.closest('[data-act]');
+      if (!b) return;
+      if (b.dataset.act === 'later') { overdueList.forEach((t) => overdueDismissed.add(t.id)); overdueList = []; renderOverdue(); return; }
+      const id = +b.closest('li').dataset.id;
+      const t = overdueList.find((x) => x.id === id);
+      if (!t) return;
+      b.disabled = true;
+      overdueList = overdueList.filter((x) => x.id !== id);
+      renderOverdue();
+      if (b.dataset.act === 'cancel') { try { await updateTask(id, { status: 'cancelled', error: 'Cancelada depois de passar do horário.', finished_at: new Date().toISOString() }, 'scheduled'); } catch (err) { showToast('Não foi possível cancelar.'); } }
+      else await runScheduledTask(t, { force: true });
+    };
+  }
+
+  setTimeout(pollTasks, 8000);
+  setInterval(pollTasks, TASK_POLL_MS);
+
+  // ===== FUNIS =====
+  // Disparo de funis na conversa aberta: esperas reais entre os passos, "digitando…/gravando…"
+  // em cada envio e parada automática se o contato responder. Funis em conversas diferentes
+  // rodam ao mesmo tempo; na mesma conversa, um espera o outro terminar.
+  const STEP_TYPE = { message: 'msg', audio: 'audio', midia: 'media', document: 'doc' };
+  const IGNITION_MS = 3000;     // tempo para desistir antes do primeiro envio
+  const REPLY_CHECK_MS = 3000;  // de quanto em quanto tempo olha se o contato respondeu (durante as esperas)
+  const LIVE = new Set(['ignition', 'queued', 'running']);
+  let funnelSearch = '';
+  let openFunnelId = null;
+  let activeChat = null;              // conversa aberta, para o botão "Disparar para …"
+  const stopReplyChoice = new Map();  // escolha feita no detalhe de cada funil (padrão = Ajustes)
+  const runs = [];
+  let runSeq = 0;
+  let dockCollapsed = false;
+  let dockTicker = null;
+  let dockKey = '';
+  let liveCount = -1;
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  function itemIndex() {
+    const m = new Map();
+    buildItemsList().forEach((i) => m.set(i.type + ':' + i.id, i));
+    return m;
+  }
+
+  function funnelSteps(f, index) {
+    return (f.funnel_items || []).slice()
+      .sort((a, b) => (a.position - b.position) || (a.id - b.id))
+      .map((fi) => {
+        const type = STEP_TYPE[fi.type] || 'msg';
+        return { type, item: index.get(type + ':' + fi.item_id) || null, delayMs: ((+fi.delay_minutes || 0) * 60 + (+fi.delay_seconds || 0)) * 1000 };
+      });
+  }
+
+  // Duração aproximada: esperas + digitando/gravando de cada passo
+  function estimateMs(steps) {
+    return steps.reduce((t, s) => {
+      if (!s.item) return t + s.delayMs;
+      const presence = s.type === 'msg' ? Math.min(Math.max((s.item.content || '').length * 55, 1500), 9000)
+        : s.type === 'audio' ? Math.min(Math.max((durationCache.get(s.item.url) || 6) * 1000, 2000), 15000) : 3000;
+      return t + s.delayMs + presence + 1000;
+    }, 0);
+  }
+
+  function fmtLong(ms) {
+    const s = Math.max(0, Math.round(ms / 1000));
+    if (s < 60) return s + ' s';
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+    if (h) return h + ' h' + (m ? ' ' + m + ' min' : '');
+    return m + ' min' + (r && m < 10 ? ' ' + r + ' s' : '');
+  }
+
+  // ----- Aba Funis -----
+  function renderFunnels() {
+    const list = $('zf-funnel-list');
+    if (!list) return;
+    const count = $('zf-funnel-count');
+    if (count) count.textContent = '';
+    if (!loaded) { list.innerHTML = '<li class="zf-skel"></li><li class="zf-skel"></li>'; return; }
+    const S = window._zfSVG;
+    const empty = (title, text, cta) => {
+      list.innerHTML = `<li class="zf-empty"><b>${title}</b><span>${text}</span>${cta ? `<button type="button" class="zf-btn zf-empty-cta" data-zf-go="/dashboard/funis">${S.external} Criar funil no painel</button>` : ''}</li>`;
+      const b = list.querySelector('[data-zf-go]');
+      if (b) b.onclick = () => openPanel(b.dataset.zfGo);
+    };
+    if (funnelsError && !funnelsData.length) return empty('Não foi possível carregar os funis', 'Clique em Atualizar na aba Itens para tentar de novo.');
+    const all = funnelsData;
+    const shown = funnelSearch
+      ? all.filter((f) => (f.title || '').toLowerCase().includes(funnelSearch) || (f.description || '').toLowerCase().includes(funnelSearch))
+      : all;
+    if (count) count.textContent = `${shown.length} de ${all.length} funis`;
+    if (!all.length) return empty('Nenhum funil ainda', 'Monte a sequência de mensagens no painel. A lista atualiza sozinha quando você voltar para cá.', true);
+    if (!shown.length) return empty('Nada encontrado', 'Tente outra busca.');
+
+    const index = itemIndex();
+    list.innerHTML = shown.map((f) => {
+      const steps = funnelSteps(f, index);
+      const usable = steps.filter((s) => s.item).length;
+      const missing = steps.length - usable;
+      const open = String(f.id) === String(openFunnelId);
+      const stop = stopReplyChoice.has(f.id) ? stopReplyChoice.get(f.id) : settings.stopOnReply;
+      const meta = steps.length ? `${steps.length} passo${steps.length > 1 ? 's' : ''} · cerca de ${fmtLong(estimateMs(steps))}` : 'Sem passos';
+      const detail = !open ? '' : `
+        <ol class="zf-steps">${steps.map((s, i) => `
+          <li class="zf-step${s.item ? '' : ' zf-step-off'}">
+            <span class="zf-step-dot zf-t-${s.type}">${S[TYPE_ICON[s.type]]}</span>
+            <span class="zf-step-txt"><b>${i + 1}. ${s.item ? escapeHtml(s.item.title) : 'Item apagado da biblioteca'}</b>
+            <small>${s.item ? `${s.delayMs ? S.clock + ' Espera ' + fmtLong(s.delayMs) + ', depois ' : ''}${s.type === 'audio' ? 'gravando' : 'digitando'}` : 'Será pulado'}</small></span>
+          </li>`).join('')}
+        </ol>
+        ${missing ? `<p class="zf-fn-warn">${missing} passo${missing > 1 ? 's apontam' : ' aponta'} para itens apagados e ${missing > 1 ? 'serão pulados' : 'será pulado'}.</p>` : ''}
+        <label class="zf-check"><input type="checkbox" data-stop-reply ${stop ? 'checked' : ''}><span>Parar se o contato responder</span></label>
+        <button type="button" class="zf-btn-primary zf-fire-btn" ${usable ? '' : 'disabled'}>${S.bolt}<span>Disparar para <b data-chat-name>${activeChat ? escapeHtml(activeChat.name) : 'a conversa aberta'}</b></span></button>`;
+      return `
+      <li class="zf-item zf-fn${open ? ' zf-open' : ''}" data-fid="${f.id}">
+        <div class="zf-row">
+          <span class="zf-th zf-th-fn" aria-hidden="true">${S.funnel}</span>
+          <button type="button" class="zf-txt" aria-expanded="${open}" title="Ver os passos">
+            <span class="zf-tt">${escapeHtml(f.title)}${f.is_favorite ? `<span class="zf-star">${S.star}</span>` : ''}</span>
+            <span class="zf-mm" data-fn-meta data-base="${escapeHtml(meta)}">${escapeHtml(meta)}</span>
+          </button>
+          <button type="button" class="zf-send zf-fire" ${usable ? '' : 'disabled'} aria-label="Disparar ${escapeHtml(f.title)} nesta conversa" title="Disparar nesta conversa">${S.bolt}</button>
+        </div>
+        <div class="zf-preview zf-fn-detail">${detail}</div>
+      </li>`;
+    }).join('');
+
+    list.querySelectorAll('.zf-fn').forEach((li) => {
+      const f = funnelsData.find((x) => String(x.id) === li.dataset.fid);
+      if (!f) return;
+      const stopChoice = () => (stopReplyChoice.has(f.id) ? stopReplyChoice.get(f.id) : settings.stopOnReply);
+      li.querySelector('.zf-txt').onclick = () => {
+        openFunnelId = String(openFunnelId) === String(f.id) ? null : f.id;
+        renderFunnels();
+        if (openFunnelId != null) refreshActiveChat();
+      };
+      li.querySelector('.zf-fire').onclick = (e) => { e.stopPropagation(); fireFunnel(f, { stopOnReply: stopChoice() }); };
+      const big = li.querySelector('.zf-fire-btn');
+      if (big) big.onclick = () => fireFunnel(f, { stopOnReply: stopChoice() });
+      const cb = li.querySelector('[data-stop-reply]');
+      if (cb) cb.onchange = () => stopReplyChoice.set(f.id, cb.checked);
+    });
+    updateFunnelLive();
+  }
+
+  // Funil rodando aparece "vivo" na lista, com o passo atual
+  function updateFunnelLive() {
+    document.querySelectorAll('#zf-funnel-list .zf-fn').forEach((li) => {
+      const live = runs.filter((r) => String(r.funnelId) === li.dataset.fid && LIVE.has(r.state));
+      li.classList.toggle('zf-fn-running', live.length > 0);
+      const meta = li.querySelector('[data-fn-meta]');
+      if (!meta) return;
+      if (!live.length) { meta.textContent = meta.dataset.base || ''; return; }
+      const r = live[live.length - 1];
+      meta.textContent = live.length > 1
+        ? `Rodando em ${live.length} conversas`
+        : `Rodando · passo ${Math.min(r.idx + 1, r.steps.length)} de ${r.steps.length} · ${r.chatName}`;
+    });
+  }
+
+  let chatAsking = false;
+  async function refreshActiveChat() {
+    if (chatAsking) return;
+    chatAsking = true;
+    try {
+      const r = await engineRequest('ZF_ENGINE_ACTIVE_CHAT', {}, 6000);
+      activeChat = r.ok ? { chatId: r.chatId, name: r.name } : null;
+    } catch (e) { activeChat = null; }
+    chatAsking = false;
+    document.querySelectorAll('#zf-funnel-list [data-chat-name]').forEach((el) => { el.textContent = activeChat ? activeChat.name : 'a conversa aberta'; });
+  }
+  // com um funil aberto na aba, o botão acompanha a conversa que você abrir
+  setInterval(() => {
+    if (openFunnelId == null || $('zf-sidebar-root')?.classList.contains('zf-hidden')) return;
+    if (!document.querySelector('#zf-sidebar-root .zf-page-active[data-page="funis"]')) return;
+    refreshActiveChat();
+  }, 2500);
+
+  // ----- Executor -----
+  class RunStop extends Error { constructor(kind) { super(kind); this.kind = kind; } }
+
+  async function fireFunnel(funnel, opts) {
+    let chat;
+    try { chat = await engineRequest('ZF_ENGINE_ACTIVE_CHAT', {}, 8000); } catch (e) { chat = { ok: false, notReady: true }; }
+    if (!chat.ok) {
+      showToast(chat.notReady ? 'O motor de envio ainda não está pronto. Recarregue o WhatsApp Web (F5).' : (chat.error || 'Abra uma conversa primeiro.'));
+      return;
+    }
+    const steps = funnelSteps(funnel, itemIndex()).map((s) => Object.assign(s, { state: s.item ? 'pending' : 'skipped' }));
+    if (!steps.some((s) => s.item)) { showToast('Este funil não tem passos para enviar.'); return; }
+    const run = {
+      uid: ++runSeq, funnelId: funnel.id, title: funnel.title || 'Funil', chatId: chat.chatId, chatName: chat.name,
+      stopOnReply: !!(opts && opts.stopOnReply), steps, idx: 0, sent: 0,
+      state: 'ignition', phase: 'ignition', paused: false, startedAt: Date.now(), since: Date.now(),
+    };
+    runs.push(run);
+    dockCollapsed = false;
+    renderDock();
+    driveRun(run);
+  }
+
+  function checkStop(run) { if (run.stopRequested) throw new RunStop('stopped'); }
+
+  async function checkReply(run) {
+    if (!run.stopOnReply) return;
+    let r = null;
+    try { r = await engineRequest('ZF_ENGINE_REPLIED', { chatId: run.chatId, since: run.since }, 4000); } catch (e) { /* motor não respondeu: segue */ }
+    if (r && r.replied) throw new RunStop('replied');
+  }
+
+  // Espera que respeita pausa (o relógio congela) e confere respostas do contato
+  async function waitFor(run, ms, phase) {
+    run.phase = phase;
+    run.waitTotal = ms;
+    run.waitLeft = ms;
+    renderDock();
+    let last = Date.now(), lastCheck = Date.now();
+    while (run.waitLeft > 0) {
+      checkStop(run);
+      const now = Date.now();
+      if (!run.paused) run.waitLeft -= now - last;
+      last = now;
+      if (phase !== 'ignition' && !run.paused && now - lastCheck >= REPLY_CHECK_MS) { lastCheck = now; await checkReply(run); }
+      await sleep(Math.min(250, Math.max(20, run.waitLeft)));
+    }
+  }
+
+  async function holdWhilePaused(run) {
+    if (!run.paused) return;
+    const before = run.phase;
+    run.phase = 'hold';
+    renderDock();
+    while (run.paused) { checkStop(run); await sleep(250); }
+    run.phase = before;
+  }
+
+  async function waitTurn(run) {
+    const ahead = () => runs.some((r) => r !== run && r.chatId === run.chatId && r.uid < run.uid && LIVE.has(r.state));
+    if (!ahead()) return;
+    run.state = 'queued';
+    run.phase = 'queued';
+    renderDock();
+    while (ahead()) { checkStop(run); await sleep(400); }
+  }
+
+  async function sendStep(run, st) {
+    run.phase = 'preparing';
+    renderDock();
+    const payload = await buildPayload(st.item, run.chatName, () => { run.phase = 'downloading'; renderDock(); });
+    payload.chatId = run.chatId;
+    checkStop(run);
+    run.phase = 'engine';
+    renderDock();
+    const res = await withEngine(async () => {
+      checkStop(run);
+      await checkReply(run); // última conferida antes de começar a digitar
+      return engineRequest('ZF_ENGINE_SEND', payload, (payload.presenceMs || 0) + 120000, {
+        onId: (id) => { run.requestId = id; },
+        onStep: (s) => {
+          run.phase = s.step;
+          if (s.presenceMs) { run.presenceMs = s.presenceMs; run.presenceStart = Date.now(); }
+          renderDock();
+        },
+      });
+    });
+    run.requestId = null;
+    if (res.cancelled) throw new RunStop('stopped');
+    if (!res.ok) throw new Error(res.error || 'Falha ao enviar');
+  }
+
+  async function driveRun(run) {
+    try {
+      if (run.state === 'ignition') await waitFor(run, IGNITION_MS, 'ignition');
+      await waitTurn(run);
+      run.state = 'running';
+      for (; run.idx < run.steps.length; run.idx++) {
+        const st = run.steps[run.idx];
+        if (st.state === 'done' || st.state === 'skipped') continue;
+        if (st.delayMs && !st.waited) { st.state = 'waiting'; await waitFor(run, st.delayMs, 'waiting'); }
+        st.waited = true;
+        await holdWhilePaused(run);
+        checkStop(run);
+        st.state = 'active';
+        await sendStep(run, st);
+        st.state = 'done';
+        run.sent++;
+      }
+      finishRun(run, 'done');
+    } catch (e) {
+      run.requestId = null;
+      const st = run.steps[run.idx];
+      if (e instanceof RunStop) {
+        if (st && (st.state === 'active' || st.state === 'waiting')) st.state = 'pending';
+        finishRun(run, e.kind);
+      } else {
+        if (st) st.state = 'error';
+        run.error = (e && e.message) || 'Falha ao enviar';
+        console.error('❌ ZapFlow funil:', e);
+        finishRun(run, 'error');
+      }
+    }
+  }
+
+  function finishRun(run, state) {
+    run.state = state;
+    run.phase = state;
+    run.paused = false;
+    run.endedAt = Date.now();
+    renderDock();
+    const ms = { done: 9000, stopped: 4000, replied: 15000 }[state];
+    clearTimeout(run.dismissTimer);
+    if (ms) run.dismissTimer = setTimeout(() => dismissRun(run.uid), ms);
+    if (state === 'replied') showToast(`${run.chatName} respondeu: o funil "${run.title}" parou.`);
+  }
+
+  function dismissRun(uid) {
+    const i = runs.findIndex((r) => r.uid === uid);
+    if (i < 0 || LIVE.has(runs[i].state)) return;
+    clearTimeout(runs[i].dismissTimer);
+    runs.splice(i, 1);
+    renderDock();
+  }
+
+  function requestStop(run) {
+    run.stopRequested = true;
+    run.paused = false;
+    if (run.requestId) engineRequest('ZF_ENGINE_CANCEL', { targetId: run.requestId }, 5000).catch(() => {});
+  }
+
+  function stopAllRuns() { runs.forEach((r) => { if (LIVE.has(r.state)) requestStop(r); }); }
+
+  function runAction(uid, act) {
+    if (act === 'collapse') { dockCollapsed = !dockCollapsed; renderDock(); return; }
+    const run = runs.find((r) => r.uid === uid);
+    if (!run) return;
+    if (act === 'pause' && LIVE.has(run.state)) { run.paused = !run.paused; renderDock(); }
+    else if (act === 'stop' && LIVE.has(run.state)) { requestStop(run); renderDock(); }
+    else if (act === 'close') dismissRun(uid);
+    else if (act === 'retry' && run.state === 'error') {
+      clearTimeout(run.dismissTimer);
+      const st = run.steps[run.idx];
+      if (st) { st.state = 'pending'; st.waited = true; }
+      Object.assign(run, { error: null, stopRequested: false, paused: false, state: 'running', phase: 'preparing', since: Date.now(), endedAt: null });
+      renderDock();
+      driveRun(run);
+    }
+  }
+
+  function watchUnload() {
+    // recarregar a página interrompe os funis no meio: o navegador pergunta antes
+    window.addEventListener('beforeunload', (e) => {
+      if (runs.some((r) => LIVE.has(r.state))) { e.preventDefault(); e.returnValue = ''; }
+    });
+  }
+
+  // ----- Central de disparos -----
+  const FAST = new Set(['preparing', 'downloading', 'engine', 'composing', 'recording', 'sending']);
+
+  function engineMode(run) {
+    if (run.state === 'done') return 'done';
+    if (run.state === 'error') return 'error';
+    if (run.state === 'stopped' || run.state === 'replied') return 'off';
+    if (run.paused || run.phase === 'hold') return 'paused';
+    if (run.phase === 'ignition') return 'ignite';
+    return FAST.has(run.phase) ? 'fast' : 'slow';
+  }
+
+  function runLabel(run) {
+    const n = run.steps.length;
+    const step = Math.min(run.idx + 1, n);
+    switch (run.state) {
+      case 'done': return `Funil concluído · ${run.sent} envio${run.sent === 1 ? '' : 's'} em ${fmtLong(run.endedAt - run.startedAt)}`;
+      case 'replied': return `O contato respondeu · parado no passo ${step} de ${n}`;
+      case 'stopped': return run.sent ? `Parado no passo ${step} de ${n}` : 'Disparo cancelado';
+      case 'error': return `Erro no passo ${step}: ${run.error || 'falha ao enviar'}`;
+    }
+    if (run.stopRequested) return 'Parando…';
+    if (run.paused) {
+      if (run.phase === 'waiting' || run.phase === 'ignition') return `Pausado · faltam ${fmtSecs(run.waitLeft)}`;
+      if (run.phase === 'hold') return 'Pausado';
+      return 'Pausa assim que este envio terminar';
+    }
+    switch (run.phase) {
+      case 'ignition': return `Ligando o motor… ${Math.max(1, Math.ceil(run.waitLeft / 1000))}`;
+      case 'queued': return 'Na fila: outro funil está rodando nesta conversa';
+      case 'waiting': return `Próximo passo em ${fmtSecs(run.waitLeft)}`;
+      case 'preparing': return 'Preparando o passo…';
+      case 'downloading': return 'Baixando o arquivo…';
+      case 'engine': return 'Aguardando a vez do motor…';
+      case 'composing': return `Digitando… ${fmtSecs(run.presenceStart + run.presenceMs - Date.now())}`;
+      case 'recording': return `Gravando áudio… ${fmtSecs(run.presenceStart + run.presenceMs - Date.now())}`;
+      case 'sending': return 'Enviando…';
+    }
+    return '';
+  }
+
+  // 0–100 no anel em volta do motor (espera ou digitando/gravando); null = sem anel
+  function runRing(run) {
+    if (!LIVE.has(run.state)) return run.state === 'done' ? 100 : null;
+    if ((run.phase === 'waiting' || run.phase === 'ignition') && run.waitTotal) return 100 - (Math.max(0, run.waitLeft) / run.waitTotal) * 100;
+    if ((run.phase === 'composing' || run.phase === 'recording') && run.presenceMs) {
+      return Math.min(100, ((Date.now() - run.presenceStart) / run.presenceMs) * 100);
+    }
+    return null;
+  }
+
+  function trackHtml(run) {
+    const S = window._zfSVG;
+    const live = LIVE.has(run.state);
+    return run.steps.map((s, i) => {
+      let link = '';
+      if (i > 0) {
+        const flow = live && i === run.idx && (s.state === 'waiting' || (s.state === 'pending' && run.state === 'running'));
+        const done = i < run.idx || ['active', 'done', 'error'].includes(s.state);
+        link = `<span class="zf-link" data-s="${flow ? 'flow' : done ? 'done' : 'todo'}"></span>`;
+      }
+      const title = `${i + 1}. ${s.item ? s.item.title : 'Item apagado (pulado)'}`;
+      const icon = s.state === 'done' ? S.check : S[TYPE_ICON[s.type]];
+      return `${link}<span class="zf-node zf-t-${s.type}" data-s="${s.state}" style="--i:${i}" title="${escapeHtml(title)}">${icon}</span>`;
+    }).join('');
+  }
+
+  function runCard(run) {
+    const S = window._zfSVG;
+    const live = LIVE.has(run.state);
+    const mode = engineMode(run);
+    const core = mode === 'done' ? S.check : mode === 'error' ? '!' : mode === 'off' ? S.stop : mode === 'paused' ? S.pause : S.bolt;
+    let actions = '';
+    if (live && !run.stopRequested) {
+      actions = `<button type="button" class="zf-run-btn" data-zf-run="${run.uid}" data-zf-act="pause" aria-label="${run.paused ? 'Retomar' : 'Pausar'}" title="${run.paused ? 'Retomar' : 'Pausar'}">${run.paused ? S.play : S.pause}</button>` +
+        `<button type="button" class="zf-run-btn zf-run-stop" data-zf-run="${run.uid}" data-zf-act="stop" aria-label="${run.phase === 'ignition' ? 'Cancelar' : 'Parar o funil'}" title="${run.phase === 'ignition' ? 'Cancelar' : 'Parar o funil'}">${S.stop}</button>`;
+    } else if (!live) {
+      actions = `<button type="button" class="zf-run-btn" data-zf-run="${run.uid}" data-zf-act="close" aria-label="Fechar" title="Fechar">${S.close}</button>`;
+    }
+    const n = run.steps.length;
+    return `
+    <article class="zf-run" data-uid="${run.uid}" data-state="${run.state}" data-mode="${mode}" style="--steps:${n}">
+      <div class="zf-eng" data-mode="${mode}" aria-hidden="true">
+        <span class="zf-eng-blades"></span>
+        <svg class="zf-eng-ring" viewBox="0 0 48 48"><circle class="zf-eng-track" cx="24" cy="24" r="22" pathLength="100"/><circle class="zf-eng-prog" cx="24" cy="24" r="22" pathLength="100" data-ring/></svg>
+        <span class="zf-eng-core">${core}</span>
+      </div>
+      <div class="zf-run-body">
+        <div class="zf-run-top"><b class="zf-run-title" title="${escapeHtml(run.title)}">${escapeHtml(run.title)}</b><span class="zf-run-actions">${actions}</span></div>
+        <div class="zf-run-sub">para ${escapeHtml(run.chatName)} · passo ${Math.min(run.idx + 1, n)} de ${n}</div>
+        <div class="zf-track">${trackHtml(run)}</div>
+        <div class="zf-run-state" data-label>${escapeHtml(runLabel(run))}</div>
+        ${run.state === 'error' ? `<button type="button" class="zf-run-btn zf-run-retry" data-zf-run="${run.uid}" data-zf-act="retry" title="Envia este passo de novo e segue o funil">${S.retry}<span>Tentar de novo a partir do passo ${Math.min(run.idx + 1, n)}</span></button>` : ''}
+      </div>
+    </article>`;
+  }
+
+  function renderDock() {
+    statusRoot();
+    const dock = $('zf-dock');
+    if (!dock) return;
+    const live = runs.filter((r) => LIVE.has(r.state));
+    const key = JSON.stringify([dockCollapsed, runs.map((r) => [r.uid, r.state, r.phase, r.paused, !!r.stopRequested, r.idx, r.steps.map((s) => s.state).join('')])]);
+    if (key !== dockKey) {
+      dockKey = key;
+      if (!runs.length) dock.innerHTML = '';
+      else {
+        const S = window._zfSVG;
+        const first = live[0] || runs[runs.length - 1];
+        const status = live.length ? `${live.length} rodando`
+          : runs.some((r) => r.state === 'error') ? 'Precisa de atenção'
+            : runs.some((r) => r.state === 'done') ? 'Concluído' : 'Parado';
+        // minimizada: só uma linha com o funil atual e o que ele está fazendo agora
+        dock.innerHTML = `
+          <div class="zf-dock-head${live.length ? ' zf-dock-live' : ''}${dockCollapsed ? ' zf-dock-mini' : ''}">
+            <span class="zf-dock-bolt">${S.bolt}</span>
+            ${dockCollapsed
+              ? `<span class="zf-dock-mini-txt"><b>${escapeHtml(first.title)}</b> <span data-dock-summary></span></span>${runs.length > 1 ? `<span class="zf-dock-more">+${runs.length - 1}</span>` : ''}`
+              : `<b>Central de disparos</b><span class="zf-dock-count">${status}</span>`}
+            <button type="button" class="zf-run-btn" data-zf-run="0" data-zf-act="collapse" aria-expanded="${!dockCollapsed}" aria-label="${dockCollapsed ? 'Mostrar disparos' : 'Minimizar'}" title="${dockCollapsed ? 'Mostrar disparos' : 'Minimizar'}">${dockCollapsed ? S.chevron : S.minus}</button>
+          </div>
+          ${dockCollapsed ? '' : `<div class="zf-runs">${runs.map(runCard).join('')}</div>`}
+          <span class="zf-sr" role="status">${escapeHtml(runs.map((r) => r.title + ': ' + runLabel(r).replace(/\s\d+:\d\d$/, '')).join('. '))}</span>`;
+      }
+      updateStatusVisibility();
+      updateFunnelLive();
+    }
+    // partes que mudam a cada instante: só o texto e o anel (os botões continuam os mesmos)
+    const mini = dock.querySelector('[data-dock-summary]');
+    if (mini) {
+      const r = live[0] || runs[runs.length - 1];
+      const text = r ? runLabel(r) : '';
+      if (mini.textContent !== text) mini.textContent = text;
+    }
+    runs.forEach((r) => {
+      const el = dock.querySelector(`.zf-run[data-uid="${r.uid}"]`);
+      if (!el) return;
+      const label = el.querySelector('[data-label]');
+      const text = runLabel(r);
+      if (label && label.textContent !== text) label.textContent = text;
+      const ring = el.querySelector('[data-ring]');
+      const pct = runRing(r);
+      if (ring) {
+        ring.style.opacity = pct == null ? '0' : '1';
+        ring.style.strokeDashoffset = String(100 - (pct || 0));
+      }
+    });
+    if (live.length && !dockTicker) dockTicker = setInterval(renderDock, 200);
+    if (!live.length && dockTicker) { clearInterval(dockTicker); dockTicker = null; }
+    if (live.length !== liveCount) { liveCount = live.length; updateFiringIndicators(); }
+  }
+
+  // Raio pulsando na aba lateral, contador na aba Funis e no status do cabeçalho
+  function updateFiringIndicators() {
+    const live = runs.filter((r) => LIVE.has(r.state)).length;
+    document.documentElement.classList.toggle('zf-firing', live > 0);
+    const badge = $('zf-funnel-badge');
+    if (badge) { badge.hidden = !live; badge.textContent = String(live); }
+    const pill = $('zf-engine');
+    if (pill && engineReady) {
+      pill.dataset.state = live ? 'firing' : 'ready';
+      pill.lastElementChild.textContent = live ? (live === 1 ? '1 disparo' : `${live} disparos`) : 'Pronto';
+    }
   }
 
   // ===== SEND ITEM =====
@@ -662,38 +1449,60 @@
     renderSendStatus();
   }
 
-  async function processJob(job) {
-    const item = job.item;
-    let payload;
+  // Monta o que o motor precisa para enviar um item (baixa o arquivo quando há um).
+  async function buildPayload(item, contactName, onDownloading) {
     if (item.type === 'msg') {
-      const text = item.content || '';
+      const text = fillTemplate(item.content || '', contactName);
       if (!text.trim()) throw new Error('Mensagem vazia');
-      payload = { kind: 'text', text, presenceMs: typingMs(text) };
-    } else {
-      if (!item.url) throw new Error(item.type === 'audio' ? 'Áudio sem arquivo' : 'Item sem arquivo');
-      job.state = 'downloading';
-      renderSendStatus();
-      const file = await downloadAsDataUrl(item.url);
-      if (job.cancelRequested) throw Object.assign(new Error('Envio cancelado'), { cancelled: true });
-      if (item.type === 'audio' || file.mimeType.startsWith('audio/')) {
-        const duration = await getAudioDuration(file.blob);
-        payload = { kind: 'audio', dataUrl: file.dataUrl, mimetype: file.mimeType, presenceMs: recordingMs(duration) };
-      } else {
-        payload = {
-          kind: 'file', dataUrl: file.dataUrl, mimetype: file.mimeType,
-          filename: buildFilename(item.title, file.mimeType), caption: item.content || '', presenceMs: jitter(1500, 0.3),
-        };
-      }
+      return { kind: 'text', text, presenceMs: typingMs(text) };
     }
+    if (!item.url) throw new Error(item.type === 'audio' ? 'Áudio sem arquivo' : 'Item sem arquivo');
+    if (onDownloading) onDownloading();
+    const file = await downloadAsDataUrl(item.url);
+    if (item.type === 'audio' || file.mimeType.startsWith('audio/')) {
+      const duration = await getAudioDuration(file.blob);
+      return { kind: 'audio', dataUrl: file.dataUrl, mimetype: file.mimeType, presenceMs: recordingMs(duration) };
+    }
+    return {
+      kind: 'file', dataUrl: file.dataUrl, mimetype: file.mimeType,
+      filename: buildFilename(item.title, file.mimeType), caption: fillTemplate(item.content || '', contactName), presenceMs: jitter(1500, 0.3),
+    };
+  }
+
+  // {nome} = primeiro nome do contato, {nome_completo} = nome inteiro (igual às tarefas do painel).
+  // Conversa sem nome salvo (só o número): o marcador some e a frase continua natural.
+  function fillTemplate(text, name) {
+    if (!/\{nome(_completo)?\}/i.test(text)) return text;
+    const full = /\p{L}/u.test(name || '') ? String(name).trim() : '';
+    const first = full.split(/\s+/)[0] || '';
+    let out = text.replace(/\{nome_completo\}/gi, full).replace(/\{nome\}/gi, first);
+    if (!full) out = out.replace(/[ \t]+([,.!?;:])/g, '$1').replace(/[ \t]{2,}/g, ' ');
+    return out;
+  }
+
+  // O motor envia uma coisa por vez: itens avulsos e passos de funis entram nesta fila única.
+  let engineChain = Promise.resolve();
+  function withEngine(fn) {
+    const p = engineChain.then(fn, fn);
+    engineChain = p.catch(() => {});
+    return p;
+  }
+
+  async function processJob(job) {
+    const payload = await buildPayload(job.item, job.chatName, () => { job.state = 'downloading'; renderSendStatus(); });
+    if (job.cancelRequested) throw Object.assign(new Error('Envio cancelado'), { cancelled: true });
     payload.chatId = job.chatId;
 
-    const res = await engineRequest('ZF_ENGINE_SEND', payload, (payload.presenceMs || 0) + 120000, {
-      onId: (id) => { job.requestId = id; },
-      onStep: (s) => {
-        job.state = s.step;
-        if (s.presenceMs) { job.presenceMs = s.presenceMs; job.presenceStart = Date.now(); }
-        renderSendStatus();
-      },
+    const res = await withEngine(() => {
+      if (job.cancelRequested) return { cancelled: true };
+      return engineRequest('ZF_ENGINE_SEND', payload, (payload.presenceMs || 0) + 120000, {
+        onId: (id) => { job.requestId = id; },
+        onStep: (s) => {
+          job.state = s.step;
+          if (s.presenceMs) { job.presenceMs = s.presenceMs; job.presenceStart = Date.now(); }
+          renderSendStatus();
+        },
+      });
     });
     if (res.cancelled) throw Object.assign(new Error('Envio cancelado'), { cancelled: true });
     if (!res.ok) throw new Error(res.error || 'Falha ao enviar');
@@ -759,20 +1568,36 @@
   };
   let statusTicker = null;
 
+  // Um só canto da tela para tudo que está sendo enviado: a central de disparos (funis) e os itens avulsos.
   function statusRoot() {
     let el = document.getElementById('zf-send-status');
     if (!el) {
       el = document.createElement('div');
       el.id = 'zf-send-status';
+      el.innerHTML = '<div id="zf-dock"></div><div id="zf-ss-items"></div>';
       el.addEventListener('click', (e) => {
         const btn = e.target.closest('[data-zf-cancel]');
-        if (btn) { e.preventDefault(); e.stopPropagation(); cancelJob(Number(btn.dataset.zfCancel)); }
+        if (btn) { e.preventDefault(); e.stopPropagation(); cancelJob(Number(btn.dataset.zfCancel)); return; }
+        const act = e.target.closest('[data-zf-act]');
+        if (act) { e.preventDefault(); e.stopPropagation(); runAction(Number(act.dataset.zfRun), act.dataset.zfAct); }
       });
       document.body.appendChild(el);
     }
     const bar = document.getElementById('zf-quickbar');
     if (bar && bar.style.left) el.style.left = `calc(${bar.style.left} + 12px)`;
+    // logo acima da caixa de digitar do WhatsApp, para não cobrir o que você escreve
+    const footer = document.querySelector('#main footer');
+    if (footer) {
+      const top = footer.getBoundingClientRect().top;
+      if (top > 0) el.style.bottom = Math.round(window.innerHeight - top + 10) + 'px';
+    }
     return el;
+  }
+
+  function updateStatusVisibility() {
+    const el = statusRoot();
+    const has = !!($('zf-dock')?.childElementCount || $('zf-ss-items')?.childElementCount);
+    el.classList.toggle('zf-ss-visible', has);
   }
 
   function fmtSecs(ms) {
@@ -809,12 +1634,14 @@
   }
 
   function renderSendStatus() {
-    const el = statusRoot();
+    statusRoot();
+    const el = $('zf-ss-items');
     const current = sendQueue[0] || null;
     const waiting = sendQueue.slice(1);
     const shown = current || lastFinished;
     if (!shown) {
-      el.classList.remove('zf-ss-visible');
+      el.innerHTML = '';
+      updateStatusVisibility();
       if (statusTicker) { clearInterval(statusTicker); statusTicker = null; }
       return;
     }
@@ -826,7 +1653,7 @@
         '</div>';
     }
     el.innerHTML = html;
-    el.classList.add('zf-ss-visible');
+    updateStatusVisibility();
     const needsTick = current && (current.state === 'composing' || current.state === 'recording');
     if (needsTick && !statusTicker) statusTicker = setInterval(renderSendStatus, 250);
     if (!needsTick && statusTicker) { clearInterval(statusTicker); statusTicker = null; }

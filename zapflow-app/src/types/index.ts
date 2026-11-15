@@ -107,6 +107,10 @@ export interface TaskOptions {
   humanize?: boolean;
   /** duração do áudio exclusivo, em segundos */
   duration?: number;
+  /** conversa do WhatsApp (criada pela extensão) e controle do envio automático */
+  chat_id?: string;
+  created_at_ms?: number;
+  claimed_at?: number;
   /** id do compromisso antigo que virou esta tarefa */
   from_appointment?: number;
 }

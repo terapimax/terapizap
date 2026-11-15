@@ -1,6 +1,6 @@
-// ZapFlow v3.6 — HTML da barra lateral (só estrutura; a lógica fica em content.js)
+// ZapFlow v3.7 — HTML da barra lateral (só estrutura; a lógica fica em content.js)
 
-const ZF_VERSION = '3.6.0';
+const ZF_VERSION = '3.7.0';
 
 const _zfIcon = (paths, size = 16, extra = '') =>
   `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" ${extra}>${paths}</svg>`;
@@ -25,6 +25,14 @@ window._zfSVG = {
   kanban: _zfIcon('<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M15 3v18"/>'),
   gear: _zfIcon('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>'),
   logout: _zfIcon('<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>'),
+  pause: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>',
+  stop: '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>',
+  check: _zfIcon('<path d="M20 6 9 17l-5-5"/>', 16, 'stroke-width="2.6"'),
+  retry: _zfIcon('<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>'),
+  calendar: _zfIcon('<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>', 16),
+  clock: _zfIcon('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
+  chevron: _zfIcon('<path d="m6 9 6 6 6-6"/>'),
+  minus: _zfIcon('<path d="M5 12h14"/>'),
 };
 
 // Atalhos do menu ☰: caminho no painel (ou ação local da extensão)
@@ -84,6 +92,7 @@ function zfBuildSidebar() {
 
   <nav class="zf-tabs" role="tablist" aria-label="Seções">
     <button type="button" role="tab" data-zf-tab="itens" aria-selected="true">Itens</button>
+    <button type="button" role="tab" data-zf-tab="funis" aria-selected="false">Funis<span class="zf-tab-badge" id="zf-funnel-badge" hidden></span></button>
     <button type="button" role="tab" data-zf-tab="ajustes" aria-selected="false">Ajustes</button>
   </nav>
 
@@ -106,6 +115,17 @@ function zfBuildSidebar() {
     </footer>
   </section>
 
+  <section class="zf-page" data-page="funis" aria-label="Funis">
+    <div class="zf-tools">
+      <label class="zf-search">${S.search}<input type="search" id="zf-funnel-search" placeholder="Buscar funis" aria-label="Buscar funis"></label>
+    </div>
+    <ul class="zf-list" id="zf-funnel-list" aria-label="Seus funis"><li class="zf-skel"></li><li class="zf-skel"></li></ul>
+    <footer class="zf-foot">
+      <span id="zf-funnel-count"></span>
+      <button type="button" class="zf-link-btn" data-zf-go="/dashboard/funis">Editar no painel</button>
+    </footer>
+  </section>
+
   <section class="zf-page" data-page="ajustes" aria-label="Ajustes">
     <div class="zf-settings">
       <div class="zf-sec">
@@ -120,6 +140,11 @@ function zfBuildSidebar() {
         <h3>Barra rápida</h3>
         ${toggle('zf-s-hide-bar', 'Ocultar a barra rápida', 'A faixa de itens que aparece embaixo da conversa.')}
         ${toggle('zf-s-bar-fav', 'Mostrar só favoritos na barra', '')}
+        ${toggle('zf-s-bar-funnels', 'Mostrar funis na barra', 'Um clique dispara o funil na conversa aberta (com 3 s para cancelar).')}
+      </div>
+      <div class="zf-sec">
+        <h3>Funis</h3>
+        ${toggle('zf-s-stop-reply', 'Parar quando o contato responder', 'Vale para os próximos disparos. Dá para mudar em cada funil antes de disparar.')}
       </div>
       <div class="zf-sec">
         <h3>Tema</h3>

@@ -11,6 +11,7 @@
 //        ← ZF_ENGINE_STEP { step: 'sending' }
 //        ← ZF_ENGINE_RESULT { ok, id?, ack?, error?, cancelled?, notReady? }
 //   → ZF_ENGINE_CANCEL { targetId }  (cancela durante "digitando/gravando")
+//   → ZF_ENGINE_REPLIED { chatId, since } ← ZF_ENGINE_RESULT { ok, replied }  (contato respondeu desde `since`?)
 (function () {
     'use strict';
     if (window.__zfEngine) return;
@@ -100,13 +101,13 @@
                 if (!msg.text) throw new Error('Mensagem vazia.');
                 await holdPresence(requestId, chatId, 'composing', msg.presenceMs);
                 step(requestId, 'sending');
-                result = await WPP.chat.sendTextMessage(chatId, msg.text, { createChat: false, waitForAck: true });
+                result = await WPP.chat.sendTextMessage(chatId, msg.text, { createChat: !!msg.createChat, waitForAck: true });
             } else if (kind === 'audio') {
                 if (!msg.dataUrl) throw new Error('Áudio sem conteúdo.');
                 await holdPresence(requestId, chatId, 'recording', msg.presenceMs);
                 step(requestId, 'sending');
                 result = await WPP.chat.sendFileMessage(chatId, msg.dataUrl, {
-                    type: 'audio', isPtt: true, mimetype: msg.mimetype || undefined, createChat: false, waitForAck: true,
+                    type: 'audio', isPtt: true, mimetype: msg.mimetype || undefined, createChat: !!msg.createChat, waitForAck: true,
                 });
             } else if (kind === 'file') {
                 if (!msg.dataUrl) throw new Error('Arquivo sem conteúdo.');
@@ -114,7 +115,7 @@
                 step(requestId, 'sending');
                 result = await WPP.chat.sendFileMessage(chatId, msg.dataUrl, {
                     type: 'auto-detect', filename: msg.filename || undefined, mimetype: msg.mimetype || undefined,
-                    caption: msg.caption || undefined, createChat: false, waitForAck: true,
+                    caption: msg.caption || undefined, createChat: !!msg.createChat, waitForAck: true,
                 });
             } else {
                 throw new Error('Tipo de envio desconhecido: ' + kind);
@@ -131,6 +132,25 @@
             if (chatId && wppReady()) { try { await WPP.chat.markIsPaused(chatId); } catch (e) { /* sem impacto */ } }
             busy = false;
         }
+    }
+
+    // O contato mandou alguma mensagem de verdade (texto, áudio, mídia…) depois de `since` (ms)?
+    // Usado pelos funis para parar quando a pessoa responde.
+    const REPLY_TYPES = new Set(['chat', 'ptt', 'audio', 'image', 'video', 'document', 'sticker', 'location', 'vcard', 'multi_vcard', 'buttons_response', 'list_response']);
+    function contactReplied(chatId, since) {
+        if (!wppReady() || !chatId) return false;
+        try {
+            const chat = WPP.chat.get(chatId);
+            if (!chat || !chat.msgs) return false;
+            const list = chat.msgs.getModelsArray ? chat.msgs.getModelsArray() : (chat.msgs.models || []);
+            for (let i = list.length - 1; i >= 0; i--) {
+                const m = list[i];
+                if (!m || !m.id) continue;
+                if ((Number(m.t) || 0) * 1000 < since) break; // mensagens mais antigas: pode parar de olhar
+                if (!m.id.fromMe && REPLY_TYPES.has(m.type)) return true;
+            }
+        } catch (e) { console.warn('ZapFlow engine: não foi possível checar respostas:', e && e.message); }
+        return false;
     }
 
     window.addEventListener('message', async (event) => {
@@ -155,6 +175,9 @@
             }
             case 'ZF_ENGINE_SEND':
                 handleSend(msg);
+                break;
+            case 'ZF_ENGINE_REPLIED':
+                reply(msg.requestId, { ok: true, replied: contactReplied(msg.chatId, Number(msg.since) || 0) });
                 break;
             case 'ZF_ENGINE_CANCEL':
                 if (msg.targetId) cancelled.add(msg.targetId);
