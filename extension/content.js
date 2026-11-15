@@ -1,4 +1,4 @@
-// ZapFlow v3.7 — Content Script (interface + envio via motor WA-JS em wa_engine.js)
+// ZapFlow v3.9 — Content Script (interface + envio via motor WA-JS em wa_engine.js)
 (function () {
   'use strict';
   const SUPABASE_URL = window.SUPABASE_URL || '';
@@ -10,7 +10,7 @@
   let sb = null;
   let currentFilter = 'all', showFavOnly = false, searchQuery = '';
   let messagesData = [], mediaData = [], funnelsData = [], triggersData = [], funnelsError = false, loaded = false;
-  const settings = { hideBar: false, barFav: false, barFunnels: true, stopOnReply: true, keywords: true, theme: 'auto' };
+  const settings = { hideBar: false, barFav: false, barFunnels: true, stopOnReply: true, keywords: true, capture: true, captureSkip: false, theme: 'auto' };
   const $ = (id) => document.getElementById(id);
 
   // ===== INÍCIO =====
@@ -42,6 +42,8 @@
     if ($('zf-s-bar-funnels')) $('zf-s-bar-funnels').checked = !!settings.barFunnels;
     if ($('zf-s-stop-reply')) $('zf-s-stop-reply').checked = !!settings.stopOnReply;
     if ($('zf-s-keywords')) $('zf-s-keywords').checked = settings.keywords !== false;
+    if ($('zf-s-capture')) $('zf-s-capture').checked = settings.capture !== false;
+    if ($('zf-s-capture-skip')) $('zf-s-capture-skip').checked = !!settings.captureSkip;
     applyTheme();
     renderQuickBar();
   }
@@ -146,6 +148,7 @@
       if (ev === 'SIGNED_OUT') {
         stopAllRuns();
         messagesData = []; mediaData = []; funnelsData = []; triggersData = []; loaded = false; setAccount(''); clearBlobCache();
+        crm = { boards: [], columns: [], tags: [], error: false }; leadState = { status: 'idle' }; renderLead();
         renderItems(); renderFunnels(); renderQuickBar(); showAuth();
       }
     });
@@ -174,6 +177,7 @@
       // funis com problema não derrubam a lista de itens
       if (funnels.error) console.warn('ZapFlow: falha ao carregar funis', funnels.error);
       lastLoadAt = Date.now();
+      loadCrm().then(() => (leadChat ? loadLead({ quiet: true }) : syncLeadChat())).catch((e) => console.warn('ZapFlow: Kanban', e));
       const sig = JSON.stringify([msgs.data, media.data, funnels.data, !!funnels.error]);
       if (silent && loaded && sig === dataSignature) return;
       dataSignature = sig;
@@ -318,6 +322,9 @@
     $('zf-s-bar-funnels').onchange = (e) => { settings.barFunnels = e.target.checked; saveSettings(); renderQuickBar(); };
     $('zf-s-stop-reply').onchange = (e) => { settings.stopOnReply = e.target.checked; saveSettings(); stopReplyChoice.clear(); renderFunnels(); };
     $('zf-s-keywords').onchange = (e) => { settings.keywords = e.target.checked; saveSettings(); };
+    $('zf-s-capture').onchange = (e) => { settings.capture = e.target.checked; saveSettings(); };
+    $('zf-s-capture-skip').onchange = (e) => { settings.captureSkip = e.target.checked; saveSettings(); };
+    $('zf-lead-open').onclick = () => { if (leadState.lead) openPanel('/dashboard/leads?lead=' + leadState.lead.id); };
     $('zf-funnel-search').oninput = (e) => { funnelSearch = e.target.value.trim().toLowerCase(); renderFunnels(); };
     document.querySelectorAll('#zf-sidebar-root .zf-foot [data-zf-go]').forEach((b) => { b.onclick = () => openPanel(b.dataset.zfGo); });
     document.querySelectorAll('[data-zf-theme-opt]').forEach((b) => {
@@ -329,6 +336,7 @@
     document.querySelectorAll('[data-zf-tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.zfTab === tab)));
     document.querySelectorAll('#zf-sidebar-root .zf-page').forEach((p) => p.classList.toggle('zf-page-active', p.dataset.page === tab));
     if (tab === 'funis') refreshActiveChat();
+    if (tab === 'lead') { if (leadChat) loadLead({ quiet: leadState.status === 'lead' || leadState.status === 'none' }); else syncLeadChat(); }
   }
 
   function toggleSidebar(forceOpen) {
@@ -1005,6 +1013,344 @@
   window.addEventListener('message', (e) => {
     if (e.source !== window || !e.data || e.data.type !== 'ZF_ENGINE_INCOMING') return;
     onIncoming(e.data).catch((err) => console.warn('ZapFlow gatilho:', err && err.message));
+  });
+
+  // ===== LEAD DA CONVERSA (CRM dentro do WhatsApp) =====
+  // A aba "Lead" mostra quem é o contato da conversa aberta (etapa no Kanban, etiquetas, temperatura,
+  // observações, próximas tarefas) e deixa mudar tudo ali mesmo. A captura automática transforma quem
+  // manda mensagem em lead, na etapa de entrada do Kanban (função zf_capture_lead no banco).
+  let crm = { boards: [], columns: [], tags: [], error: false };
+  let leadChat = null;                      // { chatId, name, phone, isGroup, isMyContact } da conversa aberta
+  let leadState = { status: 'idle' };       // idle | loading | nochat | group | none | lead | error
+  let leadSeq = 0;
+  const LEAD_SELECT = '*, lead_tags(tag_id), kanban_cards(id,board_id,column_id,position,value,product)';
+  const TEMP_OPTS = [['hot', 'Quente'], ['warm', 'Morno'], ['cold', 'Frio']];
+  const MSG_LABEL = { ptt: 'Áudio', audio: 'Áudio', image: 'Foto', video: 'Vídeo', document: 'Documento', sticker: 'Figurinha', location: 'Localização', vcard: 'Contato', multi_vcard: 'Contatos' };
+  const TAG_COLORS = ['#6b7280', '#d1236f', '#b42318', '#c2410c', '#9a5b00', '#0e7a4f', '#0f766e', '#1d4ed8', '#6b21a8', '#be185d'];
+
+  // Mesma regra do banco (phone_key) e do painel
+  function phoneKeyOf(p) {
+    const d = String(p || '').replace(/\D/g, '').replace(/^0+/, '');
+    if (d.length < 10) return null;
+    return d.length <= 11 ? '55' + d : d;
+  }
+  function fmtPhone(p) {
+    const k = phoneKeyOf(p);
+    if (!k || !k.startsWith('55') || (k.length !== 12 && k.length !== 13)) return p ? '+' + String(p).replace(/\D/g, '') : '';
+    const n = k.slice(4);
+    return `(${k.slice(2, 4)}) ${n.slice(0, -4)}-${n.slice(-4)}`;
+  }
+  const initialsOf = (name) => String(name || '?').trim().split(/\s+/).map((p) => p[0]).slice(0, 2).join('').toUpperCase() || '?';
+  const userId = async () => (await sb.auth.getSession()).data.session?.user?.id;
+
+  async function loadCrm() {
+    if (!sb) return;
+    const [b, c, t] = await Promise.all([
+      sb.from('kanban_boards').select('id,title,created_at').order('created_at').order('id'),
+      sb.from('kanban_columns').select('id,board_id,title,color,position,is_inbox').order('position').order('id'),
+      sb.from('tags').select('id,name,color').order('name'),
+    ]);
+    if (b.error || c.error || t.error) {
+      crm.error = true;
+      console.warn('ZapFlow: falha ao carregar o Kanban/etiquetas', b.error || c.error || t.error);
+    } else {
+      crm = { boards: b.data || [], columns: c.data || [], tags: t.data || [], error: false };
+    }
+    renderCaptureWhere();
+  }
+
+  // Etapa de entrada: a marcada no painel, ou a 1ª etapa do 1º quadro (a mesma regra do banco).
+  function inboxColumn() {
+    const marked = crm.columns.find((c) => c.is_inbox);
+    if (marked) return marked;
+    for (const b of crm.boards) {
+      const first = crm.columns.find((c) => c.board_id === b.id);
+      if (first) return first;
+    }
+    return null;
+  }
+  function stageLabel(col) {
+    const b = crm.boards.find((x) => x.id === col.board_id);
+    return (b ? b.title + ' › ' : '') + col.title;
+  }
+
+  function renderCaptureWhere() {
+    const el = $('zf-capture-where');
+    if (!el) return;
+    if (crm.error) { el.textContent = 'O banco está na versão antiga: rode o supabase/setup.sql de novo para a captura funcionar.'; return; }
+    const col = inboxColumn();
+    el.textContent = col
+      ? `Os novos entram em ${stageLabel(col)}. Para mudar, marque outra etapa como entrada no Kanban do painel.`
+      : 'Você ainda não tem quadro no Kanban: os novos ficam só em Leads.';
+  }
+
+  function setLeadChat(info) {
+    const before = leadChat && leadChat.chatId;
+    leadChat = info && info.chatId ? info : null;
+    // conversa mudou, ou a aba ainda não mostrou nada (ex.: nenhuma conversa aberta desde o início)
+    if ((leadChat && leadChat.chatId) !== before || leadState.status === 'idle') loadLead();
+  }
+
+  async function syncLeadChat() {
+    try {
+      const r = await engineRequest('ZF_ENGINE_ACTIVE_CHAT', {}, 6000);
+      setLeadChat(r.ok ? r : null);
+    } catch (e) { /* motor ainda carregando: o evento ZF_ENGINE_ACTIVE avisa depois */ }
+  }
+
+  // quiet: atualização em segundo plano (não mostra "carregando" nem atropela o que você está digitando)
+  async function loadLead({ quiet = false } = {}) {
+    const my = ++leadSeq;
+    if (!sb || !loaded) { leadState = { status: 'idle' }; return renderLead(); }
+    if (!leadChat) { leadState = { status: 'nochat' }; return renderLead(); }
+    if (leadChat.isGroup) { leadState = { status: 'group' }; return renderLead(); }
+    if (!quiet) { leadState = { status: 'loading' }; renderLead(); }
+    try {
+      const key = phoneKeyOf(leadChat.phone);
+      const ors = [`wa_id.eq."${leadChat.chatId.replace(/"/g, '')}"`];
+      if (key) ors.push(`phone_key.eq.${key}`);
+      const { data, error } = await sb.from('leads').select(LEAD_SELECT).or(ors.join(',')).order('id').limit(3);
+      if (error) throw error;
+      const lead = (data || []).find((l) => key && l.phone_key === key) || (data || [])[0] || null;
+      let tasks = [];
+      if (lead) {
+        const r = await sb.from('tasks').select('id,title,due_at,kind,status').eq('lead_id', lead.id).in('status', ['scheduled', 'sending']).order('due_at').limit(3);
+        tasks = r.data || [];
+      }
+      if (my !== leadSeq) return;
+      leadState = lead ? { status: 'lead', lead, tasks } : { status: 'none' };
+    } catch (e) {
+      if (my !== leadSeq) return;
+      console.warn('ZapFlow: falha ao carregar o lead', e);
+      const old = /column|schema|does not exist/i.test((e && e.message) || '');
+      leadState = { status: 'error', message: old ? 'O banco está na versão antiga. Rode o supabase/setup.sql de novo no Supabase.' : 'Não foi possível carregar o lead. Tente de novo em instantes.' };
+    }
+    const box = $('zf-lead');
+    const typing = quiet && box && box.contains(document.activeElement) && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+    if (typing) { leadDirty = true; return; }
+    renderLead();
+  }
+  let leadDirty = false;
+
+  function fmtDue(iso) {
+    const d = new Date(iso);
+    const today = new Date();
+    const day = d.toDateString() === today.toDateString() ? 'Hoje'
+      : d.toDateString() === new Date(today.getTime() + 86400000).toDateString() ? 'Amanhã'
+      : d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }).replace('.', '');
+    return `${day}, ${d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+  }
+
+  function leadEmpty(title, text, extra) {
+    return `<div class="zf-empty"><b>${escapeHtml(title)}</b><span>${escapeHtml(text)}</span>${extra || ''}</div>`;
+  }
+
+  function renderLead() {
+    const box = $('zf-lead');
+    if (!box) return;
+    leadDirty = false;
+    const st = leadState.status;
+    const dot = $('zf-lead-dot');
+    if (dot) dot.hidden = st !== 'lead';
+    const openBtn = $('zf-lead-open');
+    if (openBtn) openBtn.hidden = st !== 'lead';
+    const foot = $('zf-lead-foot');
+    if (foot) foot.textContent = st === 'lead' && leadState.lead.last_contact_at ? 'Último contato: ' + fmtDue(leadState.lead.last_contact_at) : '';
+
+    if (st === 'idle' || st === 'loading') { box.innerHTML = '<div class="zf-skel"></div><div class="zf-skel"></div><div class="zf-skel"></div>'; return; }
+    if (st === 'nochat') { box.innerHTML = leadEmpty('Abra uma conversa', 'O lead da conversa aberta aparece aqui, com etapa, etiquetas e tarefas.'); return; }
+    if (st === 'group') { box.innerHTML = leadEmpty('Conversa em grupo', 'Grupos não viram leads. Abra uma conversa individual.'); return; }
+    if (st === 'error') { box.innerHTML = leadEmpty('Algo deu errado', leadState.message, '<button type="button" class="zf-btn zf-empty-cta" id="zf-lead-retry">Tentar de novo</button>'); $('zf-lead-retry').onclick = () => loadLead(); return; }
+
+    const name = st === 'lead' ? leadState.lead.name : leadChat.name;
+    const phone = st === 'lead' ? (leadState.lead.phone || leadChat.phone) : leadChat.phone;
+    const head = `
+      <div class="zf-lead-head">
+        <span class="zf-avatar">${escapeHtml(initialsOf(name))}</span>
+        <div class="zf-lead-id"><b>${escapeHtml(name)}</b><span class="zf-mm">${phone ? escapeHtml(fmtPhone(phone)) : 'Número escondido pelo WhatsApp'}</span></div>
+      </div>`;
+
+    if (st === 'none') {
+      const col = inboxColumn();
+      box.innerHTML = `${head}
+        <p class="zf-lead-note">Este contato ainda não é um lead.</p>
+        <button type="button" class="zf-btn-primary" id="zf-lead-save">Salvar como lead</button>
+        <p class="zf-about zf-lead-where">${col ? 'Entra em ' + escapeHtml(stageLabel(col)) + '.' : 'Fica em Leads (você ainda não tem quadro no Kanban).'}</p>`;
+      $('zf-lead-save').onclick = saveAsLead;
+      return;
+    }
+
+    // ----- é lead -----
+    const L = leadState.lead;
+    const cards = L.kanban_cards || [];
+    const applied = new Set((L.lead_tags || []).map((t) => t.tag_id));
+    const tags = crm.tags.filter((t) => applied.has(t.id));
+    const free = crm.tags.filter((t) => !applied.has(t.id));
+    const boardsWithout = crm.boards.filter((b) => !cards.some((c) => c.board_id === b.id) && crm.columns.some((c) => c.board_id === b.id));
+
+    const cardRows = cards.map((c) => {
+      const b = crm.boards.find((x) => x.id === c.board_id);
+      const cols = crm.columns.filter((x) => x.board_id === c.board_id);
+      return `<label class="zf-lead-field"><span>${escapeHtml(b ? b.title : 'Quadro')}</span>
+        <select data-zf-card="${c.id}" aria-label="Etapa em ${escapeHtml(b ? b.title : 'quadro')}">${cols.map((x) => `<option value="${x.id}"${x.id === c.column_id ? ' selected' : ''}>${escapeHtml(x.title)}</option>`).join('')}</select></label>`;
+    }).join('');
+    const addCard = boardsWithout.length ? `
+      <div class="zf-lead-row">
+        <select id="zf-lead-addcol" aria-label="Colocar em">${boardsWithout.map((b) => `<optgroup label="${escapeHtml(b.title)}">${crm.columns.filter((c) => c.board_id === b.id).map((c) => `<option value="${c.id}">${escapeHtml(b.title + ' › ' + c.title)}</option>`).join('')}</optgroup>`).join('')}</select>
+        <button type="button" class="zf-btn" id="zf-lead-addcard">${cards.length ? 'Pôr' : 'Colocar'}</button>
+      </div>` : '';
+
+    box.innerHTML = `${head}
+      <div class="zf-seg zf-lead-temp" role="group" aria-label="Temperatura">${TEMP_OPTS.map(([v, l]) => `<button type="button" data-zf-temp="${v}" aria-pressed="${L.status === v}">${l}</button>`).join('')}</div>
+
+      <h3 class="zf-lead-h">Kanban</h3>
+      ${cardRows || (crm.boards.length ? '<p class="zf-lead-note">Fora do Kanban.</p>' : '<p class="zf-lead-note">Crie um quadro no Kanban do painel para acompanhar por etapa.</p>')}
+      ${addCard}
+
+      <h3 class="zf-lead-h">Etiquetas</h3>
+      <div class="zf-tagrow">${tags.map((t) => `<span class="zf-tag"><i style="background:${escapeHtml(t.color)}"></i>${escapeHtml(t.name)}<button type="button" data-zf-untag="${t.id}" aria-label="Tirar a etiqueta ${escapeHtml(t.name)}">${window._zfSVG.close}</button></span>`).join('') || '<span class="zf-lead-note">Nenhuma etiqueta.</span>'}</div>
+      <div class="zf-lead-row">
+        <input id="zf-lead-tag" list="zf-lead-taglist" placeholder="Adicionar etiqueta" aria-label="Adicionar etiqueta" autocomplete="off">
+        <datalist id="zf-lead-taglist">${free.map((t) => `<option value="${escapeHtml(t.name)}"></option>`).join('')}</datalist>
+        <button type="button" class="zf-btn" id="zf-lead-tag-add">Pôr</button>
+      </div>
+
+      <h3 class="zf-lead-h">Observações <small id="zf-lead-notes-st" aria-live="polite"></small></h3>
+      <textarea id="zf-lead-notes" rows="3" placeholder="O que é importante lembrar sobre este lead?" aria-label="Observações">${escapeHtml(L.notes || '')}</textarea>
+
+      <h3 class="zf-lead-h">Próximas tarefas</h3>
+      ${leadState.tasks.length ? leadState.tasks.map((t) => `<div class="zf-lead-task">${window._zfSVG[t.kind === 'send' ? 'clock' : 'calendar']}<span><b>${escapeHtml(t.title)}</b><small>${new Date(t.due_at).getTime() < Date.now() ? 'Atrasada · ' : ''}${fmtDue(t.due_at)}</small></span></div>`).join('') : '<p class="zf-lead-note">Nenhuma tarefa em aberto.</p>'}
+      ${L.last_message ? `<h3 class="zf-lead-h">Última mensagem recebida</h3><p class="zf-lead-last">${escapeHtml(L.last_message)}</p>` : ''}`;
+
+    box.querySelectorAll('[data-zf-temp]').forEach((b) => { b.onclick = () => leadUpdate({ status: b.dataset.zfTemp }); });
+    box.querySelectorAll('[data-zf-card]').forEach((s) => { s.onchange = () => moveCard(Number(s.dataset.zfCard), Number(s.value)); });
+    if ($('zf-lead-addcard')) $('zf-lead-addcard').onclick = () => addLeadCard(Number($('zf-lead-addcol').value));
+    box.querySelectorAll('[data-zf-untag]').forEach((b) => { b.onclick = () => untagLead(Number(b.dataset.zfUntag)); });
+    const tagInput = $('zf-lead-tag');
+    const addTag = () => { const v = tagInput.value.trim(); if (v) tagLead(v); };
+    $('zf-lead-tag-add').onclick = addTag;
+    tagInput.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); addTag(); } };
+    const notes = $('zf-lead-notes');
+    notes.onblur = () => { saveNotes(notes.value); if (leadDirty) setTimeout(renderLead, 0); };
+  }
+
+  async function leadAction(fn, okMsg) {
+    try {
+      await fn();
+      if (okMsg) showToast(okMsg);
+    } catch (e) {
+      console.warn('ZapFlow lead:', e);
+      showToast('Não foi possível salvar: ' + ((e && e.message) || 'erro'));
+    }
+    await loadLead({ quiet: true });
+  }
+
+  function leadUpdate(patch, okMsg) {
+    const id = leadState.lead && leadState.lead.id;
+    if (!id) return;
+    return leadAction(async () => { const { error } = await sb.from('leads').update(patch).eq('id', id); if (error) throw error; }, okMsg);
+  }
+
+  async function nextPos(columnId) {
+    const { data } = await sb.from('kanban_cards').select('position').eq('column_id', columnId).order('position', { ascending: false }).limit(1);
+    return data && data[0] ? Number(data[0].position) + 1 : 0;
+  }
+
+  function moveCard(cardId, columnId) {
+    const col = crm.columns.find((c) => c.id === columnId);
+    return leadAction(async () => {
+      const { error } = await sb.from('kanban_cards').update({ column_id: columnId, position: await nextPos(columnId) }).eq('id', cardId);
+      if (error) throw error;
+    }, col ? 'Movido para ' + col.title : null);
+  }
+
+  function addLeadCard(columnId) {
+    const col = crm.columns.find((c) => c.id === columnId);
+    const lead = leadState.lead;
+    if (!col || !lead) return;
+    return leadAction(async () => {
+      const { error } = await sb.from('kanban_cards').insert({ lead_id: lead.id, board_id: col.board_id, column_id: col.id, position: await nextPos(col.id), user_id: await userId() });
+      if (error) throw error;
+    }, 'Colocado em ' + stageLabel(col));
+  }
+
+  function tagLead(name) {
+    const lead = leadState.lead;
+    if (!lead) return;
+    const norm = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+    return leadAction(async () => {
+      let tag = crm.tags.find((t) => norm(t.name) === norm(name));
+      const uid = await userId();
+      if (!tag) {
+        const { data, error } = await sb.from('tags').insert({ name: name.trim().replace(/\s+/g, ' '), color: TAG_COLORS[(crm.tags.length + 1) % TAG_COLORS.length], user_id: uid }).select('id,name,color').single();
+        if (error) throw error;
+        tag = data;
+        crm.tags = [...crm.tags, tag].sort((a, b) => a.name.localeCompare(b.name));
+      }
+      const { error } = await sb.from('lead_tags').upsert({ lead_id: lead.id, tag_id: tag.id, user_id: uid }, { onConflict: 'lead_id,tag_id', ignoreDuplicates: true });
+      if (error) throw error;
+    });
+  }
+
+  function untagLead(tagId) {
+    const lead = leadState.lead;
+    if (!lead) return;
+    return leadAction(async () => {
+      const { error } = await sb.from('lead_tags').delete().eq('lead_id', lead.id).eq('tag_id', tagId);
+      if (error) throw error;
+    });
+  }
+
+  async function saveNotes(text) {
+    const lead = leadState.lead;
+    if (!lead || (lead.notes || '') === text) return;
+    const st = $('zf-lead-notes-st');
+    const { error } = await sb.from('leads').update({ notes: text.trim() || null }).eq('id', lead.id);
+    if (error) { showToast('Não foi possível salvar as observações.'); return; }
+    lead.notes = text.trim() || null;
+    if (st) { st.textContent = 'Salvo'; setTimeout(() => { if (st.isConnected) st.textContent = ''; }, 1800); }
+  }
+
+  async function saveAsLead() {
+    if (!leadChat || !sb) return;
+    const btn = $('zf-lead-save');
+    if (btn) { btn.disabled = true; btn.textContent = 'Salvando…'; }
+    const { data, error } = await sb.rpc('zf_capture_lead', { p_name: leadChat.name, p_phone: leadChat.phone, p_wa_id: leadChat.chatId, p_message: null, p_create: true });
+    if (error) {
+      console.warn('ZapFlow: falha ao salvar lead', error);
+      showToast(/function|schema/i.test(error.message || '') ? 'Rode o supabase/setup.sql de novo para salvar leads.' : 'Não foi possível salvar o lead.');
+      if (btn) { btn.disabled = false; btn.textContent = 'Salvar como lead'; }
+      return;
+    }
+    showToast(data && data.stage ? `Lead salvo em ${data.stage}` : 'Lead salvo');
+    loadLead();
+  }
+
+  // ----- Captura automática (mensagem recebida) -----
+  const seenLeadMsgs = new Set();
+  const lastCapture = new Map(); // chatId -> ms (a última mensagem é atualizada no máximo 1x por minuto)
+  async function onIncomingLead(m) {
+    if (!sb || !loaded || !m.msgId || !m.chatId) return;
+    if (seenLeadMsgs.has(m.msgId)) return;
+    seenLeadMsgs.add(m.msgId);
+    if (seenLeadMsgs.size > 500) seenLeadMsgs.delete(seenLeadMsgs.values().next().value);
+    const capture = settings.capture !== false;
+    const create = capture && !(settings.captureSkip && m.isMyContact);
+    const now = Date.now();
+    if (now - (lastCapture.get(m.chatId) || 0) < 60000) return;
+    lastCapture.set(m.chatId, now);
+    if (!capture) return;
+    const preview = m.text ? m.text : (MSG_LABEL[m.msgType] || 'Mensagem');
+    const { data, error } = await sb.rpc('zf_capture_lead', { p_name: m.name, p_phone: m.phone || null, p_wa_id: m.chatId, p_message: preview, p_create: create });
+    if (error) { console.warn('ZapFlow: captura de lead falhou', error); return; }
+    if (data && data.created) showToast(`Novo lead: ${m.name}${data.stage ? ' → ' + data.stage : ''}`);
+    if (leadChat && leadChat.chatId === m.chatId) loadLead({ quiet: true });
+  }
+
+  window.addEventListener('message', (e) => {
+    if (e.source !== window || !e.data) return;
+    if (e.data.type === 'ZF_ENGINE_ACTIVE') setLeadChat(e.data.chat);
+    else if (e.data.type === 'ZF_ENGINE_INCOMING') onIncomingLead(e.data).catch((err) => console.warn('ZapFlow lead:', err && err.message));
   });
 
   // ===== FUNIS =====

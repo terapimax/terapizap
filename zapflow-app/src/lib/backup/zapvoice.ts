@@ -118,8 +118,17 @@ export function fromZapVoice(j: Obj): BackupSource {
 
   const triggers = arr(j.triggers).length;
   if (triggers) notes.push(`${triggers} gatilho(s) do ZapVoice não foram trazidos: lá eles respondem a palavras recebidas, e aqui os gatilhos funcionam por etapas de lead. Recrie em Gatilhos.`);
-  const labels = arr(j.labels).length;
-  if (labels) notes.push(`${labels} etiqueta(s) do ZapVoice não têm equivalente e não foram trazidas.`);
+  // Etiquetas do ZapVoice viram etiquetas daqui (os contatos de cada uma não vêm no backup).
+  const palette = ["#6b7280", "#d1236f", "#b42318", "#c2410c", "#9a5b00", "#0e7a4f", "#0f766e", "#1d4ed8", "#6b21a8", "#be185d"];
+  const seenTags = new Set<string>();
+  for (const l of arr(j.labels)) {
+    const name = str(l.name ?? l.title ?? l.label).trim();
+    if (!name || seenTags.has(name.toLowerCase())) continue;
+    seenTags.add(name.toLowerCase());
+    const color = /^#[0-9a-f]{6}$/i.test(str(l.color)) ? str(l.color) : palette[tables.tags.length % palette.length];
+    tables.tags.push({ id: nextId++, name, color, created_at: createdAt() });
+  }
+  if (tables.tags.length) notes.push(`${tables.tags.length} etiqueta(s) do ZapVoice foram trazidas (sem os contatos, que não vêm no backup).`);
   const flows = arr(j.flows).length;
   if (flows) notes.push(`${flows} fluxo(s) do ZapVoice não têm equivalente e não foram trazidos.`);
 

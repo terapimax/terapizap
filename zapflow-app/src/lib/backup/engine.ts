@@ -4,8 +4,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   BACKUP_APP, BACKUP_VERSION, COLUMNS, TABLES, emptyTables, fileExtFromMime,
-  type BackupSource, type Manifest, type Row, type TableName,
+  type BackupSource, type Manifest, type Row, type TableName, type Tables,
 } from "./format";
+import { phoneKey } from "../leads";
 import { ZipWriter, readZip } from "./zip";
 import { fromZapVoice, isZapVoiceBackup } from "./zapvoice";
 
@@ -122,9 +123,29 @@ export async function createBackup(db: SupabaseClient, opts: { includeFiles: boo
 
 /* ========================== ABRIR ARQUIVO ========================== */
 
+/**
+ * Backup da versão 1: o lead ficava preso a uma etapa (column_id, position, value, product).
+ * Vira lead + card, como no banco novo.
+ */
+export function upgradeTables(tables: Tables) {
+  if (tables.kanban_cards.length || !tables.leads.some((l) => l.column_id != null)) return tables;
+  const boardOf = new Map(tables.kanban_columns.map((c) => [Number(c.id), Number(c.board_id)]));
+  let id = 1;
+  for (const l of tables.leads) {
+    const board = boardOf.get(Number(l.column_id));
+    if (board == null) continue;
+    tables.kanban_cards.push({
+      id: id++, lead_id: l.id, board_id: board, column_id: l.column_id, position: l.position ?? 0,
+      value: l.value ?? 0, product: l.product ?? null, created_at: l.created_at,
+    });
+  }
+  return tables;
+}
+
 function fromManifest(m: Manifest, getZipFile?: (path: string) => Promise<Blob | null>, sizes?: Map<string, number>): BackupSource {
   const tables = emptyTables();
   for (const t of TABLES) tables[t] = Array.isArray(m.tables?.[t]) ? (m.tables[t] as Row[]) : [];
+  upgradeTables(tables);
   const files = m.files ?? {};
   let filesBytes = 0;
   for (const path of Object.values(files)) filesBytes += sizes?.get(path) ?? 0;
@@ -173,8 +194,10 @@ export function summarize(s: BackupSource) {
     { label: "Documentos", n: m.filter((x) => x.type === "document").length },
     { label: "Funis", n: s.tables.funnels.length },
     { label: "Gatilhos", n: s.tables.triggers.length },
-    { label: "Quadros de leads", n: s.tables.kanban_boards.length },
     { label: "Leads", n: s.tables.leads.length },
+    { label: "Etiquetas", n: s.tables.tags.length },
+    { label: "Quadros do Kanban", n: s.tables.kanban_boards.length },
+    { label: "Cards no Kanban", n: s.tables.kanban_cards.length },
     { label: "Tarefas", n: s.tables.tasks.length },
     { label: "Agenda antiga", n: s.tables.appointments.length },
   ];
@@ -205,15 +228,22 @@ const KEYS: Record<TableName, ((r: Row) => string) | null> = {
   funnel_items: null, // vem junto com o funil
   kanban_boards: (r) => norm(r.title),
   kanban_columns: (r) => `${r.board_id}|${norm(r.title)}`,
-  leads: (r) => `${norm(r.name)}|${digits(r.phone)}`,
+  tags: (r) => norm(r.name),
+  // mesmo telefone = mesmo lead (o banco não aceita repetido); sem telefone, pelo nome
+  leads: (r) => phoneKey(r.phone as string) ?? (r.wa_id ? `wa:${r.wa_id}` : `${norm(r.name)}|${digits(r.phone)}`),
+  lead_tags: (r) => `${r.lead_id}|${r.tag_id}`,
+  kanban_cards: (r) => `${r.lead_id}|${r.board_id}`,
   triggers: (r) => `${norm(r.title)}|${r.event}|${r.action}`,
   appointments: (r) => `${norm(r.title)}|${r.date}|${r.time}|${norm(r.contact)}`,
   tasks: (r) => `${norm(r.title)}|${ms(r.due_at)}|${digits(r.phone)}`,
 };
 
+/** Tabelas em que o banco não aceita repetido (telefone, nome da etiqueta, lead+quadro…). */
+const UNIQUE = new Set<TableName>(["tags", "leads", "lead_tags", "kanban_cards"]);
+
 const LABEL: Record<TableName, string> = {
   messages: "mensagem", media_library: "arquivo", funnels: "funil", funnel_items: "passo de funil",
-  kanban_boards: "quadro", kanban_columns: "etapa", leads: "lead", triggers: "gatilho", appointments: "compromisso", tasks: "tarefa",
+  kanban_boards: "quadro", kanban_columns: "etapa", tags: "etiqueta", leads: "lead", lead_tags: "etiqueta de lead", kanban_cards: "card do Kanban", triggers: "gatilho", appointments: "compromisso", tasks: "tarefa",
 };
 
 function pick(table: TableName, r: Row, uid: string) {
@@ -235,12 +265,17 @@ export async function restoreBackup(db: SupabaseClient, src: BackupSource, mode:
   let failures = 0;
 
   // No modo "juntar", reaproveita o que já existe com o mesmo nome (dá para rodar de novo sem duplicar).
+  // Tabelas com regra de "não repetir" no banco reaproveitam sempre (até no "substituir", que grava
+  // tudo antes de apagar o antigo); o que for reaproveitado não é apagado depois.
   const existing = Object.fromEntries(TABLES.map((t) => {
     const key = KEYS[t];
     const m = new Map<string, number>();
-    if (mode === "merge" && key) for (const r of before[t]) { const k = key(r); if (!m.has(k)) m.set(k, r.id); }
+    if ((mode === "merge" || UNIQUE.has(t)) && key) for (const r of before[t]) { const k = key(r); if (!m.has(k)) m.set(k, r.id); }
     return [t, m];
   })) as Record<TableName, Map<string, number>>;
+  const reusedIds = Object.fromEntries(TABLES.map((t) => [t, new Set<number>()])) as Record<TableName, Set<number>>;
+  /** repetidos dentro do próprio backup: id antigo -> id antigo do primeiro igual */
+  const aliases = Object.fromEntries(TABLES.map((t) => [t, [] as [number, number][]])) as Record<TableName, [number, number][]>;
 
   const count = (bucket: "added" | "reused", t: TableName, n = 1) => { report[bucket][t] = (report[bucket][t] ?? 0) + n; };
   const problem = (msg: string) => { failures++; if (report.problems.length < 50) report.problems.push(msg); };
@@ -262,18 +297,26 @@ export async function restoreBackup(db: SupabaseClient, src: BackupSource, mode:
       });
       count("added", t, chunk.length);
     }
+    for (const [dup, first] of aliases[t]) { const id = maps[t].get(first); if (id != null) maps[t].set(dup, id); }
   }
 
   /** Separa o que já existe (reaproveita) do que precisa ser criado. */
   function split(t: TableName, rows: Row[], build: (r: Row) => Record<string, unknown> | null) {
     const toInsert: { old: number; row: Record<string, unknown> }[] = [];
     const key = KEYS[t];
+    const pending = new Map<string, number>();
     for (const r of rows) {
       const row = build(r);
       if (!row) continue;
       // a chave usa os ids já trocados (ex.: etapa = quadro novo + nome)
-      const found = key ? existing[t].get(key({ ...r, ...row, id: r.id } as Row)) : undefined;
-      if (found != null) { maps[t].set(r.id, found); count("reused", t); continue; }
+      const k = key ? key({ ...r, ...row, id: r.id } as Row) : null;
+      const found = k != null ? existing[t].get(k) : undefined;
+      if (found != null) { maps[t].set(r.id, found); reusedIds[t].add(found); count("reused", t); continue; }
+      if (k != null && UNIQUE.has(t)) {
+        const first = pending.get(k);
+        if (first != null) { aliases[t].push([r.id, first]); continue; }
+        pending.set(k, r.id);
+      }
       toInsert.push({ old: r.id, row });
     }
     return toInsert;
@@ -345,13 +388,22 @@ export async function restoreBackup(db: SupabaseClient, src: BackupSource, mode:
       const board = maps.kanban_boards.get(Number(r.board_id));
       return board == null ? null : { ...pick("kanban_columns", r, uid), board_id: board };
     }), "title", "Gravando etapas");
-    let orphanLeads = 0;
-    await insertRows("leads", split("leads", T.leads, (r) => {
+    await insertRows("tags", split("tags", T.tags, (r) => pick("tags", r, uid)), "name", "Gravando etiquetas");
+    await insertRows("leads", split("leads", T.leads, (r) => pick("leads", r, uid)), "name", "Gravando leads");
+    await insertRows("lead_tags", split("lead_tags", T.lead_tags, (r) => {
+      const lead = maps.leads.get(Number(r.lead_id));
+      const tag = maps.tags.get(Number(r.tag_id));
+      return lead == null || tag == null ? null : { ...pick("lead_tags", r, uid), lead_id: lead, tag_id: tag };
+    }), "lead_id", "Gravando etiquetas dos leads");
+    let orphanCards = 0;
+    await insertRows("kanban_cards", split("kanban_cards", T.kanban_cards, (r) => {
+      const lead = maps.leads.get(Number(r.lead_id));
+      const board = maps.kanban_boards.get(Number(r.board_id));
       const col = maps.kanban_columns.get(Number(r.column_id));
-      if (col == null) { orphanLeads++; return null; }
-      return { ...pick("leads", r, uid), column_id: col };
-    }), "name", "Gravando leads");
-    if (orphanLeads) problem(`${orphanLeads} lead(s) ficaram de fora porque a etapa deles não está no backup.`);
+      if (lead == null || board == null || col == null) { orphanCards++; return null; }
+      return { ...pick("kanban_cards", r, uid), lead_id: lead, board_id: board, column_id: col };
+    }), "lead_id", "Gravando o Kanban");
+    if (orphanCards) problem(`${orphanCards} card(s) do Kanban ficaram de fora porque o quadro ou a etapa deles não está no backup. Os leads foram restaurados.`);
 
     // 5. Gatilhos (os ids dentro da configuração apontam para os itens novos)
     const remap = (cfg: unknown) => {
@@ -404,10 +456,10 @@ export async function restoreBackup(db: SupabaseClient, src: BackupSource, mode:
         ...before.media_library.map((r) => storagePath(r.url as string)),
         ...before.tasks.map((r) => storagePath(r.file_url as string)),
       ].filter((p): p is string => !!p && !keep.has(p) && !newUrls.has(p));
-      const order: TableName[] = ["tasks", "triggers", "funnel_items", "funnels", "leads", "kanban_columns", "kanban_boards", "appointments", "media_library", "messages"];
+      const order: TableName[] = ["tasks", "triggers", "funnel_items", "funnels", "kanban_cards", "lead_tags", "leads", "tags", "kanban_columns", "kanban_boards", "appointments", "media_library", "messages"];
       for (let i = 0; i < order.length; i++) {
         onProgress?.({ label: "Apagando os dados antigos", done: i, total: order.length });
-        const ids = before[order[i]].map((r) => r.id);
+        const ids = before[order[i]].map((r) => r.id).filter((id) => !reusedIds[order[i]].has(id));
         for (let k = 0; k < ids.length; k += 200) {
           const { error } = await db.from(order[i]).delete().in("id", ids.slice(k, k + 200));
           if (error) throw new Error(`Falha ao apagar ${LABEL[order[i]]} antigo: ${error.message}`);

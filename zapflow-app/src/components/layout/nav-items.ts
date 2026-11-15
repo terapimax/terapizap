@@ -10,6 +10,7 @@ import {
   Image,
   FileText,
   ListChecks,
+  Columns3,
 } from "lucide-react";
 
 export interface NavItem {
@@ -30,7 +31,8 @@ export const LIBRARY_TABS: NavItem[] = [
 
 export const MAIN_NAV: NavItem[] = [
   { href: "/dashboard", label: "Início", icon: Home, description: "Visão geral do seu desempenho" },
-  { href: "/dashboard/kanban", label: "Leads", icon: Users, description: "Seus leads por etapa do funil de vendas" },
+  { href: "/dashboard/leads", label: "Leads", icon: Users, description: "Sua base de contatos, com etiquetas, importação e exportação" },
+  { href: "/dashboard/kanban", label: "Kanban", icon: Columns3, description: "Seus leads por etapa do funil de vendas" },
   { href: "/dashboard/tarefas", label: "Tarefas", icon: ListChecks, description: "Envios agendados e lembretes, em lista ou calendário" },
   {
     href: "/dashboard/mensagens",

@@ -67,25 +67,64 @@ export interface KanbanColumn {
   title: string;
   color: string;
   position: number;
+  /** etapa de entrada: onde caem os leads novos do WhatsApp */
+  is_inbox: boolean;
   created_at: string;
 }
 
+export type LeadTemp = "hot" | "warm" | "cold";
+
+/** Contato da base de leads. Existe sozinho; o Kanban só aponta para ele. */
 export interface Lead {
   id: number;
   user_id: string;
   name: string;
   phone: string | null;
+  /** telefone normalizado (só dígitos, com 55), calculado pelo banco; nunca gravar */
+  phone_key: string | null;
   email: string | null;
-  product: string | null;
-  value: number;
   avatar: string | null;
   last_message: string | null;
   origin: string | null;
   campaign: string | null;
-  status: "hot" | "warm" | "cold";
+  status: LeadTemp;
+  notes: string | null;
+  /** conversa do WhatsApp (…@c.us ou …@lid); a extensão reconhece o lead por ela quando o número está escondido */
+  wa_id: string | null;
+  /** quando o contato mandou a última mensagem (a extensão atualiza) */
+  last_contact_at: string | null;
+  created_at: string;
+}
+
+export interface Tag {
+  id: number;
+  user_id: string;
+  name: string;
+  color: string;
+  created_at: string;
+}
+
+/** Lead com as etiquetas e os cards (para a lista de Leads e a ficha). */
+export interface LeadFull extends Lead {
+  lead_tags: { tag_id: number }[];
+  kanban_cards: Pick<KanbanCard, "id" | "board_id" | "column_id" | "value" | "product" | "position">[];
+}
+
+/** Um lead numa etapa de um quadro. Valor e produto são do negócio, não da pessoa. */
+export interface KanbanCard {
+  id: number;
+  user_id: string;
+  lead_id: number;
+  board_id: number;
   column_id: number;
   position: number;
+  value: number;
+  product: string | null;
   created_at: string;
+}
+
+export interface KanbanCardWithLead extends KanbanCard {
+  lead: Lead & { lead_tags: { tag_id: number }[] };
 }
 
 export interface LeadNote {
@@ -156,8 +195,8 @@ export interface Trigger {
 }
 
 // Kanban enriched types for rendering
-export interface KanbanColumnWithLeads extends KanbanColumn {
-  items: Lead[];
+export interface KanbanColumnWithCards extends KanbanColumn {
+  items: KanbanCardWithLead[];
 }
 
 // Navigation

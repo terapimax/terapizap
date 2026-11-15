@@ -2,7 +2,8 @@
 // (tanto para backup do ZapFlow quanto para o que vem do ZapVoice).
 
 export const BACKUP_APP = "zapflow";
-export const BACKUP_VERSION = 1;
+/** 2 = leads separados do Kanban (cards) + etiquetas. A versão 1 é convertida ao abrir. */
+export const BACKUP_VERSION = 2;
 
 /** Tabelas na ordem em que são restauradas (quem é referenciado vem antes). */
 export const TABLES = [
@@ -12,7 +13,10 @@ export const TABLES = [
   "funnel_items",
   "kanban_boards",
   "kanban_columns",
+  "tags",
   "leads",
+  "lead_tags",
+  "kanban_cards",
   "triggers",
   "appointments",
   "tasks",
@@ -27,7 +31,10 @@ export const COLUMNS: Record<TableName, string[]> = {
   funnel_items: ["funnel_id", "item_id", "type", "delay_minutes", "delay_seconds", "position", "created_at"],
   kanban_boards: ["title", "created_at"],
   kanban_columns: ["board_id", "title", "color", "position", "created_at"],
-  leads: ["name", "phone", "email", "product", "value", "avatar", "last_message", "origin", "campaign", "status", "column_id", "position", "created_at"],
+  tags: ["name", "color", "created_at"],
+  leads: ["name", "phone", "email", "avatar", "last_message", "origin", "campaign", "status", "notes", "wa_id", "last_contact_at", "created_at"],
+  lead_tags: ["lead_id", "tag_id", "created_at"],
+  kanban_cards: ["lead_id", "board_id", "column_id", "position", "value", "product", "created_at"],
   triggers: ["title", "event", "action", "event_config", "action_config", "is_active", "created_at"],
   appointments: ["title", "contact", "phone", "date", "time", "color", "notes", "status", "created_at"],
   tasks: ["lead_id", "kind", "title", "due_at", "contact", "phone", "content_type", "text", "media_id", "funnel_id", "file_url", "notes", "color", "options", "status", "attempts", "error", "finished_at", "created_at"],

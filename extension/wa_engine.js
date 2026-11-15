@@ -12,7 +12,11 @@
 //        ← ZF_ENGINE_RESULT { ok, id?, ack?, error?, cancelled?, notReady? }
 //   → ZF_ENGINE_CANCEL { targetId }  (cancela durante "digitando/gravando")
 //   → ZF_ENGINE_REPLIED { chatId, since } ← ZF_ENGINE_RESULT { ok, replied }  (contato respondeu desde `since`?)
-//   ← ZF_ENGINE_INCOMING { msgId, chatId, name, text, msgType, t }  (sem requestId: mensagem nova recebida)
+//   → ZF_ENGINE_CONTACT { chatId }        ← ZF_ENGINE_RESULT { ok, ...contato }  (ver contactInfo)
+//   ← ZF_ENGINE_INCOMING { msgId, chatId, name, text, msgType, t, phone, isMyContact }  (sem requestId: mensagem nova recebida)
+//   ← ZF_ENGINE_ACTIVE { chat: contato | null }  (sem requestId: você abriu outra conversa)
+// contato = { chatId, name, phone, isGroup, isMyContact }; phone = só dígitos com DDI, ou null quando o
+// WhatsApp esconde o número (conversas @lid sem número conhecido).
 (function () {
     'use strict';
     if (window.__zfEngine) return;
@@ -48,6 +52,27 @@
         const chatId = chat.id._serialized || chat.id.toString();
         const name = chat.formattedTitle || chat.name || (chat.contact && (chat.contact.pushname || chat.contact.name)) || chatId.split('@')[0];
         return { chatId, name };
+    }
+
+    // Dados do contato de uma conversa. Em conversas @lid o número não vem no id: pedimos à WA-JS
+    // (getPnLidEntry, que usa o que o WhatsApp já sabe); se ela não souber, phone fica null.
+    async function contactInfo(chatId) {
+        if (!chatId) return null;
+        const chat = WPP.chat.get(chatId);
+        const base = chatInfo(chat) || { chatId, name: chatId.split('@')[0] };
+        const isGroup = !/@(c\.us|lid)$/.test(chatId);
+        let phone = null;
+        if (/@c\.us$/.test(chatId)) phone = chatId.split('@')[0];
+        else if (/@lid$/.test(chatId) && WPP.contact && WPP.contact.getPnLidEntry) {
+            try {
+                const e = await WPP.contact.getPnLidEntry(chatId);
+                phone = (e && e.phoneNumber && e.phoneNumber.id) || null;
+            } catch (e) { /* número escondido */ }
+        }
+        const c = chat && chat.contact;
+        // contato salvo: o nome da agenda; senão o nome que a pessoa usa no WhatsApp
+        const name = (c && (c.name || c.pushname || c.verifiedName)) || base.name;
+        return { chatId: base.chatId, name, phone: phone ? String(phone).replace(/\D/g, '') : null, isGroup, isMyContact: !!(c && c.isMyContact) };
     }
 
     function reply(requestId, payload) {
@@ -169,9 +194,16 @@
                 break;
             case 'ZF_ENGINE_ACTIVE_CHAT': {
                 if (!(await waitReady(5000))) return reply(msg.requestId, { ok: false, notReady: true, error: 'Motor do WhatsApp não carregou.' });
-                const info = chatInfo(WPP.chat.getActiveChat());
-                if (!info) return reply(msg.requestId, { ok: false, error: 'Abra uma conversa primeiro.' });
+                const active = chatInfo(WPP.chat.getActiveChat());
+                if (!active) return reply(msg.requestId, { ok: false, error: 'Abra uma conversa primeiro.' });
+                const info = (await contactInfo(active.chatId).catch(() => null)) || active;
                 reply(msg.requestId, Object.assign({ ok: true }, info));
+                break;
+            }
+            case 'ZF_ENGINE_CONTACT': {
+                if (!(await waitReady(5000))) return reply(msg.requestId, { ok: false, notReady: true, error: 'Motor do WhatsApp não carregou.' });
+                const info = await contactInfo(msg.chatId).catch(() => null);
+                reply(msg.requestId, info ? Object.assign({ ok: true }, info) : { ok: false, error: 'Conversa não encontrada.' });
                 break;
             }
             case 'ZF_ENGINE_SEND':
@@ -201,18 +233,37 @@
                     const t = (Number(m.t) || 0) * 1000;
                     if (t && (t < ENGINE_START - 5000 || t < Date.now() - 120000)) return;
                     const text = m.type === 'chat' ? (m.body || '') : (m.caption || '');
-                    const info = chatInfo(WPP.chat.get(chatId));
-                    window.postMessage({
-                        type: 'ZF_ENGINE_INCOMING', msgId: m.id._serialized || String(m.id), chatId,
-                        name: (info && info.name) || m.notifyName || chatId.split('@')[0], text, msgType: m.type, t: t || Date.now(),
-                    }, '*');
+                    const msgId = m.id._serialized || String(m.id);
+                    contactInfo(chatId).catch(() => null).then((info) => {
+                        window.postMessage({
+                            type: 'ZF_ENGINE_INCOMING', msgId, chatId,
+                            name: (info && info.name) || m.notifyName || chatId.split('@')[0], text, msgType: m.type, t: t || Date.now(),
+                            phone: info ? info.phone : (/@c\.us$/.test(chatId) ? chatId.split('@')[0] : null),
+                            isMyContact: !!(info && info.isMyContact),
+                        }, '*');
+                    });
                 } catch (e) { console.warn('ZapFlow engine: mensagem recebida ignorada:', e && e.message); }
             });
         } catch (e) { console.warn('ZapFlow engine: não foi possível ouvir mensagens recebidas:', e && e.message); }
     }
 
+    // Conversa aberta mudou: a aba "Lead" da extensão acompanha.
+    function watchActiveChat() {
+        let seq = 0;
+        const send = async (chat) => {
+            const my = ++seq;
+            const base = chatInfo(chat);
+            const info = base ? (await contactInfo(base.chatId).catch(() => base)) : null;
+            if (my === seq) window.postMessage({ type: 'ZF_ENGINE_ACTIVE', chat: info }, '*');
+        };
+        try {
+            WPP.on('chat.active_chat', (chat) => { send(chat); });
+            send(WPP.chat.getActiveChat());
+        } catch (e) { console.warn('ZapFlow engine: não foi possível acompanhar a conversa aberta:', e && e.message); }
+    }
+
     waitReady(120000).then((ok) => {
-        if (ok) watchIncoming();
+        if (ok) { watchIncoming(); watchActiveChat(); }
         if (ok) console.log('✅ ZapFlow engine pronto — WA-JS', WPP.version);
         else console.warn('⚠️ ZapFlow engine: WA-JS não ficou pronta em 120s. Versão do WhatsApp Web pode ser incompatível.');
     });

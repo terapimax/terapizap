@@ -443,3 +443,38 @@ html[data-zf-theme="light"] .zf-sched-when input { color-scheme: light; }
 #zf-overdue li .zf-btn { background: transparent; color: var(--zf-fg); border: 1px solid var(--zf-line); }
 #zf-overdue .zf-od-more { margin: 8px 0 0; font-size: 11px; color: var(--zf-muted); }
 #zf-overdue .zf-icon-btn { width: 28px; height: 28px; border: 0; background: transparent; color: var(--zf-muted); display: grid; place-items: center; border-radius: 8px; }
+
+/* ===== Aba Lead (CRM da conversa) ===== */
+.zf-tab-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--zf-accent); margin-left: 6px; vertical-align: middle; }
+.zf-lead { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 16px 20px; }
+.zf-lead .zf-skel { margin: 0 0 8px; }
+.zf-lead-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.zf-lead-head .zf-avatar { width: 44px; height: 44px; font-size: 14px; }
+.zf-lead-id { min-width: 0; }
+.zf-lead-id b { display: block; font-size: 16px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.zf-lead-h { display: flex; align-items: baseline; gap: 8px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--zf-muted); margin: 18px 0 8px; }
+.zf-lead-h small { font-size: 11px; font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--zf-ok); }
+.zf-lead-note { font-size: 13px; color: var(--zf-muted); margin: 0 0 8px; }
+.zf-lead-where { margin-top: 8px; }
+.zf-lead select, .zf-lead input, .zf-lead textarea {
+  width: 100%; min-width: 0; height: 36px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--zf-line);
+  background: var(--zf-bg); color: var(--zf-fg); font: inherit; font-size: 13px; outline: none; box-sizing: border-box;
+}
+.zf-lead textarea { height: auto; min-height: 76px; padding: 8px 10px; resize: vertical; line-height: 1.45; }
+.zf-lead select:focus, .zf-lead input:focus, .zf-lead textarea:focus { border-color: var(--zf-fg); }
+.zf-lead-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--zf-muted); margin-bottom: 8px; }
+.zf-lead-row { display: flex; gap: 8px; align-items: center; }
+.zf-lead-row .zf-btn { flex-shrink: 0; }
+.zf-lead-temp { margin-bottom: 2px; }
+.zf-tagrow { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.zf-tag { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 3px 0 10px; border-radius: 999px; border: 1px solid var(--zf-line); font-size: 12px; font-weight: 500; max-width: 100%; }
+.zf-tag i { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.zf-tag button { width: 20px; height: 20px; border: 0; background: none; border-radius: 50%; padding: 0; display: grid; place-items: center; color: var(--zf-muted) !important; }
+.zf-tag button:hover { background: var(--zf-surface); color: var(--zf-fg) !important; }
+.zf-tag button svg { width: 12px; height: 12px; }
+.zf-lead-task { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--zf-line); font-size: 13px; }
+.zf-lead-task:last-child { border-bottom: 0; }
+.zf-lead-task svg { color: var(--zf-muted); flex-shrink: 0; margin-top: 2px; }
+.zf-lead-task b { display: block; font-weight: 600; }
+.zf-lead-task small { display: block; font-size: 12px; color: var(--zf-muted); }
+.zf-lead-last { font-size: 13px; line-height: 1.45; background: var(--zf-surface); border-radius: 8px; padding: 8px 10px; margin: 0; white-space: pre-wrap; word-break: break-word; }

@@ -2,22 +2,20 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
-import type { KanbanBoard, KanbanColumn, KanbanColumnWithLeads, Lead } from "@/types";
+import type { KanbanBoard, KanbanCardWithLead, KanbanColumn, KanbanColumnWithCards } from "@/types";
+import { leadErrorMessage } from "@/lib/leads";
+import { invalidateLeads } from "@/hooks/use-leads";
 import { toast } from "sonner";
-import { removeLeadTaskFiles } from "@/hooks/use-tasks";
 
 const supabase = createClient();
 
-// ── Boards ──────────────────────────────────────────────
+// ── Quadros ──────────────────────────────────────────────
 
 export function useBoards() {
   return useQuery({
     queryKey: ["kanban", "boards"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("kanban_boards")
-        .select("*")
-        .order("created_at", { ascending: true });
+      const { data, error } = await supabase.from("kanban_boards").select("*").order("created_at", { ascending: true });
       if (error) throw error;
       return data as KanbanBoard[];
     },
@@ -29,17 +27,13 @@ export function useCreateBoard() {
   return useMutation({
     mutationFn: async (title: string) => {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("Not authenticated");
-      const { data, error } = await supabase
-        .from("kanban_boards")
-        .insert({ title, user_id: user.id })
-        .select()
-        .single();
+      if (!user) throw new Error("Sessão expirada. Entre de novo.");
+      const { data, error } = await supabase.from("kanban_boards").insert({ title, user_id: user.id }).select().single();
       if (error) throw error;
-      return data;
+      return data as KanbanBoard;
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kanban"] }); toast.success("Quadro criado!"); },
-    onError: (e) => toast.error(`Erro: ${e.message}`),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kanban"] }); toast.success("Quadro criado"); },
+    onError: (e) => toast.error(leadErrorMessage(e)),
   });
 }
 
@@ -50,12 +44,26 @@ export function useDeleteBoard() {
       const { error } = await supabase.from("kanban_boards").delete().eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kanban"] }); toast.success("Quadro removido!"); },
-    onError: (e) => toast.error(`Erro: ${e.message}`),
+    onSuccess: () => { invalidateLeads(qc); toast.success("Quadro excluído. Os leads continuam em Leads."); },
+    onError: (e) => toast.error(leadErrorMessage(e)),
   });
 }
 
-// ── Columns & Leads ──────────────────────────────────────
+// ── Etapas e cards ───────────────────────────────────────
+
+/** Todas as etapas de todos os quadros (para a ficha do lead escolher a etapa). */
+export function useAllColumns() {
+  return useQuery({
+    queryKey: ["kanban", "columns-all"],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("kanban_columns").select("*").order("board_id").order("position");
+      if (error) throw error;
+      return data as KanbanColumn[];
+    },
+  });
+}
+
+const CARD_SELECT = "*, lead:leads(*, lead_tags(tag_id))";
 
 export function useBoardData(boardId: number | null) {
   return useQuery({
@@ -63,33 +71,17 @@ export function useBoardData(boardId: number | null) {
     enabled: !!boardId,
     queryFn: async () => {
       if (!boardId) return [];
-
-      // Fetch columns
-      const { data: cols, error: colError } = await supabase
-        .from("kanban_columns")
-        .select("*")
-        .eq("board_id", boardId)
-        .order("position", { ascending: true });
-      if (colError) throw colError;
-
-      // Fetch leads for all columns
-      const columnIds = (cols || []).map((c: KanbanColumn) => c.id);
-      let leads: Lead[] = [];
-      if (columnIds.length > 0) {
-        const { data: leadsData, error: leadError } = await supabase
-          .from("leads")
-          .select("*")
-          .in("column_id", columnIds)
-          .order("position", { ascending: true });
-        if (leadError) throw leadError;
-        leads = (leadsData || []) as Lead[];
-      }
-
-      // Group leads by column
-      return (cols || []).map((col: KanbanColumn) => ({
+      const [cols, cards] = await Promise.all([
+        supabase.from("kanban_columns").select("*").eq("board_id", boardId).order("position", { ascending: true }),
+        supabase.from("kanban_cards").select(CARD_SELECT).eq("board_id", boardId).order("position", { ascending: true }).order("id", { ascending: true }),
+      ]);
+      if (cols.error) throw cols.error;
+      if (cards.error) throw cards.error;
+      const all = (cards.data ?? []) as KanbanCardWithLead[];
+      return (cols.data ?? []).map((col: KanbanColumn) => ({
         ...col,
-        items: leads.filter((l) => l.column_id === col.id),
-      })) as KanbanColumnWithLeads[];
+        items: all.filter((c) => c.column_id === col.id && c.lead),
+      })) as KanbanColumnWithCards[];
     },
   });
 }
@@ -99,20 +91,17 @@ export function useCreateColumn() {
   return useMutation({
     mutationFn: async (input: { board_id: number; title: string; color: string; position: number }) => {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("Not authenticated");
-      const { data, error } = await supabase
-        .from("kanban_columns")
-        .insert({ ...input, user_id: user.id })
-        .select()
-        .single();
+      if (!user) throw new Error("Sessão expirada. Entre de novo.");
+      const { data, error } = await supabase.from("kanban_columns").insert({ ...input, user_id: user.id }).select().single();
       if (error) throw error;
       return data;
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kanban"] }); toast.success("Coluna criada!"); },
-    onError: (e) => toast.error(`Erro: ${e.message}`),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kanban"] }); toast.success("Etapa criada"); },
+    onError: (e) => toast.error(leadErrorMessage(e)),
   });
 }
 
+/** Apaga a etapa. Os cards dela saem do quadro; os leads continuam em Leads. */
 export function useDeleteColumn() {
   const qc = useQueryClient();
   return useMutation({
@@ -120,88 +109,81 @@ export function useDeleteColumn() {
       const { error } = await supabase.from("kanban_columns").delete().eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kanban"] }); },
-    onError: (e) => toast.error(`Erro: ${e.message}`),
+    onSuccess: () => invalidateLeads(qc),
+    onError: (e) => toast.error(leadErrorMessage(e)),
   });
 }
 
-// ── Leads ──────────────────────────────────────────────
-
-export function useCreateLead() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (input: {
-      name: string;
-      phone?: string;
-      email?: string;
-      product?: string;
-      value?: number;
-      status?: "hot" | "warm" | "cold";
-      column_id: number;
-      position: number;
-    }) => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("Not authenticated");
-      const { data, error } = await supabase
-        .from("leads")
-        .insert({
-          ...input,
-          user_id: user.id,
-          value: input.value || 0,
-          status: input.status || "warm",
-        })
-        .select()
-        .single();
-      if (error) throw error;
-      return data;
-    },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kanban"] }); toast.success("Lead adicionado!"); },
-    onError: (e) => toast.error(`Erro: ${e.message}`),
-  });
-}
-
-export function useUpdateLead() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ id, ...updates }: Partial<Lead> & { id: number }) => {
-      const { error } = await supabase.from("leads").update(updates).eq("id", id);
-      if (error) throw error;
-    },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kanban"] }); },
-    onError: (e) => toast.error(`Erro: ${e.message}`),
-  });
-}
-
-export function useDeleteLead() {
+/** Tira o lead deste quadro (o lead continua salvo). */
+export function useRemoveCard() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: number) => {
-      // as tarefas do lead somem junto (cascade); antes, apaga os áudios exclusivos delas
-      await removeLeadTaskFiles(id).catch(() => {});
-      const { error } = await supabase.from("leads").delete().eq("id", id);
+      const { error } = await supabase.from("kanban_cards").delete().eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["kanban"] });
-      qc.invalidateQueries({ queryKey: ["tasks"] });
-      qc.invalidateQueries({ queryKey: ["leads-lite"] });
-      toast.success("Lead removido!");
-    },
-    onError: (e) => toast.error(`Erro: ${e.message}`),
+    onSuccess: () => { invalidateLeads(qc); toast.success("Lead tirado do quadro. Ele continua em Leads."); },
+    onError: (e) => toast.error(leadErrorMessage(e)),
   });
 }
 
-export function useMoveLead() {
+/**
+ * Grava a nova ordem depois de arrastar: `columns` = etapas afetadas, cada uma com os ids
+ * dos cards na ordem final. Só manda o que mudou.
+ */
+export function useMoveCard() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ leadId, columnId, position }: { leadId: number; columnId: number; position: number }) => {
-      const { error } = await supabase
-        .from("leads")
-        .update({ column_id: columnId, position })
-        .eq("id", leadId);
+    mutationFn: async ({ columns, before }: {
+      columns: { columnId: number; cardIds: number[] }[];
+      before: Map<number, { column_id: number; position: number }>;
+    }) => {
+      const updates: { id: number; column_id: number; position: number }[] = [];
+      for (const col of columns) {
+        col.cardIds.forEach((id, position) => {
+          const b = before.get(id);
+          if (!b || b.column_id !== col.columnId || b.position !== position) updates.push({ id, column_id: col.columnId, position });
+        });
+      }
+      // o card que mudou de etapa vai primeiro: é o único que importa se algo falhar no meio
+      updates.sort((a, b) => Number(before.get(b.id)?.column_id !== b.column_id) - Number(before.get(a.id)?.column_id !== a.column_id));
+      for (const u of updates) {
+        const { error } = await supabase.from("kanban_cards").update({ column_id: u.column_id, position: u.position }).eq("id", u.id);
+        if (error) throw error;
+      }
+    },
+    onSettled: () => invalidateLeads(qc),
+    onError: (e) => toast.error(`Não foi possível mover: ${leadErrorMessage(e)}`),
+  });
+}
+
+/**
+ * Etapa de entrada: onde caem os leads novos que chegam pelo WhatsApp.
+ * Sem nenhuma marcada vale a 1ª etapa do 1º quadro (a mesma regra da função do banco).
+ */
+export function useInboxColumn() {
+  const { data: boards = [] } = useBoards();
+  const { data: columns = [] } = useAllColumns();
+  const marked = columns.find((c) => c.is_inbox);
+  if (marked) return { column: marked, explicit: true };
+  for (const b of boards) {
+    const first = columns.filter((c) => c.board_id === b.id).sort((a, z) => a.position - z.position || a.id - z.id)[0];
+    if (first) return { column: first, explicit: false };
+  }
+  return { column: null, explicit: false };
+}
+
+export function useSetInboxColumn() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (columnId: number) => {
+      // só pode haver uma: desmarca a atual antes de marcar a nova
+      const off = await supabase.from("kanban_columns").update({ is_inbox: false }).eq("is_inbox", true);
+      if (off.error) throw off.error;
+      const { error } = await supabase.from("kanban_columns").update({ is_inbox: true }).eq("id", columnId);
       if (error) throw error;
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kanban"] }); },
-    onError: (e) => toast.error(`Erro ao mover: ${e.message}`),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kanban"] }); toast.success("Os novos leads do WhatsApp vão cair nesta etapa"); },
+    onError: (e) => toast.error(leadErrorMessage(e)),
   });
 }

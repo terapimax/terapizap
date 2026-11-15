@@ -45,7 +45,7 @@ export default function DashboardPage() {
       wonCount: won.length,
       wonValue: won.reduce((a, l) => a + (Number(l.value) || 0), 0),
       conversion: all.length ? (won.length / all.length) * 100 : 0,
-      hot: all.filter((l) => l.status === "hot").length,
+      hot: all.filter((l) => l.lead.status === "hot").length,
       hasWonStage: !!wonCol,
       stages: columns.map((c) => ({
         id: c.id,
@@ -105,12 +105,12 @@ export default function DashboardPage() {
         <Panel aria-labelledby="h-funil" className="flex-[3_1_420px] min-w-0 p-6 flex flex-col gap-5">
           <div className="flex items-center justify-between gap-3">
             <h2 id="h-funil" className="text-base font-semibold">Funil de vendas</h2>
-            <Link href="/dashboard/kanban" className="text-[13px] font-semibold text-accent-fg hover:underline">Abrir leads</Link>
+            <Link href="/dashboard/kanban" className="text-[13px] font-semibold text-accent-fg hover:underline">Abrir Kanban</Link>
           </div>
           {loading ? (
             <div className="flex flex-col gap-4">{[0, 1, 2, 3].map((i) => <span key={i} className="skeleton h-9" />)}</div>
           ) : stats.stages.length === 0 ? (
-            <p className="text-sm text-muted">Nenhuma etapa criada ainda. Monte seu funil na tela de Leads.</p>
+            <p className="text-sm text-muted">Nenhuma etapa criada ainda. Monte seu funil na tela Kanban.</p>
           ) : (
             stats.stages.map((s) => (
               <div key={s.id} className="flex flex-col gap-2">
@@ -220,7 +220,7 @@ export default function DashboardPage() {
             icon={Users}
             title="Seu funil está vazio"
             description="Adicione o primeiro lead para acompanhar valores e conversão aqui."
-            action={<Link href="/dashboard/kanban" className="h-10 px-4 rounded-[10px] bg-primary text-on-primary text-sm font-semibold inline-flex items-center">Ir para Leads</Link>}
+            action={<Link href="/dashboard/kanban" className="h-10 px-4 rounded-[10px] bg-primary text-on-primary text-sm font-semibold inline-flex items-center">Ir para o Kanban</Link>}
           />
         </Panel>
       )}

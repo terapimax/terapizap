@@ -2,9 +2,11 @@
 
 import { useAppStore } from "@/stores/app-store";
 import { cn } from "@/lib/utils";
+import { useRealtimeSync } from "@/hooks/use-realtime";
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const { sidebarOpen } = useAppStore();
+  useRealtimeSync();
 
   return (
     <div

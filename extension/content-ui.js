@@ -1,6 +1,6 @@
 // ZapFlow v3.7 — HTML da barra lateral (só estrutura; a lógica fica em content.js)
 
-const ZF_VERSION = '3.7.0';
+const ZF_VERSION = '3.9.0';
 
 const _zfIcon = (paths, size = 16, extra = '') =>
   `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" ${extra}>${paths}</svg>`;
@@ -23,6 +23,7 @@ window._zfSVG = {
   funnel: _zfIcon('<path d="M3 4h18l-7 8v6l-4 2v-8z"/>'),
   tasks: _zfIcon('<rect x="3" y="3" width="18" height="18" rx="2"/><path d="m8 12 3 3 5-6"/>'),
   kanban: _zfIcon('<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M15 3v18"/>'),
+  users: _zfIcon('<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>'),
   gear: _zfIcon('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>'),
   logout: _zfIcon('<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>'),
   pause: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>',
@@ -45,7 +46,8 @@ const ZF_MENU = [
   '-',
   { label: 'Funis', icon: 'funnel', path: '/dashboard/funis' },
   { label: 'Tarefas', icon: 'tasks', path: '/dashboard/tarefas' },
-  { label: 'Leads', icon: 'kanban', path: '/dashboard/kanban' },
+  { label: 'Leads', icon: 'users', path: '/dashboard/leads' },
+  { label: 'Kanban', icon: 'kanban', path: '/dashboard/kanban' },
   '-',
   { label: 'Ajustes', icon: 'gear', action: 'ajustes' },
   { label: 'Sair', icon: 'logout', action: 'logout', id: 'zf-menu-logout' },
@@ -92,6 +94,7 @@ function zfBuildSidebar() {
 
   <nav class="zf-tabs" role="tablist" aria-label="Seções">
     <button type="button" role="tab" data-zf-tab="itens" aria-selected="true">Itens</button>
+    <button type="button" role="tab" data-zf-tab="lead" aria-selected="false">Lead<span class="zf-tab-dot" id="zf-lead-dot" hidden></span></button>
     <button type="button" role="tab" data-zf-tab="funis" aria-selected="false">Funis<span class="zf-tab-badge" id="zf-funnel-badge" hidden></span></button>
     <button type="button" role="tab" data-zf-tab="ajustes" aria-selected="false">Ajustes</button>
   </nav>
@@ -112,6 +115,14 @@ function zfBuildSidebar() {
     <footer class="zf-foot">
       <span id="zf-count"></span>
       <button type="button" class="zf-link-btn" id="zf-refresh-btn">Atualizar</button>
+    </footer>
+  </section>
+
+  <section class="zf-page" data-page="lead" aria-label="Lead da conversa">
+    <div class="zf-lead" id="zf-lead" aria-live="polite"><div class="zf-skel"></div><div class="zf-skel"></div></div>
+    <footer class="zf-foot">
+      <span id="zf-lead-foot"></span>
+      <button type="button" class="zf-link-btn" id="zf-lead-open">Abrir no painel</button>
     </footer>
   </section>
 
@@ -141,6 +152,12 @@ function zfBuildSidebar() {
         ${toggle('zf-s-hide-bar', 'Ocultar a barra rápida', 'A faixa de itens que aparece embaixo da conversa.')}
         ${toggle('zf-s-bar-fav', 'Mostrar só favoritos na barra', '')}
         ${toggle('zf-s-bar-funnels', 'Mostrar funis na barra', 'Um clique dispara o funil na conversa aberta (com 3 s para cancelar).')}
+      </div>
+      <div class="zf-sec">
+        <h3>Leads</h3>
+        ${toggle('zf-s-capture', 'Capturar novos contatos', 'Quem mandar mensagem e ainda não for lead vira lead e entra no Kanban. Só conversas individuais.')}
+        ${toggle('zf-s-capture-skip', 'Ignorar contatos salvos na agenda', 'Útil se você usa o mesmo WhatsApp para amigos e família.')}
+        <p class="zf-about" id="zf-capture-where" style="margin-top:6px"></p>
       </div>
       <div class="zf-sec">
         <h3>Funis</h3>
