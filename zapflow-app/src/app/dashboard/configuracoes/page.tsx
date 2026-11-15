@@ -8,6 +8,7 @@ import { createClient } from "@/lib/supabase/client";
 import { Button, Panel } from "@/components/ui/shared";
 import { applyThemePref, getServerThemePref, getThemePref, subscribeThemePref, type ThemePref } from "@/lib/theme";
 import { cn } from "@/lib/utils";
+import { BackupTools } from "@/components/features/backup-tools";
 import { toast } from "sonner";
 
 const supabase = createClient();
@@ -111,6 +112,10 @@ export default function ConfiguracoesPage() {
             </button>
           ))}
         </div>
+      </Section>
+
+      <Section title="Backup e restauração" description="Guarde uma cópia de tudo num arquivo e traga de volta quando precisar. Também traz o backup do ZapVoice.">
+        <BackupTools />
       </Section>
 
       <Section title="Extensão do WhatsApp" description="Envie mensagens, áudios e arquivos da sua biblioteca direto nas conversas.">

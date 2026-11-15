@@ -11,3 +11,7 @@ backend/*.sqlite
 scratch/
 backend/uploads/
 zapflow-app/test_auth_api.js
+
+# backups pessoais (arquivos grandes e com conteúdo privado)
+bkp/
+*.zip
