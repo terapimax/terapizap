@@ -18,6 +18,7 @@ type EventKey = Trigger["event"];
 type ActionKey = Trigger["action"];
 
 const EVENTS: Record<EventKey, string> = {
+  keyword: "O contato escrever uma palavra-chave",
   lead_created: "Um lead novo for criado",
   lead_moved: "Um lead mudar de etapa",
   lead_status_changed: "A temperatura de um lead mudar",
@@ -29,12 +30,43 @@ const ACTIONS: Record<ActionKey, string> = {
   send_message: "Enviar uma mensagem",
   send_audio: "Enviar um áudio",
   send_media: "Enviar uma imagem ou vídeo",
+  send_document: "Enviar um documento",
   send_funnel: "Iniciar um funil",
   move_lead: "Mover o lead para uma etapa",
   notify: "Me avisar",
 };
 
 const TEMPS = { hot: "Quente", warm: "Morno", cold: "Frio" } as const;
+
+/** Ações que a extensão consegue fazer sozinha ao receber uma palavra-chave. */
+const KEYWORD_ACTIONS: ActionKey[] = ["send_message", "send_audio", "send_media", "send_document", "send_funnel"];
+
+const MATCHES = {
+  contains: "Tiver a palavra (em qualquer parte)",
+  exact: "For exatamente a palavra",
+  starts: "Começar com a palavra",
+} as const;
+type MatchKey = keyof typeof MATCHES;
+
+/** Quanto esperar para responder de novo a mesma conversa. 0 = toda vez, -1 = uma vez só. */
+const COOLDOWNS: [number, string][] = [
+  [0, "Toda vez (no máximo 1 por minuto)"],
+  [1, "No máximo 1 vez por hora"],
+  [24, "No máximo 1 vez por dia"],
+  [168, "No máximo 1 vez por semana"],
+  [-1, "Só uma vez por conversa"],
+];
+
+/** "preço, valor , quanto custa" → ["preço", "valor", "quanto custa"] */
+const parseKeywords = (v: string) => Array.from(new Set(v.split(/[,;\n]/).map((k) => k.trim()).filter(Boolean)));
+const keywordsOf = (t: Trigger | null) => {
+  const k = t?.event_config.keywords;
+  return Array.isArray(k) ? k.map(String) : typeof k === "string" ? parseKeywords(k) : [];
+};
+const matchOf = (t: Trigger | null): MatchKey => {
+  const m = String(t?.event_config.match ?? "");
+  return m in MATCHES ? (m as MatchKey) : "contains";
+};
 
 const inputCls =
   "w-full h-10 px-3 rounded-[10px] bg-card border border-line text-sm text-fg placeholder:text-muted outline-none focus:border-fg transition-colors";
@@ -64,6 +96,12 @@ export default function GatilhosPage() {
   }), [messages, media, funnels, columns]);
 
   const when = (t: Trigger) => {
+    if (t.event === "keyword") {
+      const words = keywordsOf(t);
+      if (!words.length) return EVENTS.keyword;
+      const shown = words.slice(0, 3).map((w) => `“${w}”`).join(", ");
+      return `O contato escrever ${shown}${words.length > 3 ? ` e mais ${words.length - 3}` : ""}`;
+    }
     if (t.event === "lead_moved") {
       const c = num(t.event_config.column_id);
       return c ? `Um lead entrar em “${lookups.column(c) ?? "etapa removida"}”` : EVENTS.lead_moved;
@@ -81,7 +119,8 @@ export default function GatilhosPage() {
     switch (t.action) {
       case "send_message": return `Enviar a mensagem “${lookups.message(num(c.message_id)) ?? gone}”`;
       case "send_audio": return `Enviar o áudio “${lookups.media(num(c.media_id)) ?? gone}”`;
-      case "send_media": return `Enviar “${lookups.media(num(c.media_id)) ?? gone}”`;
+      case "send_media":
+      case "send_document": return `Enviar “${lookups.media(num(c.media_id)) ?? gone}”`;
       case "send_funnel": return `Iniciar o funil “${lookups.funnel(num(c.funnel_id)) ?? gone}”`;
       case "move_lead": return `Mover para “${lookups.column(num(c.column_id)) ?? "etapa removida"}”`;
       default: return ACTIONS.notify;
@@ -102,8 +141,8 @@ export default function GatilhosPage() {
       <div className="flex gap-3 p-4 rounded-xl bg-warn-soft text-warn text-sm" role="note">
         <Info className="w-5 h-5 shrink-0 mt-0.5" aria-hidden="true" />
         <p>
-          <b className="font-semibold">Seus gatilhos ficam salvos, mas ainda não disparam sozinhos.</b>{" "}
-          A execução automática pela extensão, com o WhatsApp Web aberto, é a próxima etapa do ZapFlow.
+          <b className="font-semibold">Gatilhos de palavra-chave respondem sozinhos enquanto o WhatsApp Web estiver aberto com a extensão.</b>{" "}
+          Os de lead (criado, mudou de etapa ou de temperatura) ficam salvos, mas ainda não disparam.
         </p>
       </div>
 
@@ -120,7 +159,7 @@ export default function GatilhosPage() {
           <EmptyState
             icon={Zap}
             title={triggers.length === 0 ? "Nenhum gatilho ainda" : "Nada encontrado"}
-            description={triggers.length === 0 ? "Crie regras do tipo “quando isso acontecer, faça aquilo”. Exemplo: quando um lead entrar em Novos, enviar a mensagem de boas-vindas." : `Nenhum resultado para “${search}”.`}
+            description={triggers.length === 0 ? "Crie regras do tipo “quando isso acontecer, faça aquilo”. Exemplo: quando o contato escrever “preço”, enviar a mensagem com a tabela." : `Nenhum resultado para “${search}”.`}
             action={triggers.length === 0 ? addButton : undefined}
           />
         </Panel>
@@ -205,7 +244,10 @@ function TriggerForm({ trigger, data, saving, onClose, onSave }: {
   onSave: (v: Pick<Trigger, "title" | "event" | "action" | "event_config" | "action_config">) => Promise<void>;
 }) {
   const [title, setTitle] = useState(trigger?.title ?? "");
-  const [event, setEvent] = useState<EventKey>(trigger?.event ?? "lead_created");
+  const [event, setEvent] = useState<EventKey>(trigger?.event ?? "keyword");
+  const [keywords, setKeywords] = useState(keywordsOf(trigger).join(", "));
+  const [match, setMatch] = useState<MatchKey>(matchOf(trigger));
+  const [cooldown, setCooldown] = useState(trigger?.event_config.cooldown_hours != null ? Number(trigger.event_config.cooldown_hours) : 24);
   const [action, setAction] = useState<ActionKey>(trigger?.action ?? "send_message");
   const [evColumn, setEvColumn] = useState(num(trigger?.event_config.column_id));
   const [evStatus, setEvStatus] = useState(String(trigger?.event_config.status ?? ""));
@@ -215,22 +257,32 @@ function TriggerForm({ trigger, data, saving, onClose, onSave }: {
     action === "send_message" ? data.messages
     : action === "send_audio" ? data.media.filter((m) => m.type === "audio")
     : action === "send_media" ? data.media.filter((m) => m.type === "image" || m.type === "video")
+    : action === "send_document" ? data.media.filter((m) => m.type === "document")
     : action === "send_funnel" ? data.funnels
     : action === "move_lead" ? data.columns
     : [];
   const needsItem = action !== "notify";
-  const fromLibrary = action === "send_message" || action === "send_audio" || action === "send_media";
-  const itemLabel = { send_message: "Mensagem", send_audio: "Áudio", send_media: "Imagem ou vídeo", send_funnel: "Funil", move_lead: "Etapa", notify: "" }[action];
+  const fromLibrary = action === "send_message" || action === "send_audio" || action === "send_media" || action === "send_document";
+  const itemLabel = { send_message: "Mensagem", send_audio: "Áudio", send_media: "Imagem ou vídeo", send_document: "Documento", send_funnel: "Funil", move_lead: "Etapa", notify: "" }[action];
+  const isKeyword = event === "keyword";
+  const actionKeys = isKeyword ? KEYWORD_ACTIONS : (Object.keys(ACTIONS) as ActionKey[]);
+  const changeEvent = (v: EventKey) => {
+    setEvent(v);
+    if (v === "keyword" && !KEYWORD_ACTIONS.includes(action)) { setAction("send_message"); setItemId(0); }
+  };
 
   const submit = () => {
     if (!title.trim()) return toast.error("Dê um nome ao gatilho.");
+    const words = parseKeywords(keywords);
+    if (isKeyword && !words.length) return toast.error("Escreva pelo menos uma palavra-chave.");
     if (needsItem && !itemId) return toast.error(`Escolha ${action === "move_lead" ? "a etapa" : action === "send_funnel" ? "o funil" : action === "send_message" ? "a mensagem" : "o item"} da ação.`);
-    const key = { send_message: "message_id", send_audio: "media_id", send_media: "media_id", send_funnel: "funnel_id", move_lead: "column_id", notify: "" }[action];
+    const key = { send_message: "message_id", send_audio: "media_id", send_media: "media_id", send_document: "media_id", send_funnel: "funnel_id", move_lead: "column_id", notify: "" }[action];
     onSave({
       title: title.trim(),
       event,
       action,
-      event_config: event === "lead_moved" && evColumn ? { column_id: evColumn } : event === "lead_status_changed" && evStatus ? { status: evStatus } : {},
+      event_config: isKeyword ? { keywords: words, match, cooldown_hours: cooldown }
+        : event === "lead_moved" && evColumn ? { column_id: evColumn } : event === "lead_status_changed" && evStatus ? { status: evStatus } : {},
       action_config: needsItem ? { [key]: itemId } : {},
     });
   };
@@ -245,14 +297,30 @@ function TriggerForm({ trigger, data, saving, onClose, onSave }: {
       <div className="flex flex-col gap-6">
         <div className="flex flex-col gap-1.5">
           <label htmlFor="t-title" className="text-xs font-medium text-muted">Nome</label>
-          <input id="t-title" data-autofocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ex.: Boas-vindas ao novo lead" className={inputCls} />
+          <input id="t-title" data-autofocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ex.: Tabela de preços" className={inputCls} />
         </div>
 
         <section className="flex flex-col gap-3" aria-label="Quando">
           <h4 className="font-sans text-sm font-semibold tracking-normal">Quando</h4>
-          <Select id="t-event" label="Isto acontecer" value={event} onChange={(v) => setEvent(v as EventKey)}>
+          <Select id="t-event" label="Isto acontecer" value={event} onChange={(v) => changeEvent(v as EventKey)}>
             {(Object.keys(EVENTS) as EventKey[]).map((k) => <option key={k} value={k}>{EVENTS[k]}</option>)}
           </Select>
+          {isKeyword && (
+            <>
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="t-kw" className="text-xs font-medium text-muted">Palavras-chave</label>
+                <input id="t-kw" value={keywords} onChange={(e) => setKeywords(e.target.value)} placeholder="preço, valor, quanto custa" className={inputCls} />
+                <p className="text-xs text-muted">Separe por vírgula. Maiúsculas e acentos não importam: “preço” também vale para “PRECO”.</p>
+              </div>
+              <Select id="t-match" label="Quando a mensagem" value={match} onChange={(v) => setMatch(v as MatchKey)}>
+                {(Object.keys(MATCHES) as MatchKey[]).map((k) => <option key={k} value={k}>{MATCHES[k]}</option>)}
+              </Select>
+              <Select id="t-cool" label="Responder a mesma conversa" value={cooldown} onChange={(v) => setCooldown(Number(v))}>
+                {COOLDOWNS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </Select>
+              <p className="text-xs text-muted">Só em conversas individuais (nunca em grupos), com o WhatsApp Web aberto e a extensão ligada.</p>
+            </>
+          )}
           {event === "lead_moved" && (
             <Select id="t-ev-col" label="Etapa de destino" value={evColumn} onChange={(v) => setEvColumn(Number(v))}>
               <option value={0}>Qualquer etapa</option>
@@ -270,7 +338,7 @@ function TriggerForm({ trigger, data, saving, onClose, onSave }: {
         <section className="flex flex-col gap-3" aria-label="Então">
           <h4 className="font-sans text-sm font-semibold tracking-normal">Então</h4>
           <Select id="t-action" label="Fazer isto" value={action} onChange={(v) => { setAction(v as ActionKey); setItemId(0); }}>
-            {(Object.keys(ACTIONS) as ActionKey[]).map((k) => <option key={k} value={k}>{ACTIONS[k]}</option>)}
+            {actionKeys.map((k) => <option key={k} value={k}>{ACTIONS[k]}</option>)}
           </Select>
           {fromLibrary ? (
             <LibraryPicker

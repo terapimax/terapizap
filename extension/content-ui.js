@@ -147,6 +147,10 @@ function zfBuildSidebar() {
         ${toggle('zf-s-stop-reply', 'Parar quando o contato responder', 'Vale para os próximos disparos. Dá para mudar em cada funil antes de disparar.')}
       </div>
       <div class="zf-sec">
+        <h3>Gatilhos</h3>
+        ${toggle('zf-s-keywords', 'Responder por palavra-chave', 'Responde sozinho quando o contato escreve uma palavra dos seus gatilhos (crie no painel, em Gatilhos). Só em conversas individuais.')}
+      </div>
+      <div class="zf-sec">
         <h3>Tema</h3>
         <div class="zf-seg" role="group" aria-label="Tema">
           <button type="button" data-zf-theme-opt="auto" aria-pressed="true">Automático</button>

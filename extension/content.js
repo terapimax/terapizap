@@ -9,8 +9,8 @@
 
   let sb = null;
   let currentFilter = 'all', showFavOnly = false, searchQuery = '';
-  let messagesData = [], mediaData = [], funnelsData = [], funnelsError = false, loaded = false;
-  const settings = { hideBar: false, barFav: false, barFunnels: true, stopOnReply: true, theme: 'auto' };
+  let messagesData = [], mediaData = [], funnelsData = [], triggersData = [], funnelsError = false, loaded = false;
+  const settings = { hideBar: false, barFav: false, barFunnels: true, stopOnReply: true, keywords: true, theme: 'auto' };
   const $ = (id) => document.getElementById(id);
 
   // ===== INÍCIO =====
@@ -41,6 +41,7 @@
     if ($('zf-s-bar-fav')) $('zf-s-bar-fav').checked = !!settings.barFav;
     if ($('zf-s-bar-funnels')) $('zf-s-bar-funnels').checked = !!settings.barFunnels;
     if ($('zf-s-stop-reply')) $('zf-s-stop-reply').checked = !!settings.stopOnReply;
+    if ($('zf-s-keywords')) $('zf-s-keywords').checked = settings.keywords !== false;
     applyTheme();
     renderQuickBar();
   }
@@ -144,7 +145,7 @@
     sb.auth.onAuthStateChange((ev) => {
       if (ev === 'SIGNED_OUT') {
         stopAllRuns();
-        messagesData = []; mediaData = []; funnelsData = []; loaded = false; setAccount(''); clearBlobCache();
+        messagesData = []; mediaData = []; funnelsData = []; triggersData = []; loaded = false; setAccount(''); clearBlobCache();
         renderItems(); renderFunnels(); renderQuickBar(); showAuth();
       }
     });
@@ -160,11 +161,15 @@
       const { data: { session } } = await sb.auth.getSession();
       if (!session) return;
       setAccount(session.user?.email);
-      const [msgs, media, funnels] = await Promise.all([
+      const [msgs, media, funnels, trig] = await Promise.all([
         sb.from('messages').select('*').order('created_at', { ascending: false }),
         sb.from('media_library').select('*').order('created_at', { ascending: false }),
         sb.from('funnels').select('*, funnel_items(*)').order('created_at', { ascending: false }),
+        sb.from('triggers').select('*').eq('event', 'keyword').eq('is_active', true).order('created_at'),
       ]);
+      // gatilhos com problema também não derrubam nada
+      if (trig.error) console.warn('ZapFlow: falha ao carregar gatilhos', trig.error);
+      else triggersData = trig.data || [];
       if (msgs.error || media.error) throw msgs.error || media.error;
       // funis com problema não derrubam a lista de itens
       if (funnels.error) console.warn('ZapFlow: falha ao carregar funis', funnels.error);
@@ -312,6 +317,7 @@
     $('zf-s-bar-fav').onchange = (e) => { settings.barFav = e.target.checked; saveSettings(); renderQuickBar(); };
     $('zf-s-bar-funnels').onchange = (e) => { settings.barFunnels = e.target.checked; saveSettings(); renderQuickBar(); };
     $('zf-s-stop-reply').onchange = (e) => { settings.stopOnReply = e.target.checked; saveSettings(); stopReplyChoice.clear(); renderFunnels(); };
+    $('zf-s-keywords').onchange = (e) => { settings.keywords = e.target.checked; saveSettings(); };
     $('zf-funnel-search').oninput = (e) => { funnelSearch = e.target.value.trim().toLowerCase(); renderFunnels(); };
     document.querySelectorAll('#zf-sidebar-root .zf-foot [data-zf-go]').forEach((b) => { b.onclick = () => openPanel(b.dataset.zfGo); });
     document.querySelectorAll('[data-zf-theme-opt]').forEach((b) => {
@@ -898,6 +904,109 @@
   setTimeout(pollTasks, 8000);
   setInterval(pollTasks, TASK_POLL_MS);
 
+  // ===== GATILHOS POR PALAVRA-CHAVE =====
+  // O motor avisa cada mensagem nova recebida (só conversas individuais). Se o texto tiver uma
+  // palavra de um gatilho ativo, respondemos com o item ou funil escolhido, com "digitando…".
+  // Proteções: um gatilho por mensagem; intervalo por gatilho e conversa (padrão 24 h, guardado no
+  // navegador para valer depois de recarregar); no máximo uma resposta automática por minuto na
+  // mesma conversa (evita robô conversando com robô); pausa de 2–5 s antes de começar a responder.
+  const FIRED_KEY = 'zf_trigger_fired';
+  const CHAT_MIN_GAP_MS = 60000;
+  const seenIncoming = new Set();
+  const lastAutoReply = new Map(); // chatId -> ms
+  let firedMap = null;              // "gatilho:conversa" -> ms da última resposta
+
+  async function loadFired() {
+    if (firedMap) return firedMap;
+    try { firedMap = (await chrome.storage.local.get(FIRED_KEY))[FIRED_KEY] || {}; } catch (e) { firedMap = {}; }
+    const old = Date.now() - 400 * 86400000;
+    Object.keys(firedMap).forEach((k) => { if (firedMap[k] < old) delete firedMap[k]; });
+    return firedMap;
+  }
+  function saveFired() { try { chrome.storage.local.set({ [FIRED_KEY]: firedMap }); } catch (e) { /* sem storage */ } }
+
+  // minúsculas, sem acento e com espaços simples: "Preço?" e "preco" se encontram
+  const normText = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
+  const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  function triggerKeywords(t) {
+    const k = t.event_config && t.event_config.keywords;
+    return (Array.isArray(k) ? k : String(k || '').split(',')).map(normText).filter(Boolean);
+  }
+
+  // Devolve a palavra que casou (ou null). "contém" exige palavra inteira: "preço" não casa com "apreço".
+  function keywordHit(t, text) {
+    const msg = normText(text);
+    if (!msg) return null;
+    const mode = (t.event_config && t.event_config.match) || 'contains';
+    const bare = msg.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+    for (const w of triggerKeywords(t)) {
+      const hit = mode === 'exact' ? bare === w
+        : mode === 'starts' ? bare.startsWith(w)
+        : new RegExp('(^|[^\\p{L}\\p{N}])' + escRe(w) + '($|[^\\p{L}\\p{N}])', 'u').test(msg);
+      if (hit) return w;
+    }
+    return null;
+  }
+
+  // cooldown_hours: 0 = toda vez, -1 = só uma vez por conversa, padrão 24
+  function cooledDown(t, chatId, now) {
+    const last = firedMap[t.id + ':' + chatId];
+    if (!last) return true;
+    const h = Number(t.event_config && t.event_config.cooldown_hours);
+    const hours = t.event_config && t.event_config.cooldown_hours != null && Number.isFinite(h) ? h : 24;
+    if (hours < 0) return false;
+    return now - last >= hours * 3600000;
+  }
+
+  function triggerTarget(t) {
+    const c = t.action_config || {};
+    if (t.action === 'send_funnel') {
+      const f = funnelsData.find((x) => x.id === Number(c.funnel_id));
+      return f ? { funnel: f } : null;
+    }
+    const idx = itemIndex();
+    if (t.action === 'send_message') { const i = idx.get('msg:' + Number(c.message_id)); return i ? { item: i } : null; }
+    if (t.action === 'send_audio' || t.action === 'send_media' || t.action === 'send_document') {
+      const id = Number(c.media_id);
+      const i = idx.get('audio:' + id) || idx.get('media:' + id) || idx.get('doc:' + id);
+      return i ? { item: i } : null;
+    }
+    return null;
+  }
+
+  async function onIncoming(m) {
+    if (!sb || !loaded || settings.keywords === false || !triggersData.length) return;
+    if (!m.msgId || !m.chatId || seenIncoming.has(m.msgId)) return;
+    seenIncoming.add(m.msgId);
+    if (seenIncoming.size > 500) seenIncoming.delete(seenIncoming.values().next().value);
+    if (!m.text) return;
+    const now = Date.now();
+    if (now - (lastAutoReply.get(m.chatId) || 0) < CHAT_MIN_GAP_MS) return;
+    await loadFired();
+    for (const t of triggersData) {
+      const word = keywordHit(t, m.text);
+      if (!word || !cooledDown(t, m.chatId, now)) continue;
+      const target = triggerTarget(t);
+      if (!target) { console.warn('ZapFlow: o gatilho', t.title, 'aponta para um item que não existe mais'); continue; }
+      // registra antes de responder: se outra mensagem chegar logo depois, não responde em dobro
+      firedMap[t.id + ':' + m.chatId] = now;
+      saveFired();
+      lastAutoReply.set(m.chatId, now);
+      await sleep(2000 + Math.random() * 3000);
+      const chat = { chatId: m.chatId, name: m.name };
+      if (target.funnel) startFunnelRun(target.funnel, chat, { stopOnReply: settings.stopOnReply });
+      else enqueueSend(target.item, chat);
+      showToast(`⚡ Gatilho “${t.title}” respondendo ${m.name}`);
+      return; // um gatilho por mensagem
+    }
+  }
+
+  window.addEventListener('message', (e) => {
+    if (e.source !== window || !e.data || e.data.type !== 'ZF_ENGINE_INCOMING') return;
+    onIncoming(e.data).catch((err) => console.warn('ZapFlow gatilho:', err && err.message));
+  });
+
   // ===== FUNIS =====
   // Disparo de funis na conversa aberta: esperas reais entre os passos, "digitando…/gravando…"
   // em cada envio e parada automática se o contato responder. Funis em conversas diferentes
@@ -1068,8 +1177,13 @@
       showToast(chat.notReady ? 'O motor de envio ainda não está pronto. Recarregue o WhatsApp Web (F5).' : (chat.error || 'Abra uma conversa primeiro.'));
       return;
     }
+    startFunnelRun(funnel, chat, opts);
+  }
+
+  // Também usado pelos gatilhos, que disparam em conversas que não estão abertas na tela.
+  function startFunnelRun(funnel, chat, opts) {
     const steps = funnelSteps(funnel, itemIndex()).map((s) => Object.assign(s, { state: s.item ? 'pending' : 'skipped' }));
-    if (!steps.some((s) => s.item)) { showToast('Este funil não tem passos para enviar.'); return; }
+    if (!steps.some((s) => s.item)) { showToast('Este funil não tem passos para enviar.'); return false; }
     const run = {
       uid: ++runSeq, funnelId: funnel.id, title: funnel.title || 'Funil', chatId: chat.chatId, chatName: chat.name,
       stopOnReply: !!(opts && opts.stopOnReply), steps, idx: 0, sent: 0,
@@ -1079,6 +1193,7 @@
     dockCollapsed = false;
     renderDock();
     driveRun(run);
+    return true;
   }
 
   function checkStop(run) { if (run.stopRequested) throw new RunStop('stopped'); }
@@ -1422,7 +1537,10 @@
       return;
     }
     if (!chat.ok) { flashError(item, chat.error); return; }
+    enqueueSend(item, chat);
+  }
 
+  function enqueueSend(item, chat) {
     const job = { uid: ++_zfJobSeq, item, chatId: chat.chatId, chatName: chat.name, state: 'queued' };
     sendQueue.push(job);
     renderSendStatus();

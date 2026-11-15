@@ -147,8 +147,8 @@ export interface Trigger {
   id: number;
   user_id: string;
   title: string;
-  event: "lead_created" | "lead_moved" | "lead_status_changed" | "appointment_due" | "manual";
-  action: "send_message" | "send_audio" | "send_media" | "send_funnel" | "move_lead" | "notify";
+  event: "keyword" | "lead_created" | "lead_moved" | "lead_status_changed" | "appointment_due" | "manual";
+  action: "send_message" | "send_audio" | "send_media" | "send_document" | "send_funnel" | "move_lead" | "notify";
   event_config: Record<string, unknown>; // e.g. { column_id: 5, status: "hot" }
   action_config: Record<string, unknown>; // e.g. { message_id: 3, funnel_id: 2 }
   is_active: boolean;

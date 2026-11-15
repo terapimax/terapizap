@@ -12,6 +12,7 @@
 //        ← ZF_ENGINE_RESULT { ok, id?, ack?, error?, cancelled?, notReady? }
 //   → ZF_ENGINE_CANCEL { targetId }  (cancela durante "digitando/gravando")
 //   → ZF_ENGINE_REPLIED { chatId, since } ← ZF_ENGINE_RESULT { ok, replied }  (contato respondeu desde `since`?)
+//   ← ZF_ENGINE_INCOMING { msgId, chatId, name, text, msgType, t }  (sem requestId: mensagem nova recebida)
 (function () {
     'use strict';
     if (window.__zfEngine) return;
@@ -186,7 +187,32 @@
         }
     });
 
+    // Mensagens recebidas (para os gatilhos por palavra-chave). Só conversas individuais e só
+    // mensagens novas de verdade: o histórico que o WhatsApp carrega ao abrir não conta.
+    const ENGINE_START = Date.now();
+    function watchIncoming() {
+        try {
+            WPP.on('chat.new_message', (m) => {
+                try {
+                    if (!m || !m.id || m.id.fromMe || m.isNewMsg === false) return;
+                    const remote = m.id.remote;
+                    const chatId = remote && (remote._serialized || String(remote));
+                    if (!chatId || !/@(c\.us|lid)$/.test(chatId)) return; // grupos, status, canais: nunca
+                    const t = (Number(m.t) || 0) * 1000;
+                    if (t && (t < ENGINE_START - 5000 || t < Date.now() - 120000)) return;
+                    const text = m.type === 'chat' ? (m.body || '') : (m.caption || '');
+                    const info = chatInfo(WPP.chat.get(chatId));
+                    window.postMessage({
+                        type: 'ZF_ENGINE_INCOMING', msgId: m.id._serialized || String(m.id), chatId,
+                        name: (info && info.name) || m.notifyName || chatId.split('@')[0], text, msgType: m.type, t: t || Date.now(),
+                    }, '*');
+                } catch (e) { console.warn('ZapFlow engine: mensagem recebida ignorada:', e && e.message); }
+            });
+        } catch (e) { console.warn('ZapFlow engine: não foi possível ouvir mensagens recebidas:', e && e.message); }
+    }
+
     waitReady(120000).then((ok) => {
+        if (ok) watchIncoming();
         if (ok) console.log('✅ ZapFlow engine pronto — WA-JS', WPP.version);
         else console.warn('⚠️ ZapFlow engine: WA-JS não ficou pronta em 120s. Versão do WhatsApp Web pode ser incompatível.');
     });

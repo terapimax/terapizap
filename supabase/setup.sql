@@ -92,13 +92,21 @@ CREATE TABLE IF NOT EXISTS public.triggers (
   id BIGSERIAL PRIMARY KEY,
   user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
   title TEXT NOT NULL,
-  event TEXT NOT NULL CHECK (event IN ('lead_created', 'lead_moved', 'lead_status_changed', 'appointment_due', 'manual')),
-  action TEXT NOT NULL CHECK (action IN ('send_message', 'send_audio', 'send_media', 'send_funnel', 'move_lead', 'notify')),
+  event TEXT NOT NULL,   -- valores permitidos logo abaixo (triggers_event_check)
+  action TEXT NOT NULL,  -- valores permitidos logo abaixo (triggers_action_check)
   event_config JSONB NOT NULL DEFAULT '{}',
   action_config JSONB NOT NULL DEFAULT '{}',
   is_active BOOLEAN NOT NULL DEFAULT true,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- 'keyword' = o contato escreveu uma palavra-chave (a extensão responde sozinha).
+-- event_config do keyword: { keywords: text[], match: 'contains'|'exact'|'starts', cooldown_hours: 24 (0 = toda vez, -1 = uma vez por conversa) }
+ALTER TABLE public.triggers DROP CONSTRAINT IF EXISTS triggers_event_check;
+ALTER TABLE public.triggers ADD CONSTRAINT triggers_event_check
+  CHECK (event IN ('keyword', 'lead_created', 'lead_moved', 'lead_status_changed', 'appointment_due', 'manual'));
+ALTER TABLE public.triggers DROP CONSTRAINT IF EXISTS triggers_action_check;
+ALTER TABLE public.triggers ADD CONSTRAINT triggers_action_check
+  CHECK (action IN ('send_message', 'send_audio', 'send_media', 'send_document', 'send_funnel', 'move_lead', 'notify'));
 
 -- 6. AGENDA ----------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.appointments (
