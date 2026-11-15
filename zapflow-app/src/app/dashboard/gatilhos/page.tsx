@@ -11,7 +11,8 @@ import { Modal } from "@/components/ui/modal";
 import { Button, EmptyState, Panel, SearchInput } from "@/components/ui/shared";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import type { Trigger } from "@/types";
+import { LibraryPicker } from "@/components/features/media-preview";
+import type { MediaItem, Message, Trigger } from "@/types";
 
 type EventKey = Trigger["event"];
 type ActionKey = Trigger["action"];
@@ -184,8 +185,8 @@ export default function GatilhosPage() {
 // ── Formulário ──────────────────────────────────────────────
 
 interface FormData {
-  messages: { id: number; title: string }[];
-  media: { id: number; title: string; type: string }[];
+  messages: Message[];
+  media: MediaItem[];
   funnels: { id: number; title: string }[];
   columns: { id: number; title: string }[];
 }
@@ -218,6 +219,7 @@ function TriggerForm({ trigger, data, saving, onClose, onSave }: {
     : action === "move_lead" ? data.columns
     : [];
   const needsItem = action !== "notify";
+  const fromLibrary = action === "send_message" || action === "send_audio" || action === "send_media";
   const itemLabel = { send_message: "Mensagem", send_audio: "Áudio", send_media: "Imagem ou vídeo", send_funnel: "Funil", move_lead: "Etapa", notify: "" }[action];
 
   const submit = () => {
@@ -270,7 +272,17 @@ function TriggerForm({ trigger, data, saving, onClose, onSave }: {
           <Select id="t-action" label="Fazer isto" value={action} onChange={(v) => { setAction(v as ActionKey); setItemId(0); }}>
             {(Object.keys(ACTIONS) as ActionKey[]).map((k) => <option key={k} value={k}>{ACTIONS[k]}</option>)}
           </Select>
-          {needsItem && (
+          {fromLibrary ? (
+            <LibraryPicker
+              key={action}
+              id="t-item"
+              label={itemLabel}
+              items={action === "send_message" ? data.messages : (options as MediaItem[])}
+              value={itemId || null}
+              onChange={(id) => setItemId(id ?? 0)}
+              empty="Nada disponível ainda. Crie primeiro na Biblioteca."
+            />
+          ) : needsItem && (
             <>
               <Select id="t-item" label={itemLabel} value={itemId} onChange={(v) => setItemId(Number(v))}>
                 <option value={0} disabled>Escolha…</option>

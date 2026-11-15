@@ -133,7 +133,7 @@
     if (session) { hideAuth(); loadAllData(); } else showAuth();
     sb.auth.onAuthStateChange((ev) => {
       if (ev === 'SIGNED_OUT') {
-        messagesData = []; mediaData = []; loaded = false; setAccount('');
+        messagesData = []; mediaData = []; loaded = false; setAccount(''); clearBlobCache();
         renderItems(); renderQuickBar(); showAuth();
       }
     });
@@ -224,6 +224,7 @@
     updateQuickBarVisibility();
     positionQuickBar();
     for (const t of [100, 200, 300]) setTimeout(positionQuickBar, t);
+    if (open) flushPendingThumbs();
   }
 
   // ===== BARRA RÁPIDA =====
@@ -286,13 +287,142 @@
     mediaData.forEach((m) => {
       const t = m.type === 'audio' ? 'audio' : (m.type === 'image' || m.type === 'video') ? 'media' : m.type === 'document' ? 'doc' : null;
       if (!t) return;
-      const kind = m.type === 'audio' ? 'Mensagem de voz' : m.type === 'video' ? 'Vídeo' : m.type === 'image' ? 'Imagem' : ((m.url || '').split('?')[0].split('.').pop() || 'Arquivo').toUpperCase();
-      items.push({
-        id: m.id, type: t, title: m.title, isFavorite: m.is_favorite, content: m.caption, url: m.url, mediaType: m.type,
-        meta: [kind, formatFileSize(m.size)].filter(Boolean).join(' · '),
-      });
+      const kind = m.type === 'audio' ? 'Áudio' : m.type === 'video' ? 'Vídeo' : m.type === 'image' ? 'Foto' : ((m.url || '').split('?')[0].split('.').pop() || 'Arquivo').slice(0, 5).toUpperCase();
+      const item = { id: m.id, type: t, title: m.title, isFavorite: m.is_favorite, content: m.caption, url: m.url, mediaType: m.type, kind, size: m.size };
+      item.meta = metaText(item);
+      items.push(item);
     });
     return items;
+  }
+
+  // Linha de detalhes igual à do painel: "Vídeo · 0:42 · 3,1 MB"
+  function metaText(item) {
+    if (item.type === 'msg') return item.meta;
+    const dur = durationCache.get(item.url);
+    return [item.kind, dur ? formatDuration(dur) : '', formatFileSize(item.size)].filter(Boolean).join(' · ');
+  }
+
+  // ===== MINIATURAS =====
+  // O WhatsApp Web bloqueia mídia de outros sites (CSP): baixamos o arquivo uma vez e usamos
+  // um endereço local (blob), reaproveitado pela miniatura e pela prévia.
+  const blobCache = new Map();      // url -> Promise<blobUrl>
+  const durationCache = new Map();  // url -> segundos
+  const MAX_VIDEO_THUMB = 25 * 1024 * 1024; // vídeos maiores ficam só com o ícone (não vale baixar tudo)
+  const thumbWaiting = [];
+  const thumbPending = new Set();   // miniaturas que apareceram com a barra fechada
+  const loadingMedia = new Set();   // mantém os elementos vivos até o navegador ler os metadados
+  let thumbActive = 0;
+  let thumbObserver = null;
+
+  function getBlobUrl(url) {
+    if (!blobCache.has(url)) {
+      const p = fetch(url)
+        .then((res) => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.blob(); })
+        .then((blob) => URL.createObjectURL(blob));
+      p.catch(() => blobCache.delete(url));
+      blobCache.set(url, p);
+    }
+    return blobCache.get(url);
+  }
+
+  function clearBlobCache() {
+    blobCache.forEach((p) => p.then((u) => URL.revokeObjectURL(u)).catch(() => {}));
+    blobCache.clear();
+    durationCache.clear();
+  }
+
+  // no máximo 3 downloads de miniatura ao mesmo tempo
+  function downloadThumb(url) {
+    return new Promise((resolve, reject) => {
+      const start = () => {
+        thumbActive++;
+        getBlobUrl(url).then(resolve, reject).finally(() => {
+          thumbActive--;
+          const next = thumbWaiting.shift();
+          if (next) next();
+        });
+      };
+      if (thumbActive < 3) start(); else thumbWaiting.push(start);
+    });
+  }
+
+  function setDuration(item, seconds) {
+    if (!isFinite(seconds) || seconds <= 0) return;
+    durationCache.set(item.url, seconds);
+    const mm = document.querySelector(`#zf-items-list .zf-item[data-id="${item.id}"][data-type="${item.type}"] .zf-mm`);
+    if (mm) mm.textContent = metaText(item);
+  }
+
+  function thumbHtml(item) {
+    const S = window._zfSVG;
+    if (item.type === 'msg') return `<span class="zf-th zf-th-msg" aria-hidden="true">${S.msg}</span>`;
+    if (item.type === 'audio') return `<span class="zf-th zf-th-audio" data-thumb="audio" aria-hidden="true">${S.mic}</span>`;
+    if (item.type === 'doc') return `<span class="zf-th zf-th-doc" aria-hidden="true">${S.doc}<b>${escapeHtml(item.kind.slice(0, 4))}</b></span>`;
+    if (item.mediaType === 'video') return `<span class="zf-th zf-th-media" data-thumb="video" aria-hidden="true"><i class="zf-th-play">${S.play}</i></span>`;
+    return `<span class="zf-th zf-th-media" data-thumb="image" aria-hidden="true">${S.img}</span>`;
+  }
+
+  async function loadThumb(el) {
+    const item = el.__zfItem;
+    const kind = el.dataset.thumb;
+    if (!item || !item.url || !el.isConnected) return;
+    if (kind === 'video' && item.size && item.size > MAX_VIDEO_THUMB) return;
+    let src;
+    try { src = await downloadThumb(item.url); } catch (e) { return; }
+
+    if (kind === 'audio') {
+      if (durationCache.has(item.url)) return;
+      const a = new Audio();
+      loadingMedia.add(a);
+      a.preload = 'metadata';
+      a.onloadedmetadata = () => { setDuration(item, a.duration); loadingMedia.delete(a); };
+      a.onerror = () => loadingMedia.delete(a);
+      a.src = src;
+      return;
+    }
+    if (!el.isConnected) return;
+    if (kind === 'image') {
+      const img = new Image();
+      img.alt = '';
+      img.decoding = 'async';
+      img.onload = () => { if (el.isConnected) { el.appendChild(img); el.classList.add('zf-th-ready'); } };
+      img.src = src;
+      return;
+    }
+    const v = document.createElement('video');
+    loadingMedia.add(v);
+    v.muted = true;
+    v.playsInline = true;
+    v.preload = 'metadata';
+    // o vídeo entra na miniatura já com os metadados; o navegador pinta o primeiro quadro assim que o decodifica
+    v.onloadedmetadata = () => {
+      setDuration(item, v.duration);
+      if (el.isConnected) { el.insertBefore(v, el.firstChild); el.classList.add('zf-th-ready'); }
+      v.currentTime = 0.1; // pula o quadro preto do início
+      loadingMedia.delete(v);
+    };
+    v.onerror = () => { v.remove(); loadingMedia.delete(v); };
+    v.src = src;
+  }
+
+  /** Só baixa a miniatura quando ela chega perto da área visível e a barra está aberta. */
+  function observeThumbs(list) {
+    if (thumbObserver) thumbObserver.disconnect();
+    thumbPending.clear();
+    thumbObserver = new IntersectionObserver((entries, obs) => {
+      entries.forEach((e) => {
+        if (!e.isIntersecting) return;
+        obs.unobserve(e.target);
+        if ($('zf-sidebar-root')?.classList.contains('zf-hidden')) thumbPending.add(e.target);
+        else loadThumb(e.target);
+      });
+    }, { root: list, rootMargin: '150px' });
+    return thumbObserver;
+  }
+
+  function flushPendingThumbs() {
+    thumbPending.forEach((el) => loadThumb(el));
+    thumbPending.clear();
   }
 
   function previewHtml(item) {
@@ -332,7 +462,7 @@
     list.innerHTML = items.map((item) => `
       <li class="zf-item" data-id="${item.id}" data-type="${item.type}">
         <div class="zf-row">
-          <span class="zf-ic zf-ic-${item.type}">${S[TYPE_ICON[item.type]] || ''}</span>
+          ${thumbHtml(item)}
           <button type="button" class="zf-txt" aria-expanded="false" title="Ver conteúdo">
             <span class="zf-tt">${escapeHtml(item.title)}${item.isFavorite ? `<span class="zf-star">${S.star}</span>` : ''}</span>
             <span class="zf-mm">${escapeHtml(item.meta)}</span>
@@ -342,8 +472,11 @@
         <div class="zf-preview">${previewHtml(item)}</div>
       </li>`).join('');
 
+    const observer = observeThumbs(list);
     list.querySelectorAll('.zf-item').forEach((li) => {
       const item = items.find((i) => String(i.id) === li.dataset.id && i.type === li.dataset.type);
+      const th = li.querySelector('[data-thumb]');
+      if (th && item) { th.__zfItem = item; observer.observe(th); }
       li.querySelector('.zf-send').onclick = (e) => { e.preventDefault(); e.stopPropagation(); if (item) sendItem(item); };
       li.querySelector('.zf-txt').onclick = async () => {
         const open = li.classList.toggle('zf-open');
@@ -352,10 +485,8 @@
         if (!el) return;
         const loading = li.querySelector('.zf-loading-line');
         try {
-          // O WhatsApp Web bloqueia mídia de outros sites (CSP); baixamos e usamos um endereço local (blob)
-          const res = await fetch(el.getAttribute('data-src'));
-          if (!res.ok) throw new Error('HTTP ' + res.status);
-          el.src = URL.createObjectURL(await res.blob());
+          // mesmo arquivo da miniatura: já baixado uma vez, vem do cache
+          el.src = await getBlobUrl(el.getAttribute('data-src'));
           el.removeAttribute('data-src');
           el.hidden = false;
           if (loading) loading.remove();
@@ -705,7 +836,8 @@
   }
 
   function escapeHtml(str) { if (!str) return ''; const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
-  function formatFileSize(b) { if (!b) return ''; if (b < 1024) return b + ' B'; if (b < 1048576) return (b/1024).toFixed(1) + ' KB'; return (b/1048576).toFixed(1) + ' MB'; }
+  function formatFileSize(b) { if (!b) return ''; if (b < 1024) return b + ' B'; if (b < 1048576) return Math.round(b/1024) + ' KB'; return (b/1048576).toFixed(1).replace('.', ',') + ' MB'; }
+  function formatDuration(sec) { const s = Math.max(0, Math.round(sec)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
 
   init();
 })();

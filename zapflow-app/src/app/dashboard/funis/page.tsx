@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { useFunnels, useCreateFunnel, useDeleteFunnel, useUpdateFunnel, useAddFunnelItem, useDeleteFunnelItem } from "@/hooks/use-funnels";
 import { useMessages } from "@/hooks/use-messages";
 import { useAllMedia } from "@/hooks/use-media";
+import { LibraryPicker, MediaPreview, MediaThumb, itemMeta, itemTypeLabel, type LibraryItem } from "@/components/features/media-preview";
 import type { FunnelItem } from "@/types";
 
 type StepType = FunnelItem["type"];
@@ -49,27 +50,22 @@ export default function FunisPage() {
 
   const [stepOpen, setStepOpen] = useState(false);
   const [stepType, setStepType] = useState<StepType>("message");
-  const [stepItemId, setStepItemId] = useState<number | "">("");
+  const [stepItemId, setStepItemId] = useState<number | null>(null);
   const [delayMinutes, setDelayMinutes] = useState(0);
   const [delaySeconds, setDelaySeconds] = useState(0);
+  const [preview, setPreview] = useState<LibraryItem | null>(null);
 
   const filtered = funnels.filter((f) => f.title.toLowerCase().includes(search.toLowerCase()));
   const selected = funnels.find((f) => f.id === selectedId) ?? (selectedId === null ? funnels[0] : undefined);
 
-  const itemsForType = useMemo(() => {
-    if (stepType === "message") return messages.map((m) => ({ id: m.id, title: m.title }));
-    if (stepType === "audio") return allMedia.filter((m) => m.type === "audio");
-    if (stepType === "midia") return allMedia.filter((m) => m.type === "image" || m.type === "video");
-    return allMedia.filter((m) => m.type === "document");
-  }, [stepType, messages, allMedia]);
+  const pools = useMemo<Record<StepType, LibraryItem[]>>(() => ({
+    message: messages,
+    audio: allMedia.filter((m) => m.type === "audio"),
+    midia: allMedia.filter((m) => m.type === "image" || m.type === "video"),
+    document: allMedia.filter((m) => m.type === "document"),
+  }), [messages, allMedia]);
 
-  const stepName = (item: FunnelItem) => {
-    if (item.type === "message") return messages.find((m) => m.id === item.item_id)?.title;
-    const pool = allMedia.filter((m) =>
-      item.type === "audio" ? m.type === "audio" : item.type === "midia" ? m.type === "image" || m.type === "video" : m.type === "document"
-    );
-    return pool.find((m) => m.id === item.item_id)?.title;
-  };
+  const stepItem = (item: FunnelItem) => pools[item.type].find((m) => m.id === item.item_id);
 
   const handleCreate = () => {
     if (!title.trim()) return toast.error("Dê um nome ao funil.");
@@ -97,7 +93,7 @@ export default function FunisPage() {
       {
         onSuccess: () => {
           setStepOpen(false);
-          setStepItemId("");
+          setStepItemId(null);
           setDelayMinutes(0);
           setDelaySeconds(0);
         },
@@ -195,8 +191,7 @@ export default function FunisPage() {
                 <ol className="flex flex-col">
                   {selected.items.map((item, i) => {
                     const cfg = STEP[item.type];
-                    const Icon = cfg.icon;
-                    const name = stepName(item);
+                    const lib = stepItem(item);
                     const last = i === selected.items.length - 1;
                     return (
                       <li key={item.id} className="flex gap-4">
@@ -208,12 +203,29 @@ export default function FunisPage() {
                           <p className="flex items-center gap-1.5 text-xs text-muted mb-1.5">
                             <Clock className="w-3.5 h-3.5" aria-hidden="true" /> {delayLabel(item.delay_minutes, item.delay_seconds)}
                           </p>
-                          <div className="group border border-line rounded-xl px-4 py-3 flex flex-wrap items-center gap-3">
-                            <span className="w-9 h-9 rounded-[10px] bg-surface grid place-items-center shrink-0"><Icon className="w-4 h-4" /></span>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-xs text-muted">{cfg.label}</p>
-                              <p className={cn("font-semibold truncate", !name && "text-hot")}>{name ?? "Item removido da biblioteca"}</p>
-                            </div>
+                          <div className="group border border-line rounded-xl px-3 py-2.5 flex flex-wrap items-center gap-3">
+                            {lib ? (
+                              <button
+                                type="button"
+                                onClick={() => setPreview(lib)}
+                                aria-label={`Ver prévia de ${lib.title}`}
+                                className="flex-1 min-w-0 flex items-center gap-3 text-left rounded-[10px] -m-1 p-1 cursor-pointer hover:bg-surface transition-colors"
+                              >
+                                <MediaThumb item={lib} />
+                                <span className="flex-1 min-w-0">
+                                  <span className="block text-xs text-muted">{itemTypeLabel(lib)}</span>
+                                  <span className="block font-semibold truncate">{lib.title}</span>
+                                </span>
+                              </button>
+                            ) : (
+                              <div className="flex-1 min-w-0 flex items-center gap-3">
+                                <MediaThumb item={null} />
+                                <span className="flex-1 min-w-0">
+                                  <span className="block text-xs text-muted">{cfg.label}</span>
+                                  <span className="block font-semibold truncate text-hot">Item removido da biblioteca</span>
+                                </span>
+                              </div>
+                            )}
                             <Chip tone="accent">{cfg.presence}</Chip>
                             {stepToDelete === item.id ? (
                               <span className="flex gap-1.5">
@@ -273,7 +285,7 @@ export default function FunisPage() {
                 const Icon = cfg.icon;
                 const on = stepType === t;
                 return (
-                  <button key={t} type="button" aria-pressed={on} onClick={() => { setStepType(t); setStepItemId(""); }}
+                  <button key={t} type="button" aria-pressed={on} onClick={() => { setStepType(t); setStepItemId(null); }}
                     className={cn("h-11 rounded-[10px] border text-sm font-medium flex items-center gap-2 px-3 cursor-pointer transition-colors", on ? "border-fg bg-surface text-fg" : "border-line text-muted hover:text-fg")}>
                     <Icon className="w-4 h-4" /> {cfg.label}
                   </button>
@@ -282,14 +294,15 @@ export default function FunisPage() {
             </div>
           </fieldset>
 
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="step-item" className="text-xs font-medium text-muted">Item da biblioteca</label>
-            <select id="step-item" value={stepItemId} onChange={(e) => setStepItemId(Number(e.target.value))} className={inputCls}>
-              <option value="" disabled>Escolha…</option>
-              {itemsForType.map((it) => <option key={it.id} value={it.id}>{it.title}</option>)}
-            </select>
-            {itemsForType.length === 0 && <p className="text-xs text-muted">Nenhum item deste tipo na biblioteca. Adicione um em Biblioteca primeiro.</p>}
-          </div>
+          <LibraryPicker
+            key={stepType}
+            id="step-item"
+            label={stepType === "message" ? "Mensagem da biblioteca" : "Item da biblioteca"}
+            items={pools[stepType]}
+            value={stepItemId}
+            onChange={setStepItemId}
+            empty="Nenhum item deste tipo na biblioteca. Adicione um em Biblioteca primeiro."
+          />
 
           <fieldset>
             <legend className="text-xs font-medium text-muted mb-1.5">Espera antes deste passo</legend>
@@ -306,6 +319,13 @@ export default function FunisPage() {
             <p className="text-xs text-muted mt-2">{delayLabel(delayMinutes, delaySeconds)} e depois {stepType === "audio" ? "gravando" : "digitando"} antes de enviar.</p>
           </fieldset>
         </div>
+      </Modal>
+
+      {/* Prévia de um passo */}
+      <Modal open={!!preview} onClose={() => setPreview(null)} title={preview?.title ?? ""} description={preview ? itemMeta(preview) : undefined}
+        footer={<Button variant="secondary" onClick={() => setPreview(null)}>Fechar</Button>}
+      >
+        {preview && <MediaPreview key={preview.id + itemTypeLabel(preview)} item={preview} />}
       </Modal>
     </div>
   );

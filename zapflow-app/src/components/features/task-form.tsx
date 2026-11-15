@@ -5,6 +5,7 @@ import { AlertTriangle, Bell, Loader2, Mic, RotateCcw, Send } from "lucide-react
 import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/shared";
 import { AudioInput, type AudioInputValue } from "@/components/features/audio-input";
+import { LibraryPicker } from "@/components/features/media-preview";
 import { useMessages } from "@/hooks/use-messages";
 import { useAudios, useDocumentos, useMidias } from "@/hooks/use-media";
 import { useLeadsLite, useSaveTask, type LeadLite, type TaskInput } from "@/hooks/use-tasks";
@@ -311,7 +312,7 @@ export function TaskForm({ task, lead: fixedLead, date, kind: initialKind, onClo
                   options={[["library", "Da biblioteca"], ["exclusive", `Exclusivo${firstName ? " p/ " + firstName : ""}`]]}
                 />
                 {audioSource === "library" ? (
-                  <LibraryPick id="t-audio" items={audios.data} loading={audios.isLoading} value={mediaId} onChange={setMediaId} empty="Nenhum áudio na biblioteca ainda." />
+                  <LibraryPicker id="t-audio" label="Áudio da biblioteca" items={audios.data} loading={audios.isLoading} value={mediaId} onChange={setMediaId} empty="Nenhum áudio na biblioteca ainda. Adicione na Biblioteca." />
                 ) : keepAudio && task?.file_url ? (
                   <div className="flex flex-col gap-2 rounded-xl border border-line p-3">
                     <p className="text-sm font-medium flex items-center gap-1.5"><Mic className="w-4 h-4" /> Áudio gravado{task.options?.duration ? ` · ${formatDuration(task.options.duration)}` : ""}</p>
@@ -328,13 +329,15 @@ export function TaskForm({ task, lead: fixedLead, date, kind: initialKind, onClo
             )}
 
             {(content === "media" || content === "document") && (
-              <LibraryPick
+              <LibraryPicker
+                key={content}
                 id="t-media"
+                label={content === "media" ? "Foto ou vídeo da biblioteca" : "Documento da biblioteca"}
                 items={content === "media" ? midias.data : docs.data}
                 loading={content === "media" ? midias.isLoading : docs.isLoading}
                 value={mediaId}
                 onChange={setMediaId}
-                empty={content === "media" ? "Nenhuma imagem ou vídeo na biblioteca ainda." : "Nenhum documento na biblioteca ainda."}
+                empty={`${content === "media" ? "Nenhuma imagem ou vídeo na biblioteca ainda." : "Nenhum documento na biblioteca ainda."} Adicione na Biblioteca.`}
               />
             )}
 
@@ -367,32 +370,5 @@ export function TaskForm({ task, lead: fixedLead, date, kind: initialKind, onClo
         </Field>
       </div>
     </Modal>
-  );
-}
-
-function LibraryPick({ id, items, loading, value, onChange, empty }: {
-  id: string;
-  items?: { id: number; title: string; type: string; url: string }[];
-  loading: boolean;
-  value: number | null;
-  onChange: (id: number | null) => void;
-  empty: string;
-}) {
-  if (loading) return <span className="skeleton h-10" />;
-  if (!items?.length) return <p className="text-sm text-muted rounded-xl border border-dashed border-line p-4 text-center">{empty} Adicione na Biblioteca.</p>;
-  const sel = items.find((i) => i.id === value);
-  return (
-    <div className="flex flex-col gap-2">
-      <select id={id} aria-label="Item da biblioteca" className={inputCls} value={value ?? ""} onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}>
-        <option value="">Escolher da biblioteca…</option>
-        {items.map((i) => <option key={i.id} value={i.id}>{i.title}</option>)}
-      </select>
-      {sel?.type === "audio" && <audio key={sel.id} src={sel.url} controls className="w-full h-10" />}
-      {sel?.type === "image" && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={sel.url} alt={sel.title} className="max-h-40 rounded-xl border border-line object-contain self-start" />
-      )}
-      {sel?.type === "video" && <video src={sel.url} controls className="max-h-40 rounded-xl border border-line self-start" />}
-    </div>
   );
 }

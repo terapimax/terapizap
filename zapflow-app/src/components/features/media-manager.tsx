@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Download, FileText, FileSpreadsheet, Image as ImageIcon, Loader2, Mic, Pause, Play, Plus, Star, Trash2, UploadCloud, Video } from "lucide-react";
+import { Download, FileText, Image as ImageIcon, Loader2, Mic, Pause, Play, Plus, Star, Trash2, UploadCloud, Video } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { Button, Chip, EmptyState, Panel, SearchInput } from "@/components/ui/shared";
 import { AudioInput, type AudioInputValue } from "@/components/features/audio-input";
+import { DocIcon, fileExt as ext, fmtSize, videoPosterSrc } from "@/components/features/media-preview";
 import { useDeleteMedia, useUpdateMedia, useUploadMedia } from "@/hooks/use-media";
 import type { MediaItem } from "@/types";
 import { cn } from "@/lib/utils";
@@ -31,24 +32,6 @@ const KIND = {
 const inputCls =
   "w-full h-10 px-3 rounded-[10px] bg-card border border-line text-sm text-fg placeholder:text-muted outline-none focus:border-fg transition-colors";
 
-function fmtSize(bytes: number | null) {
-  if (!bytes) return "";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function ext(item: MediaItem) {
-  const fromMime = item.mime_type?.split("/")[1]?.split(";")[0];
-  const fromUrl = item.url.split("?")[0].split(".").pop();
-  return (fromUrl && fromUrl.length <= 5 ? fromUrl : fromMime || "arquivo").toUpperCase();
-}
-
-function DocIcon({ item }: { item: MediaItem }) {
-  const sheet = /sheet|excel|csv/i.test(item.mime_type || "") || /\.(xlsx?|csv)$/i.test(item.url);
-  const Icon = sheet ? FileSpreadsheet : FileText;
-  return <Icon className="w-5 h-5" />;
-}
 
 interface Props {
   kind: MediaKind;
@@ -143,7 +126,7 @@ export function MediaManager({ kind, items, isLoading }: Props) {
                 <div className="aspect-[4/3] bg-surface relative">
                   {item.type === "video" ? (
                     <>
-                      <video src={item.url} preload="metadata" muted className="w-full h-full object-cover" />
+                      <video src={videoPosterSrc(item.url)} preload="metadata" muted playsInline className="w-full h-full object-cover" />
                       <span className="absolute left-2 bottom-2"><Chip className="bg-scrim text-white"><Video className="w-3 h-3" /> Vídeo</Chip></span>
                     </>
                   ) : (
