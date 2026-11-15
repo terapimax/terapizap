@@ -1,9 +1,11 @@
-// ZapFlow v3.5 — Content Script (interface + envio via motor WA-JS em wa_engine.js)
+// ZapFlow v3.6 — Content Script (interface + envio via motor WA-JS em wa_engine.js)
 (function () {
   'use strict';
   const SUPABASE_URL = window.SUPABASE_URL || '';
   const SUPABASE_KEY = window.SUPABASE_KEY || '';
   if (!SUPABASE_URL || !SUPABASE_KEY) console.warn('⚠️ ZapFlow: configuração do Supabase ausente (config.js)');
+  // Endereço do painel (config.js). Troque quando o painel estiver publicado.
+  const PANEL_URL = String(window.ZAPFLOW_PANEL_URL || 'http://localhost:3002').replace(/\/+$/, '');
 
   let sb = null;
   let currentFilter = 'all', showFavOnly = false, searchQuery = '';
@@ -23,6 +25,7 @@
         watchWhatsAppTheme();
         pollEngine();
         initAuth();
+        watchReturnToTab();
       }
     }, 1000);
   }
@@ -102,6 +105,7 @@
 
   function setAccount(email) {
     if ($('zf-account-email')) $('zf-account-email').textContent = email || '—';
+    if ($('zf-menu-logout')) $('zf-menu-logout').textContent = email || '';
     if ($('zf-account-initials')) $('zf-account-initials').textContent = (email || '?').slice(0, 2).toUpperCase();
   }
 
@@ -139,7 +143,12 @@
     });
   }
 
-  async function loadAllData() {
+  // silent: atualização automática (ao voltar para o WhatsApp). Só redesenha se algo mudou
+  // e, se falhar, mantém a lista que já está na tela.
+  let lastLoadAt = 0, dataSignature = '', loading = false;
+  async function loadAllData({ silent = false } = {}) {
+    if (loading) return;
+    loading = true;
     try {
       const { data: { session } } = await sb.auth.getSession();
       if (!session) return;
@@ -149,17 +158,96 @@
         sb.from('media_library').select('*').order('created_at', { ascending: false }),
       ]);
       if (msgs.error || media.error) throw msgs.error || media.error;
+      lastLoadAt = Date.now();
+      const sig = JSON.stringify([msgs.data, media.data]);
+      if (silent && loaded && sig === dataSignature) return;
+      dataSignature = sig;
       messagesData = msgs.data || [];
       mediaData = media.data || [];
       loaded = true;
+      const list = $('zf-items-list');
+      const scroll = list ? list.scrollTop : 0;
       renderItems();
+      if (list) list.scrollTop = scroll;
       renderQuickBar();
     } catch (e) {
       console.error('❌ ZapFlow: falha ao carregar itens', e);
+      if (silent && loaded) return;
       loaded = true;
       const list = $('zf-items-list');
       if (list) list.innerHTML = '<li class="zf-empty"><b>Não foi possível carregar seus itens</b><span>Clique em Atualizar para tentar de novo.</span></li>';
+    } finally {
+      loading = false;
     }
+  }
+
+  // Ao voltar para a aba do WhatsApp (ex.: depois de criar um item no painel), atualiza sozinho.
+  function watchReturnToTab() {
+    const refresh = () => {
+      if (document.visibilityState !== 'visible' || !sb || !loaded) return;
+      if (Date.now() - lastLoadAt < 5000) return;
+      loadAllData({ silent: true });
+    };
+    document.addEventListener('visibilitychange', refresh);
+    window.addEventListener('focus', refresh);
+  }
+
+  // ===== PAINEL =====
+  // Uma aba só para o painel: os atalhos reaproveitam a mesma aba em vez de abrir várias.
+  function openPanel(path) {
+    const w = window.open(PANEL_URL + path, 'zapflow-painel');
+    if (w) { try { w.focus(); } catch (e) { /* outra origem */ } }
+    else showToast('O navegador bloqueou a nova aba. Permita pop-ups para o WhatsApp Web.');
+  }
+
+  const CREATE_PATH = { msg: '/dashboard/mensagens?novo=1', audio: '/dashboard/audios?novo=1', media: '/dashboard/midias?novo=1', doc: '/dashboard/documentos?novo=1' };
+  const CREATE_LABEL = { msg: 'Criar mensagem no painel', audio: 'Criar áudio no painel', media: 'Adicionar mídia no painel', doc: 'Adicionar documento no painel' };
+
+  // ===== MENU ☰ =====
+  function bindMenu() {
+    const btn = $('zf-menu-btn');
+    const menu = $('zf-menu');
+    if (!btn || !menu) return;
+    const items = () => Array.from(menu.querySelectorAll('[role="menuitem"]'));
+    const isOpen = () => menu.classList.contains('zf-menu-open');
+    const close = (focusBtn) => {
+      if (!isOpen()) return;
+      menu.classList.remove('zf-menu-open');
+      btn.setAttribute('aria-expanded', 'false');
+      if (focusBtn) btn.focus();
+    };
+    const open = () => {
+      menu.classList.add('zf-menu-open');
+      btn.setAttribute('aria-expanded', 'true');
+      items()[0]?.focus();
+    };
+    btn.onclick = (e) => { e.stopPropagation(); isOpen() ? close() : open(); };
+    menu.onclick = async (e) => {
+      const it = e.target.closest('[role="menuitem"]');
+      if (!it) return;
+      close();
+      if (it.dataset.zfGo) return openPanel(it.dataset.zfGo);
+      if (it.dataset.zfAction === 'ajustes') return switchTab('ajustes');
+      if (it.dataset.zfAction === 'logout' && sb) await sb.auth.signOut();
+    };
+    menu.onkeydown = (e) => {
+      const list = items();
+      const i = list.indexOf(document.activeElement);
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        list[(i + (e.key === 'ArrowDown' ? 1 : -1) + list.length) % list.length].focus();
+      } else if (e.key === 'Home' || e.key === 'End') {
+        e.preventDefault();
+        list[e.key === 'Home' ? 0 : list.length - 1].focus();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        close(true);
+      } else if (e.key === 'Tab') {
+        close();
+      }
+    };
+    document.addEventListener('click', (e) => { if (!menu.contains(e.target) && !btn.contains(e.target)) close(); }, true);
   }
 
   // ===== BARRA LATERAL =====
@@ -182,6 +270,7 @@
 
   function bindEvents() {
     $('zf-close').onclick = () => toggleSidebar();
+    bindMenu();
 
     document.querySelectorAll('[data-zf-tab]').forEach((b) => { b.onclick = () => switchTab(b.dataset.zfTab); });
 
@@ -467,12 +556,21 @@
     if (count) count.textContent = loaded ? `${items.length} de ${all.length} itens` : '';
 
     if (!loaded) { list.innerHTML = '<li class="zf-skel"></li><li class="zf-skel"></li><li class="zf-skel"></li>'; return; }
+    // vazio: botão que abre o painel já no formulário certo; a lista atualiza sozinha ao voltar
+    const emptyState = (title, text, type) => {
+      list.innerHTML = `<li class="zf-empty"><b>${title}</b><span>${text}</span>${type ? `<button type="button" class="zf-btn zf-empty-cta" data-zf-go="${CREATE_PATH[type]}">${window._zfSVG.external} ${CREATE_LABEL[type]}</button>` : ''}</li>`;
+      const cta = list.querySelector('[data-zf-go]');
+      if (cta) cta.onclick = () => openPanel(cta.dataset.zfGo);
+    };
+    const typeName = { msg: 'mensagem', audio: 'áudio', media: 'mídia', doc: 'documento' }[currentFilter];
     if (all.length === 0) {
-      list.innerHTML = '<li class="zf-empty"><b>Sua biblioteca está vazia</b><span>Crie mensagens, áudios e arquivos no painel do ZapFlow e clique em Atualizar.</span></li>';
+      emptyState('Sua biblioteca está vazia', 'Crie seus itens no painel. A lista atualiza sozinha quando você voltar para cá.', currentFilter === 'all' ? 'msg' : currentFilter);
       return;
     }
     if (items.length === 0) {
-      list.innerHTML = '<li class="zf-empty"><b>Nada encontrado</b><span>Mude o filtro ou a busca.</span></li>';
+      const noneOfType = typeName && !all.some((i) => i.type === currentFilter);
+      if (noneOfType) emptyState(`Nenhum${currentFilter === 'msg' || currentFilter === 'media' ? 'a' : ''} ${typeName} ainda`, 'Crie no painel. A lista atualiza sozinha quando você voltar para cá.', currentFilter);
+      else emptyState('Nada encontrado', 'Mude o filtro ou a busca.', typeName ? currentFilter : null);
       return;
     }
 

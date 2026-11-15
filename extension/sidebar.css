@@ -1,4 +1,4 @@
-/* ZapFlow — extensão v3.5 · visual alinhado ao painel (base neutra, preto nas ações, rosa na marca).
+/* ZapFlow — extensão v3.6 · visual alinhado ao painel (base neutra, preto nas ações, rosa na marca).
    Tema: html[data-zf-theme] = "light" | "dark" (automático segue o tema do WhatsApp Web). */
 
 html {
@@ -116,7 +116,28 @@ html.zf-push-bottom #main { padding-bottom: var(--zf-push-bottom) !important; bo
 
 .zf-empty { padding: 40px 20px; text-align: center; }
 .zf-empty b { display: block; font-size: 14px; margin-bottom: 4px; }
-.zf-empty span { font-size: 13px; color: var(--zf-muted); }
+.zf-empty span { display: block; font-size: 13px; color: var(--zf-muted); }
+.zf-empty-cta { margin-top: 14px; display: inline-flex; align-items: center; gap: 6px; color: var(--zf-fg) !important; }
+.zf-empty-cta svg { width: 14px; height: 14px; }
+
+/* ===== Menu ☰ (painel e atalhos) ===== */
+.zf-menu {
+  position: absolute; top: 54px; right: 12px; z-index: 20; width: 248px; padding: 6px;
+  background: var(--zf-bg); border: 1px solid var(--zf-line); border-radius: 12px; box-shadow: var(--zf-shadow);
+  display: none;
+}
+.zf-menu.zf-menu-open { display: block; animation: zf-menu-in 0.14s ease; }
+@keyframes zf-menu-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.zf-menu [role="menuitem"] {
+  width: 100%; height: 36px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent;
+  display: flex; align-items: center; gap: 10px; text-align: left; font-size: 14px; font-weight: 500; color: var(--zf-fg) !important;
+}
+.zf-menu [role="menuitem"]:hover, .zf-menu [role="menuitem"]:focus-visible { background: var(--zf-surface); outline: none; }
+.zf-menu [role="menuitem"] svg { width: 16px; height: 16px; color: var(--zf-muted); flex-shrink: 0; }
+.zf-menu [role="menuitem"] span { flex-shrink: 0; }
+.zf-menu small { margin-left: auto; min-width: 0; font-size: 12px; color: var(--zf-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.zf-menu hr { border: 0; border-top: 1px solid var(--zf-line); margin: 6px 4px; }
+#zf-menu-btn[aria-expanded="true"] { background: var(--zf-surface); color: var(--zf-fg) !important; }
 .zf-skel { height: 52px; border-radius: 10px; margin: 4px 0; background: linear-gradient(90deg, var(--zf-surface) 25%, var(--zf-line) 50%, var(--zf-surface) 75%); background-size: 200% 100%; animation: zf-shimmer 1.4s infinite; }
 @keyframes zf-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 

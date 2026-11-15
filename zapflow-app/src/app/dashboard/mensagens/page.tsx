@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { AlertCircle, Copy, Loader2, MessageSquareText, Plus, Star, Trash2 } from "lucide-react";
 import { useMessages, useCreateMessage, useUpdateMessage, useDeleteMessage } from "@/hooks/use-messages";
+import { useOpenFromQuery } from "@/hooks/use-open-from-query";
 import { Modal } from "@/components/ui/modal";
 import { Button, EmptyState, Panel, SearchInput } from "@/components/ui/shared";
 import { cn } from "@/lib/utils";
@@ -22,6 +23,7 @@ export default function MensagensPage() {
   const [onlyFav, setOnlyFav] = useState(false);
   const [editing, setEditing] = useState<Message | "new" | null>(null);
   const [toDelete, setToDelete] = useState<Message | null>(null);
+  useOpenFromQuery(() => setEditing("new"));
 
   const q = search.trim().toLowerCase();
   const shown = messages.filter(

@@ -1,6 +1,6 @@
-// ZapFlow v3.5 — HTML da barra lateral (só estrutura; a lógica fica em content.js)
+// ZapFlow v3.6 — HTML da barra lateral (só estrutura; a lógica fica em content.js)
 
-const ZF_VERSION = '3.5.0';
+const ZF_VERSION = '3.6.0';
 
 const _zfIcon = (paths, size = 16, extra = '') =>
   `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" ${extra}>${paths}</svg>`;
@@ -17,7 +17,39 @@ window._zfSVG = {
   bolt: _zfIcon('<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>', 15, 'stroke-width="2.4"'),
   star: '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z"/></svg>',
   list: _zfIcon('<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>'),
+  menu: _zfIcon('<path d="M4 6h16M4 12h16M4 18h16"/>', 18),
+  external: _zfIcon('<path d="M7 17 17 7M8 7h9v9"/>'),
+  plus: _zfIcon('<path d="M12 5v14M5 12h14"/>'),
+  funnel: _zfIcon('<path d="M3 4h18l-7 8v6l-4 2v-8z"/>'),
+  tasks: _zfIcon('<rect x="3" y="3" width="18" height="18" rx="2"/><path d="m8 12 3 3 5-6"/>'),
+  kanban: _zfIcon('<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M15 3v18"/>'),
+  gear: _zfIcon('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>'),
+  logout: _zfIcon('<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>'),
 };
+
+// Atalhos do menu ☰: caminho no painel (ou ação local da extensão)
+const ZF_MENU = [
+  { label: 'Abrir o painel', icon: 'external', path: '/dashboard' },
+  '-',
+  { label: 'Nova mensagem', icon: 'plus', path: '/dashboard/mensagens?novo=1' },
+  { label: 'Novo áudio', icon: 'plus', path: '/dashboard/audios?novo=1' },
+  { label: 'Nova mídia', icon: 'plus', path: '/dashboard/midias?novo=1' },
+  '-',
+  { label: 'Funis', icon: 'funnel', path: '/dashboard/funis' },
+  { label: 'Tarefas', icon: 'tasks', path: '/dashboard/tarefas' },
+  { label: 'Leads', icon: 'kanban', path: '/dashboard/kanban' },
+  '-',
+  { label: 'Ajustes', icon: 'gear', action: 'ajustes' },
+  { label: 'Sair', icon: 'logout', action: 'logout', id: 'zf-menu-logout' },
+];
+
+function zfBuildMenu() {
+  const S = window._zfSVG;
+  return ZF_MENU.map((m) => m === '-'
+    ? '<hr role="separator">'
+    : `<button type="button" role="menuitem" tabindex="-1" ${m.path ? `data-zf-go="${m.path}"` : `data-zf-action="${m.action}"`}>${S[m.icon]}<span>${m.label}</span>${m.id ? `<small id="${m.id}"></small>` : ''}</button>`
+  ).join('');
+}
 
 function zfBuildSidebar() {
   const S = window._zfSVG;
@@ -45,8 +77,10 @@ function zfBuildSidebar() {
     <span class="zf-mark">${S.bolt}</span>
     <span class="zf-brand">ZapFlow</span>
     <span class="zf-engine" id="zf-engine" data-state="loading" title="Motor de envio"><i></i><span>Conectando…</span></span>
+    <button type="button" class="zf-icon-btn" id="zf-menu-btn" aria-label="Menu" title="Painel e atalhos" aria-haspopup="menu" aria-expanded="false" aria-controls="zf-menu">${S.menu}</button>
     <button type="button" class="zf-icon-btn" id="zf-close" aria-label="Fechar ZapFlow">${S.close}</button>
   </header>
+  <div class="zf-menu" id="zf-menu" role="menu" aria-label="Painel e atalhos">${zfBuildMenu()}</div>
 
   <nav class="zf-tabs" role="tablist" aria-label="Seções">
     <button type="button" role="tab" data-zf-tab="itens" aria-selected="true">Itens</button>

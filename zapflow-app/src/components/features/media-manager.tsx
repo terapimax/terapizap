@@ -7,6 +7,7 @@ import { Button, Chip, EmptyState, Panel, SearchInput } from "@/components/ui/sh
 import { AudioInput, type AudioInputValue } from "@/components/features/audio-input";
 import { DocIcon, fileExt as ext, fmtSize, videoPosterSrc } from "@/components/features/media-preview";
 import { useDeleteMedia, useUpdateMedia, useUploadMedia } from "@/hooks/use-media";
+import { useOpenFromQuery } from "@/hooks/use-open-from-query";
 import type { MediaItem } from "@/types";
 import { cn } from "@/lib/utils";
 import { formatDuration } from "@/lib/audio";
@@ -50,6 +51,7 @@ export function MediaManager({ kind, items, isLoading }: Props) {
   const [addOpen, setAddOpen] = useState(false);
   const [detail, setDetail] = useState<MediaItem | null>(null);
   const [toDelete, setToDelete] = useState<MediaItem | null>(null);
+  useOpenFromQuery(() => setAddOpen(true));
 
   // reprodução (uma por vez)
   const audioRef = useRef<HTMLAudioElement | null>(null);
