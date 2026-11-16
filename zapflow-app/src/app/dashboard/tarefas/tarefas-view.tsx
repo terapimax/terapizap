@@ -77,7 +77,7 @@ export function TarefasView({ initialView }: { initialView: View }) {
       <EmptyState
         icon={AlertCircle}
         title="Não foi possível carregar as tarefas"
-        description="Se você acabou de atualizar o ZapFlow, rode o arquivo supabase/tarefas.sql no Supabase para criar a tabela de tarefas."
+        description="Se você acabou de atualizar o ZapFlow, rode o arquivo supabase/setup.sql no Supabase (SQL Editor) para criar a tabela de tarefas."
       />
     );
   }
