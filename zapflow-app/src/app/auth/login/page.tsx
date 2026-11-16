@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { BrandLogo, useBrand } from "@/components/brand";
 import { Eye, EyeOff, Loader2, AlertCircle, CheckCircle2, Mic, Filter, MessageSquareText } from "lucide-react";
 
@@ -25,13 +25,18 @@ function translateError(msg: string): string {
 }
 
 export default function LoginPage() {
+  return <Suspense fallback={<div className="min-h-screen grid place-items-center" role="status">Carregando...</div>}><LoginForm /></Suspense>;
+}
+
+function LoginForm() {
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-  const [isRegister, setIsRegister] = useState(false);
+  const [isRegister, setIsRegister] = useState(searchParams.get("mode") === "register");
   const router = useRouter();
   const brand = useBrand();
 
