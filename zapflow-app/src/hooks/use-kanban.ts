@@ -2,7 +2,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
-import type { KanbanBoard, KanbanCardWithLead, KanbanColumn, KanbanColumnWithCards } from "@/types";
+import type { ColumnOutcome, KanbanBoard, KanbanCardWithLead, KanbanColumn, KanbanColumnWithCards } from "@/types";
 import { leadErrorMessage } from "@/lib/leads";
 import { invalidateLeads } from "@/hooks/use-leads";
 import { toast } from "sonner";
@@ -154,6 +154,23 @@ export function useMoveCard() {
     },
     onSettled: () => invalidateLeads(qc),
     onError: (e) => toast.error(`Não foi possível mover: ${leadErrorMessage(e)}`),
+  });
+}
+
+/** Marca a etapa como de resultado (venda fechada / perdido) ou volta a ser etapa normal (null). */
+export function useSetColumnOutcome() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, outcome }: { id: number; outcome: ColumnOutcome | null }) => {
+      const { error } = await supabase.from("kanban_columns").update({ outcome }).eq("id", id);
+      if (error) throw error;
+      return outcome;
+    },
+    onSuccess: (o) => {
+      qc.invalidateQueries({ queryKey: ["kanban"] });
+      toast.success(o === "won" ? "Etapa marcada como venda fechada" : o === "lost" ? "Etapa marcada como perdido" : "Etapa voltou a ser normal");
+    },
+    onError: (e) => toast.error(leadErrorMessage(e)),
   });
 }
 

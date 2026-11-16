@@ -25,21 +25,21 @@ import { SortableContext, verticalListSortingStrategy, useSortable, sortableKeyb
 import { CSS } from "@dnd-kit/utilities";
 import {
   useBoards, useCreateBoard, useDeleteBoard, useBoardData,
-  useCreateColumn, useDeleteColumn, useMoveCard, useInboxColumn, useSetInboxColumn,
+  useCreateColumn, useDeleteColumn, useMoveCard, useInboxColumn, useSetInboxColumn, useSetColumnOutcome,
 } from "@/hooks/use-kanban";
 import { blockedLeadIds, useAddToBoard, useCreateLead, useLeads, useTags } from "@/hooks/use-leads";
 import { Modal } from "@/components/ui/modal";
 import { LeadDetailModal, TEMP, TempPicker, inputCls } from "@/components/features/lead-detail-modal";
 import { TagList, TagPicker } from "@/components/features/tags";
 import { Button, Chip, EmptyState, SearchInput } from "@/components/ui/shared";
-import type { KanbanCardWithLead, KanbanColumnWithCards, LeadTemp, Tag, Task } from "@/types";
+import type { ColumnOutcome, KanbanCardWithLead, KanbanColumnWithCards, LeadTemp, Tag, Task } from "@/types";
 import { useTasks } from "@/hooks/use-tasks";
 import { formatDue, isOpen, taskState } from "@/lib/tasks";
 import { brl, deaccent, formatPhone, initials, phoneKey, tagsOf } from "@/lib/leads";
 import { TaskIcon } from "@/components/features/task-sheets";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { Columns3, Plus, Trash2, Loader2, AlertCircle, UserPlus, Users, Check, Inbox } from "lucide-react";
+import { Columns3, Plus, Trash2, Loader2, AlertCircle, UserPlus, Users, Check, Inbox, Trophy } from "lucide-react";
 
 /** Próxima tarefa em aberto de cada lead (a lista vem ordenada por horário). */
 type NextTasks = Map<number, { next: Task; count: number }>;
@@ -189,9 +189,63 @@ function SortableCard({ card, tags, next, onOpen, dragDisabled }: { card: Kanban
 
 // ── Coluna (etapa) ───────────────────────────────────────
 
-function StageColumn({ column, items, tags, dragDisabled, onAdd, onDeleteColumn, onOpen, nextTasks, isInbox, onMakeInbox }: {
+const OUTCOMES: { value: ColumnOutcome | null; label: string; hint: string }[] = [
+  { value: "won", label: "Ganho", hint: "venda fechada" },
+  { value: "lost", label: "Perdido", hint: "não comprou" },
+  { value: null, label: "Etapa normal", hint: "ainda em andamento" },
+];
+
+/** Marca a etapa como de resultado (para os relatórios: vendas, conversão, perdidos). */
+function OutcomeMenu({ column, onPick }: { column: KanbanColumnWithCards; onPick: (o: ColumnOutcome | null) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const down = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    const key = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", down);
+    document.addEventListener("keydown", key);
+    return () => { document.removeEventListener("mousedown", down); document.removeEventListener("keydown", key); };
+  }, [open]);
+  const cur = column.outcome ?? null;
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-label={`Resultado da etapa ${column.title}${cur ? `: ${cur === "won" ? "Ganho" : "Perdido"}` : ""}`}
+        aria-expanded={open}
+        title={cur === "won" ? "Etapa de venda fechada (Ganho) — conta nos relatórios" : cur === "lost" ? "Etapa de perdidos — conta nos relatórios" : "Resultado da etapa (para os relatórios)"}
+        className={cn(
+          "h-7 w-7 grid place-items-center rounded-lg hover:bg-card transition-opacity cursor-pointer",
+          cur === "won" ? "text-ok" : cur === "lost" ? "text-hot" : "text-muted hover:text-fg",
+          open || cur ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus:opacity-100"
+        )}
+      >
+        <Trophy className="w-3.5 h-3.5" />
+      </button>
+      {open && (
+        <div role="menu" aria-label="Resultado da etapa" className="absolute right-0 z-20 mt-1.5 w-56 rounded-xl border border-line bg-card shadow-elev p-1.5">
+          <p className="px-2.5 pt-1 pb-1.5 text-xs text-muted">Esta etapa é…</p>
+          {OUTCOMES.map((o) => (
+            <button key={String(o.value)} type="button" role="menuitemradio" aria-checked={cur === o.value}
+              onClick={() => { setOpen(false); if (cur !== o.value) onPick(o.value); }}
+              className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-sm text-left hover:bg-surface cursor-pointer">
+              <span className="w-4 shrink-0">{cur === o.value && <Check className="w-4 h-4" aria-hidden="true" />}</span>
+              <span className="font-medium">{o.label}</span>
+              <span className="text-xs text-muted ml-auto">{o.hint}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StageColumn({ column, items, tags, dragDisabled, onAdd, onDeleteColumn, onOpen, nextTasks, isInbox, onMakeInbox, onSetOutcome }: {
   isInbox: boolean;
   onMakeInbox: (col: KanbanColumnWithCards) => void;
+  onSetOutcome: (col: KanbanColumnWithCards, outcome: ColumnOutcome | null) => void;
   column: KanbanColumnWithCards;
   items: KanbanCardWithLead[];
   tags: Tag[];
@@ -217,6 +271,7 @@ function StageColumn({ column, items, tags, dragDisabled, onAdd, onDeleteColumn,
           </span>
         )}
         <span className="ml-auto text-xs text-muted tabular-nums">{brl(total)}</span>
+        <OutcomeMenu column={column} onPick={(o) => onSetOutcome(column, o)} />
         {!isInbox && (
           <button
             type="button"
@@ -422,6 +477,7 @@ export default function KanbanPage() {
   const moveCard = useMoveCard();
   const inbox = useInboxColumn();
   const setInbox = useSetInboxColumn();
+  const setOutcome = useSetColumnOutcome();
   const tasks = useTasks();
   const nextTasks = useMemo<NextTasks>(() => {
     const map: NextTasks = new Map();
@@ -716,6 +772,7 @@ export default function KanbanPage() {
                   nextTasks={nextTasks}
                   isInbox={inbox.column?.id === col.id}
                   onMakeInbox={(c) => setInbox.mutate(c.id)}
+                  onSetOutcome={(c, outcome) => setOutcome.mutate({ id: c.id, outcome })}
                 />
               ))}
               <button

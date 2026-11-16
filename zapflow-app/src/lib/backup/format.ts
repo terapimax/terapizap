@@ -30,7 +30,7 @@ export const COLUMNS: Record<TableName, string[]> = {
   funnels: ["title", "description", "is_favorite", "created_at"],
   funnel_items: ["funnel_id", "item_id", "type", "delay_minutes", "delay_seconds", "position", "created_at"],
   kanban_boards: ["title", "created_at"],
-  kanban_columns: ["board_id", "title", "color", "position", "created_at"],
+  kanban_columns: ["board_id", "title", "color", "position", "outcome", "created_at"],
   tags: ["name", "color", "created_at"],
   leads: ["name", "phone", "email", "avatar", "last_message", "origin", "campaign", "status", "notes", "wa_id", "last_contact_at", "created_at"],
   lead_tags: ["lead_id", "tag_id", "created_at"],

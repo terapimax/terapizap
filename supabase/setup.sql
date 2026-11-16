@@ -783,11 +783,66 @@
   CREATE TRIGGER zf_after_tags_insert AFTER INSERT ON public.lead_tags
     REFERENCING NEW TABLE AS zf_new FOR EACH STATEMENT EXECUTE FUNCTION public.zf_after_tags_insert();
 
+  -- 6h. RELATÓRIOS DO FUNIL ---------------------------------------
+  -- Etapa de resultado: "won" = venda fechada, "lost" = perdido (marcado no Kanban).
+  ALTER TABLE public.kanban_columns ADD COLUMN IF NOT EXISTS outcome TEXT;
+  ALTER TABLE public.kanban_columns DROP CONSTRAINT IF EXISTS kanban_columns_outcome_check;
+  ALTER TABLE public.kanban_columns ADD CONSTRAINT kanban_columns_outcome_check CHECK (outcome IN ('won', 'lost'));
+
+  -- Histórico de etapas: uma linha cada vez que um card entra no quadro, muda de etapa ou sai dele.
+  -- É o que permite medir conversão por período e tempo em cada etapa. As etapas não têm chave
+  -- estrangeira de propósito: apagar uma etapa não apaga o histórico de quem passou por ela.
+  -- seeded = linha criada para um card que já existia (ou veio de um backup): não se sabe quando ele
+  -- entrou na etapa, então ele não conta no tempo por etapa.
+  CREATE TABLE IF NOT EXISTS public.kanban_card_moves (
+    id BIGSERIAL PRIMARY KEY,
+    user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
+    card_id BIGINT,
+    lead_id BIGINT NOT NULL REFERENCES public.leads(id) ON DELETE CASCADE,
+    board_id BIGINT NOT NULL REFERENCES public.kanban_boards(id) ON DELETE CASCADE,
+    from_column_id BIGINT,
+    to_column_id BIGINT,
+    value NUMERIC NOT NULL DEFAULT 0,
+    seeded BOOLEAN NOT NULL DEFAULT false,
+    at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+
+  CREATE OR REPLACE FUNCTION public.zf_log_card_move() RETURNS trigger
+  LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
+  BEGIN
+    IF TG_OP = 'INSERT' THEN
+      INSERT INTO kanban_card_moves (user_id, card_id, lead_id, board_id, from_column_id, to_column_id, value, seeded, at)
+      VALUES (NEW.user_id, NEW.id, NEW.lead_id, NEW.board_id, NULL, NEW.column_id, NEW.value,
+              NEW.created_at < now() - interval '1 minute', least(NEW.created_at, now()));
+    ELSIF TG_OP = 'UPDATE' THEN
+      IF NEW.column_id IS DISTINCT FROM OLD.column_id THEN
+        INSERT INTO kanban_card_moves (user_id, card_id, lead_id, board_id, from_column_id, to_column_id, value)
+        VALUES (NEW.user_id, NEW.id, NEW.lead_id, NEW.board_id, OLD.column_id, NEW.column_id, NEW.value);
+      END IF;
+    ELSE
+      -- saiu do quadro; se foi o lead ou o quadro que foi apagado, não há o que guardar
+      IF EXISTS (SELECT 1 FROM leads WHERE id = OLD.lead_id) AND EXISTS (SELECT 1 FROM kanban_boards WHERE id = OLD.board_id) THEN
+        INSERT INTO kanban_card_moves (user_id, card_id, lead_id, board_id, from_column_id, to_column_id, value)
+        VALUES (OLD.user_id, OLD.id, OLD.lead_id, OLD.board_id, OLD.column_id, NULL, OLD.value);
+      END IF;
+    END IF;
+    RETURN NULL;
+  END $$;
+  DROP TRIGGER IF EXISTS zf_card_moves ON public.kanban_cards;
+  CREATE TRIGGER zf_card_moves AFTER INSERT OR UPDATE OF column_id OR DELETE ON public.kanban_cards
+    FOR EACH ROW EXECUTE FUNCTION public.zf_log_card_move();
+
+  -- cards que já existiam: ponto de partida do histórico (uma vez só)
+  INSERT INTO public.kanban_card_moves (user_id, card_id, lead_id, board_id, to_column_id, value, seeded, at)
+  SELECT c.user_id, c.id, c.lead_id, c.board_id, c.column_id, c.value, true, c.created_at
+  FROM public.kanban_cards c
+  WHERE NOT EXISTS (SELECT 1 FROM public.kanban_card_moves m WHERE m.card_id = c.id);
+
   -- 7. SEGURANÇA: cada usuário só vê e altera os próprios dados (RLS)
   DO $$
   DECLARE t TEXT;
   BEGIN
-    FOREACH t IN ARRAY ARRAY['messages','media_library','funnels','funnel_items','kanban_boards','kanban_columns','leads','tags','lead_tags','kanban_cards','lead_messages','triggers','trigger_fires','appointments','tasks']
+    FOREACH t IN ARRAY ARRAY['messages','media_library','funnels','funnel_items','kanban_boards','kanban_columns','leads','tags','lead_tags','kanban_cards','lead_messages','triggers','trigger_fires','kanban_card_moves','appointments','tasks']
     LOOP
       EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
       EXECUTE format('DROP POLICY IF EXISTS "own_rows" ON public.%I', t);
@@ -845,6 +900,8 @@
   CREATE INDEX IF NOT EXISTS idx_leads_user ON public.leads(user_id);
   CREATE INDEX IF NOT EXISTS idx_triggers_user ON public.triggers(user_id);
   CREATE INDEX IF NOT EXISTS idx_trigger_fires ON public.trigger_fires(trigger_id, lead_id);
+  CREATE INDEX IF NOT EXISTS idx_card_moves_board ON public.kanban_card_moves(board_id, at);
+  CREATE INDEX IF NOT EXISTS idx_card_moves_card ON public.kanban_card_moves(card_id);
   CREATE INDEX IF NOT EXISTS idx_appointments_user_date ON public.appointments(user_id, date);
   CREATE INDEX IF NOT EXISTS idx_tasks_user_due ON public.tasks(user_id, status, due_at);
   CREATE INDEX IF NOT EXISTS idx_tasks_lead ON public.tasks(lead_id);
@@ -860,4 +917,4 @@
   FROM public.appointments a
   WHERE NOT EXISTS (SELECT 1 FROM public.tasks t WHERE t.options->>'from_appointment' = a.id::text);
 
-  -- Pronto. Confira em Table Editor: devem aparecer 15 tabelas.
+  -- Pronto. Confira em Table Editor: devem aparecer 16 tabelas.

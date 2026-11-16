@@ -69,7 +69,25 @@ export interface KanbanColumn {
   position: number;
   /** etapa de entrada: onde caem os leads novos do WhatsApp */
   is_inbox: boolean;
+  /** etapa de resultado: venda fechada (won) ou perdido (lost); vale para os relatórios */
+  outcome?: ColumnOutcome | null;
   created_at: string;
+}
+
+export type ColumnOutcome = "won" | "lost";
+
+/** Histórico do funil: cada vez que um card entra no quadro, muda de etapa ou sai (to_column_id = null). */
+export interface KanbanCardMove {
+  id: number;
+  card_id: number | null;
+  lead_id: number;
+  board_id: number;
+  from_column_id: number | null;
+  to_column_id: number | null;
+  value: number | string;
+  /** card que já existia quando o histórico começou (ou veio de backup): a data é a de criação, não a da entrada na etapa */
+  seeded: boolean;
+  at: string;
 }
 
 export type LeadTemp = "hot" | "warm" | "cold";

@@ -12,10 +12,10 @@ import { useMessages } from "@/hooks/use-messages";
 import { useAllMedia } from "@/hooks/use-media";
 import { Panel, Chip, EmptyState } from "@/components/ui/shared";
 import { cn } from "@/lib/utils";
+import { resolveOutcomes } from "@/lib/reports";
 
 const brl = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 const pct = (v: number) => v.toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + "%";
-const WON = /fech|ganh|conclu|vend|won/i;
 
 const STEP_ICON = { message: MessageSquareText, audio: Mic, midia: ImageIcon, document: FileText } as const;
 
@@ -34,10 +34,10 @@ export default function DashboardPage() {
 
   const stats = useMemo(() => {
     const all = columns.flatMap((c) => c.items);
-    const last = columns[columns.length - 1];
-    const wonCol = last && WON.test(last.title) ? last : undefined;
-    const open = all.filter((l) => !wonCol || l.column_id !== wonCol.id);
-    const won = wonCol ? wonCol.items : [];
+    // etapas de resultado: as marcadas no Kanban (ou, sem marcação, pelo nome: "Fechados", "Perdidos"…)
+    const { map: outcomes } = resolveOutcomes(columns);
+    const open = all.filter((l) => !outcomes.has(l.column_id));
+    const won = all.filter((l) => outcomes.get(l.column_id) === "won");
     const maxCount = Math.max(1, ...columns.map((c) => c.items.length));
     return {
       total: all.length,
@@ -46,14 +46,14 @@ export default function DashboardPage() {
       wonValue: won.reduce((a, l) => a + (Number(l.value) || 0), 0),
       conversion: all.length ? (won.length / all.length) * 100 : 0,
       hot: all.filter((l) => l.lead.status === "hot").length,
-      hasWonStage: !!wonCol,
+      hasWonStage: [...outcomes.values()].includes("won"),
       stages: columns.map((c) => ({
         id: c.id,
         title: c.title,
         count: c.items.length,
         value: c.items.reduce((a, l) => a + (Number(l.value) || 0), 0),
         width: (c.items.length / maxCount) * 100,
-        won: wonCol?.id === c.id,
+        won: outcomes.get(c.id) === "won",
       })),
     };
   }, [columns]);
@@ -80,7 +80,7 @@ export default function DashboardPage() {
     {
       label: "Taxa de conversão",
       value: stats.hasWonStage ? pct(stats.conversion) : "—",
-      note: stats.hasWonStage ? `${stats.wonCount} fechados · ${brl(stats.wonValue)}` : "crie uma etapa “Fechados”",
+      note: stats.hasWonStage ? `${stats.wonCount} fechados · ${brl(stats.wonValue)}` : "marque a etapa de ganho no Kanban",
     },
     { label: "Itens na biblioteca", value: String(libraryCount), note: `${funnels.data?.length ?? 0} funis criados` },
   ];
@@ -105,7 +105,10 @@ export default function DashboardPage() {
         <Panel aria-labelledby="h-funil" className="flex-[3_1_420px] min-w-0 p-6 flex flex-col gap-5">
           <div className="flex items-center justify-between gap-3">
             <h2 id="h-funil" className="text-base font-semibold">Funil de vendas</h2>
-            <Link href="/dashboard/kanban" className="text-[13px] font-semibold text-accent-fg hover:underline">Abrir Kanban</Link>
+            <div className="flex items-center gap-4">
+              <Link href="/dashboard/relatorios" className="text-[13px] font-semibold text-accent-fg hover:underline">Relatórios</Link>
+              <Link href="/dashboard/kanban" className="text-[13px] font-semibold text-accent-fg hover:underline">Abrir Kanban</Link>
+            </div>
           </div>
           {loading ? (
             <div className="flex flex-col gap-4">{[0, 1, 2, 3].map((i) => <span key={i} className="skeleton h-9" />)}</div>
