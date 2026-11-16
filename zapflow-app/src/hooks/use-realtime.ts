@@ -66,8 +66,22 @@ export function useRealtimeSync() {
       if (status === "CHANNEL_ERROR") console.warn("ZapFlow: tempo real indisponível (o painel continua funcionando; atualize a página para ver novidades).");
     });
 
+    // Gatilhos de "lead parado numa etapa": não há servidor conferindo sozinho, então o painel
+    // pede a conferência ao abrir e a cada 10 min (a extensão faz o mesmo; o banco evita repetir).
+    // Banco na versão antiga (função ainda não criada): desiste em silêncio.
+    let staleOff = false;
+    const checkStale = async () => {
+      if (staleOff || document.hidden) return;
+      const { error } = await supabase.rpc("zf_check_stale");
+      if (error) staleOff = true;
+    };
+    const staleFirst = setTimeout(checkStale, 6000);
+    const staleTimer = setInterval(checkStale, 10 * 60_000);
+
     return () => {
       if (timer) clearTimeout(timer);
+      clearTimeout(staleFirst);
+      clearInterval(staleTimer);
       supabase.removeChannel(channel);
     };
   }, [qc, router]);

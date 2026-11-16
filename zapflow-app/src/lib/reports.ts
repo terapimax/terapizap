@@ -1,6 +1,6 @@
 // Relatórios do funil: tudo calculado aqui a partir do histórico de etapas (kanban_card_moves),
 // dos cards de agora, dos leads e dos disparos de gatilho. Função pura, sem banco: fácil de testar.
-import type { ColumnOutcome, KanbanCardMove, KanbanColumn, Lead, Trigger, TriggerFire } from "@/types";
+import type { ColumnOutcome, KanbanCardMove, KanbanColumn, Lead, Owner, Trigger, TriggerFire } from "@/types";
 
 export const PERIODS = [
   { days: 7, label: "7 dias" },
@@ -39,7 +39,9 @@ export interface ReportInput {
   cards: ReportCard[];
   /** histórico do quadro (qualquer ordem) */
   moves: KanbanCardMove[];
-  leads: Pick<Lead, "id" | "name" | "origin" | "created_at">[];
+  leads: Pick<Lead, "id" | "name" | "origin" | "created_at" | "owner_id">[];
+  /** equipe (vazio = ninguém cadastrado: o relatório por responsável não aparece) */
+  owners?: Pick<Owner, "id" | "name" | "color">[];
   fires: Pick<TriggerFire, "trigger_id" | "result" | "created_at">[];
   triggers: Pick<Trigger, "id" | "title">[];
   /** 0 = desde sempre */
@@ -89,6 +91,8 @@ export interface FunnelReport {
   lostStages: StageRow[];
   stale: StaleCard[];
   origins: { origin: string; leads: number; won: number; pct: number | null }[];
+  /** por responsável: leads novos no período, cards em aberto agora e vendas no período (id null = sem responsável) */
+  owners: { id: number | null; name: string; color: string; leads: number; open: number; openValue: number; won: number; wonValue: number }[];
   triggers: { id: number; title: string; fires: number; ok: number; problems: number }[];
   bucket: Bucket;
   series: { start: Date; label: string; count: number }[];
@@ -155,11 +159,12 @@ export function buildReport(input: ReportInput): FunnelReport {
 
   // vendas e perdas no período (entrou numa etapa de ganho/perda vindo de fora dela)
   const wonCards = new Map<string, number>();
+  const wonLeadOf = new Map<string, number>();
   const lostCards = new Set<string>();
   for (const c of cards) {
     let prev: number | null = null;
     for (const s of c.stays) {
-      if (isWon(s.col) && !isWon(prev) && inPeriod(s.start)) wonCards.set(c.key, s.value);
+      if (isWon(s.col) && !isWon(prev) && inPeriod(s.start)) { wonCards.set(c.key, s.value); wonLeadOf.set(c.key, c.leadId); }
       if (isLost(s.col) && !isLost(prev) && inPeriod(s.start)) lostCards.add(c.key);
       prev = s.col;
     }
@@ -221,6 +226,19 @@ export function buildReport(input: ReportInput): FunnelReport {
     origins = [...origins.slice(0, 5), { origin: "Outras", leads: rest.reduce((a, r) => a + r.leads, 0), won: rest.reduce((a, r) => a + r.won, 0) }];
   }
 
+  // por responsável
+  const ownerOf = new Map(input.leads.map((l) => [l.id, l.owner_id ?? null]));
+  const ownerRows = (input.owners?.length ? [...input.owners, { id: null, name: "Sem responsável", color: "var(--muted)" }] : []).map((o) => ({
+    id: o.id as number | null, name: o.name, color: o.color, leads: 0, open: 0, openValue: 0, won: 0, wonValue: 0,
+  }));
+  if (ownerRows.length) {
+    const known = new Set(ownerRows.map((o) => o.id));
+    const row = (leadId: number) => { const id = ownerOf.get(leadId) ?? null; return ownerRows.find((o) => o.id === (known.has(id) ? id : null))!; };
+    for (const l of newLeads) row(l.id).leads++;
+    for (const c of openCards) { const r = row(c.lead_id); r.open++; r.openValue += num(c.value); }
+    for (const [key, value] of wonCards) { const r = row(wonLeadOf.get(key)!); r.won++; r.wonValue += value; }
+  }
+
   // gatilhos
   const trigTitle = new Map(input.triggers.map((x) => [x.id, x.title]));
   const trig = new Map<number, { fires: number; ok: number }>();
@@ -260,6 +278,7 @@ export function buildReport(input: ReportInput): FunnelReport {
     lostStages,
     stale,
     origins: origins.map((o) => ({ ...o, pct: o.leads ? (o.won / o.leads) * 100 : null })),
+    owners: ownerRows.filter((o) => o.id != null || o.leads || o.open || o.won),
     triggers: [...trig].map(([id, v]) => ({ id, title: trigTitle.get(id)!, fires: v.fires, ok: v.ok, problems: v.fires - v.ok })).sort((a, b) => b.fires - a.fires),
     bucket,
     series,

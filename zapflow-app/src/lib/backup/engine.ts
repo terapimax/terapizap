@@ -24,6 +24,7 @@ async function fetchAll(db: SupabaseClient, table: TableName): Promise<Row[]> {
   const page = 1000;
   for (let from = 0; ; from += page) {
     const { data, error } = await db.from(table).select("*").order("id", { ascending: true }).range(from, from + page - 1);
+    if (error && table === "owners") return out; // banco na versão antiga, sem responsáveis
     if (error) throw new Error(`Não foi possível ler ${table}: ${error.message}`);
     out.push(...((data ?? []) as Row[]));
     if (!data || data.length < page) return out;
@@ -196,6 +197,7 @@ export function summarize(s: BackupSource) {
     { label: "Gatilhos", n: s.tables.triggers.length },
     { label: "Leads", n: s.tables.leads.length },
     { label: "Etiquetas", n: s.tables.tags.length },
+    { label: "Responsáveis", n: s.tables.owners.length },
     { label: "Quadros do Kanban", n: s.tables.kanban_boards.length },
     { label: "Cards no Kanban", n: s.tables.kanban_cards.length },
     { label: "Tarefas", n: s.tables.tasks.length },
@@ -229,6 +231,7 @@ const KEYS: Record<TableName, ((r: Row) => string) | null> = {
   kanban_boards: (r) => norm(r.title),
   kanban_columns: (r) => `${r.board_id}|${norm(r.title)}`,
   tags: (r) => norm(r.name),
+  owners: (r) => norm(r.name),
   // mesmo telefone = mesmo lead (o banco não aceita repetido); sem telefone, pelo nome
   leads: (r) => phoneKey(r.phone as string) ?? (r.wa_id ? `wa:${r.wa_id}` : `${norm(r.name)}|${digits(r.phone)}`),
   lead_tags: (r) => `${r.lead_id}|${r.tag_id}`,
@@ -239,11 +242,11 @@ const KEYS: Record<TableName, ((r: Row) => string) | null> = {
 };
 
 /** Tabelas em que o banco não aceita repetido (telefone, nome da etiqueta, lead+quadro…). */
-const UNIQUE = new Set<TableName>(["tags", "leads", "lead_tags", "kanban_cards"]);
+const UNIQUE = new Set<TableName>(["tags", "owners", "leads", "lead_tags", "kanban_cards"]);
 
 const LABEL: Record<TableName, string> = {
   messages: "mensagem", media_library: "arquivo", funnels: "funil", funnel_items: "passo de funil",
-  kanban_boards: "quadro", kanban_columns: "etapa", tags: "etiqueta", leads: "lead", lead_tags: "etiqueta de lead", kanban_cards: "card do Kanban", triggers: "gatilho", appointments: "compromisso", tasks: "tarefa",
+  kanban_boards: "quadro", kanban_columns: "etapa", tags: "etiqueta", owners: "responsável", leads: "lead", lead_tags: "etiqueta de lead", kanban_cards: "card do Kanban", triggers: "gatilho", appointments: "compromisso", tasks: "tarefa",
 };
 
 function pick(table: TableName, r: Row, uid: string) {
@@ -389,7 +392,14 @@ export async function restoreBackup(db: SupabaseClient, src: BackupSource, mode:
       return board == null ? null : { ...pick("kanban_columns", r, uid), board_id: board };
     }), "title", "Gravando etapas");
     await insertRows("tags", split("tags", T.tags, (r) => pick("tags", r, uid)), "name", "Gravando etiquetas");
-    await insertRows("leads", split("leads", T.leads, (r) => pick("leads", r, uid)), "name", "Gravando leads");
+    await insertRows("owners", split("owners", T.owners, (r) => pick("owners", r, uid)), "name", "Gravando responsáveis");
+    await insertRows("leads", split("leads", T.leads, (r) => {
+      const row = pick("leads", r, uid);
+      // responsável: troca pelo id novo (backup antigo, sem responsáveis, nem manda o campo)
+      if (r.owner_id != null) row.owner_id = maps.owners.get(Number(r.owner_id)) ?? null;
+      else delete row.owner_id;
+      return row;
+    }), "name", "Gravando leads");
     await insertRows("lead_tags", split("lead_tags", T.lead_tags, (r) => {
       const lead = maps.leads.get(Number(r.lead_id));
       const tag = maps.tags.get(Number(r.tag_id));
@@ -457,7 +467,7 @@ export async function restoreBackup(db: SupabaseClient, src: BackupSource, mode:
         ...before.media_library.map((r) => storagePath(r.url as string)),
         ...before.tasks.map((r) => storagePath(r.file_url as string)),
       ].filter((p): p is string => !!p && !keep.has(p) && !newUrls.has(p));
-      const order: TableName[] = ["tasks", "triggers", "funnel_items", "funnels", "kanban_cards", "lead_tags", "leads", "tags", "kanban_columns", "kanban_boards", "appointments", "media_library", "messages"];
+      const order: TableName[] = ["tasks", "triggers", "funnel_items", "funnels", "kanban_cards", "lead_tags", "leads", "owners", "tags", "kanban_columns", "kanban_boards", "appointments", "media_library", "messages"];
       for (let i = 0; i < order.length; i++) {
         onProgress?.({ label: "Apagando os dados antigos", done: i, total: order.length });
         const ids = before[order[i]].map((r) => r.id).filter((id) => !reusedIds[order[i]].has(id));

@@ -9,6 +9,7 @@ import { Button, Panel } from "@/components/ui/shared";
 import { applyThemePref, getServerThemePref, getThemePref, subscribeThemePref, type ThemePref } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import { BackupTools } from "@/components/features/backup-tools";
+import { OwnerManager } from "@/components/features/owners";
 import { toast } from "sonner";
 
 const supabase = createClient();
@@ -114,6 +115,10 @@ export default function ConfiguracoesPage() {
         </div>
       </Section>
 
+      <Section title="Equipe" description="Mais de uma pessoa atendendo? Cadastre quem atende para dividir os leads e ver o resultado de cada um.">
+        <OwnerManager />
+      </Section>
+
       <Section title="Backup e restauração" description="Guarde uma cópia de tudo num arquivo e traga de volta quando precisar. Também traz o backup do ZapVoice.">
         <BackupTools />
       </Section>
@@ -124,6 +129,7 @@ export default function ConfiguracoesPage() {
             "No Chrome, abra chrome://extensions e ative o Modo do desenvolvedor.",
             "Clique em Carregar sem compactação e escolha a pasta extension do projeto.",
             "Abra o WhatsApp Web, clique no raio do ZapFlow e entre com a mesma conta.",
+            "Painel publicado na internet? Nos Ajustes da extensão, em Painel, cole o endereço desta página (só o começo, até .app ou .com.br).",
           ].map((t, i) => (
             <li key={i} className="flex gap-3">
               <span className="w-6 h-6 rounded-full bg-primary text-on-primary grid place-items-center text-xs font-semibold shrink-0 tabular-nums">{i + 1}</span>

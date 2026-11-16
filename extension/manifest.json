@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ZapFlow - WhatsApp Automation",
-  "version": "3.10.0",
+  "version": "3.11.0",
   "description": "Injete mensagens, áudios, mídias e documentos nas conversas do WhatsApp Web — sincronizado com o painel ZapFlow",
   "permissions": [
     "activeTab",

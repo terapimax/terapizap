@@ -25,13 +25,18 @@ const EVENTS: Record<EventKey, string> = {
   lead_moved: "Um lead mudar de etapa",
   lead_status_changed: "A temperatura de um lead mudar",
   tag_added: "Uma etiqueta for posta num lead",
+  lead_stale: "Um lead ficar parado numa etapa",
   appointment_due: "Chegar a hora de uma tarefa",
   manual: "Eu disparar manualmente",
 };
 
 /** Eventos que dá para escolher (os dois últimos são antigos e não disparam: use Tarefas). */
-const EVENT_CHOICES: EventKey[] = ["keyword", "lead_created", "lead_moved", "lead_status_changed", "tag_added"];
-const LEAD_EVENTS: EventKey[] = ["lead_created", "lead_moved", "lead_status_changed", "tag_added"];
+const EVENT_CHOICES: EventKey[] = ["keyword", "lead_created", "lead_moved", "lead_status_changed", "tag_added", "lead_stale"];
+const LEAD_EVENTS: EventKey[] = ["lead_created", "lead_moved", "lead_status_changed", "tag_added", "lead_stale"];
+
+/** Há quanto tempo parado na etapa (gatilho "lead parado"). */
+const STALE_DAYS: number[] = [1, 2, 3, 5, 7, 10, 15, 30];
+const daysText = (d: number) => (d === 1 ? "1 dia" : `${d} dias`);
 
 /** Quanto esperar antes de enviar (gatilhos de lead). */
 const DELAYS: [number, string][] = [[0, "Na hora"], [5, "5 minutos depois"], [30, "30 minutos depois"], [60, "1 hora depois"], [180, "3 horas depois"], [1440, "1 dia depois"]];
@@ -134,6 +139,11 @@ export default function GatilhosPage() {
       const g = num(t.event_config.tag_id);
       return g ? `A etiqueta “${lookups.tag(g) ?? "removida"}” for posta num lead` : EVENTS.tag_added;
     }
+    if (t.event === "lead_stale") {
+      const c = num(t.event_config.column_id);
+      const d = num(t.event_config.days) || 3;
+      return `Um lead ficar ${daysText(d)} parado em “${lookups.column(c) ?? "etapa removida"}”${t.event_config.no_reply ? " sem mandar mensagem" : ""}`;
+    }
     if (t.event === "lead_created" && t.event_config.origin) return `Um lead novo de ${String(t.event_config.origin)} for criado`;
     return EVENTS[t.event];
   };
@@ -173,6 +183,7 @@ export default function GatilhosPage() {
           <b className="font-semibold">Os envios saem pelo WhatsApp Web aberto com a extensão.</b>{" "}
           Gatilhos de lead disparam quando <i>um</i> lead é criado, muda de etapa, de temperatura ou ganha uma etiqueta (importações e ações em massa não disparam).
           Cada gatilho vale uma vez por lead, a não ser que você escolha “toda vez”. Os envios aparecem em Tarefas.
+          O gatilho de lead parado é conferido a cada poucos minutos, com o painel ou o WhatsApp Web aberto.
         </p>
       </div>
 
@@ -310,6 +321,8 @@ function TriggerForm({ trigger, data, saving, onClose, onSave }: {
   const [evTag, setEvTag] = useState(num(trigger?.event_config.tag_id));
   const [evOrigin, setEvOrigin] = useState(String(trigger?.event_config.origin ?? ""));
   const [repeat, setRepeat] = useState(trigger?.event_config.repeat === true);
+  const [staleDays, setStaleDays] = useState(num(trigger?.event_config.days) || 3);
+  const [noReply, setNoReply] = useState(trigger ? trigger.event_config.no_reply === true : true);
   const [delay, setDelay] = useState(num(trigger?.action_config.delay_minutes));
 
   const options =
@@ -325,6 +338,7 @@ function TriggerForm({ trigger, data, saving, onClose, onSave }: {
   const itemLabel = { send_message: "Mensagem", send_audio: "Áudio", send_media: "Imagem ou vídeo", send_document: "Documento", send_funnel: "Funil", move_lead: "Etapa", notify: "" }[action];
   const isKeyword = event === "keyword";
   const isLeadEvent = LEAD_EVENTS.includes(event);
+  const isStale = event === "lead_stale";
   const isSend = action.startsWith("send_");
   const actionKeys = isKeyword ? KEYWORD_ACTIONS : (Object.keys(ACTIONS) as ActionKey[]);
   const changeEvent = (v: EventKey) => {
@@ -338,9 +352,11 @@ function TriggerForm({ trigger, data, saving, onClose, onSave }: {
     if (isKeyword && !words.length) return toast.error("Escreva pelo menos uma palavra-chave.");
     if (needsItem && !itemId) return toast.error(`Escolha ${action === "move_lead" ? "a etapa" : action === "send_funnel" ? "o funil" : action === "send_message" ? "a mensagem" : "o item"} da ação.`);
     const key = { send_message: "message_id", send_audio: "media_id", send_media: "media_id", send_document: "media_id", send_funnel: "funnel_id", move_lead: "column_id", notify: "" }[action];
-    if (action === "move_lead" && event === "lead_moved" && evColumn && evColumn === itemId) return toast.error("A etapa de destino é a mesma do “quando”: o gatilho não faria nada.");
+    if (isStale && !evColumn) return toast.error("Escolha a etapa em que o lead fica parado.");
+    if (action === "move_lead" && (event === "lead_moved" || isStale) && evColumn && evColumn === itemId) return toast.error("A etapa de destino é a mesma do “quando”: o gatilho não faria nada.");
     const condition: Record<string, unknown> =
-      event === "lead_moved" && evColumn ? { column_id: evColumn }
+      isStale ? { column_id: evColumn, days: staleDays, ...(noReply ? { no_reply: true } : {}) }
+      : event === "lead_moved" && evColumn ? { column_id: evColumn }
       : event === "lead_status_changed" && evStatus ? { status: evStatus }
       : event === "tag_added" && evTag ? { tag_id: evTag }
       : event === "lead_created" && evOrigin ? { origin: evOrigin }
@@ -349,7 +365,7 @@ function TriggerForm({ trigger, data, saving, onClose, onSave }: {
       title: title.trim(),
       event,
       action,
-      event_config: isKeyword ? { keywords: words, match, cooldown_hours: cooldown } : { ...condition, ...(repeat ? { repeat: true } : {}) },
+      event_config: isKeyword ? { keywords: words, match, cooldown_hours: cooldown } : { ...condition, ...(repeat && !isStale ? { repeat: true } : {}) },
       action_config: { ...(needsItem ? { [key]: itemId } : {}), ...(isLeadEvent && isSend && delay ? { delay_minutes: delay } : {}) },
     });
   };
@@ -412,7 +428,23 @@ function TriggerForm({ trigger, data, saving, onClose, onSave }: {
               {ORIGINS.map((o) => <option key={o} value={o}>{o === "WhatsApp" ? "WhatsApp (capturado pela extensão)" : o}</option>)}
             </Select>
           )}
-          {isLeadEvent && (
+          {isStale && (
+            <>
+              <Select id="t-st-col" label="Na etapa" value={evColumn} onChange={(v) => setEvColumn(Number(v))}>
+                <option value={0} disabled>Escolha…</option>
+                {data.columns.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
+              </Select>
+              <Select id="t-st-days" label="Há" value={staleDays} onChange={(v) => setStaleDays(Number(v))}>
+                {[...new Set([...STALE_DAYS, staleDays])].sort((a, b) => a - b).map((d) => <option key={d} value={d}>{daysText(d)}</option>)}
+              </Select>
+              <label className="flex items-start gap-2.5 text-sm cursor-pointer">
+                <input id="t-st-noreply" type="checkbox" checked={noReply} onChange={(e) => setNoReply(e.target.checked)} className="w-4 h-4 mt-0.5 accent-[var(--fg)] cursor-pointer" />
+                <span>Só se o contato não mandou mensagem nesse tempo<span className="block text-xs text-muted">Usa a última mensagem recebida, que a extensão registra com a captura de leads ligada.</span></span>
+              </label>
+              <p className="text-xs text-muted">Vale uma vez a cada passagem do lead pela etapa, e só para quem ficar parado a partir de agora. Se o lead sair e voltar, o prazo recomeça.</p>
+            </>
+          )}
+          {isLeadEvent && !isStale && (
             <Select id="t-repeat" label="Para o mesmo lead" value={repeat ? "1" : "0"} onChange={(v) => setRepeat(v === "1")}>
               <option value="0">Só na primeira vez</option>
               <option value="1">Toda vez que acontecer</option>

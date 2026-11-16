@@ -1,6 +1,6 @@
 // ZapFlow v3.7 — HTML da barra lateral (só estrutura; a lógica fica em content.js)
 
-const ZF_VERSION = '3.10.0';
+const ZF_VERSION = '3.11.0';
 
 const _zfIcon = (paths, size = 16, extra = '') =>
   `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" ${extra}>${paths}</svg>`;
@@ -180,6 +180,11 @@ function zfBuildSidebar() {
       <div class="zf-sec">
         <h3>Gatilhos</h3>
         ${toggle('zf-s-keywords', 'Responder por palavra-chave', 'Responde sozinho quando o contato escreve uma palavra dos seus gatilhos (crie no painel, em Gatilhos). Só em conversas individuais.')}
+      </div>
+      <div class="zf-sec">
+        <h3>Painel</h3>
+        <label class="zf-search" style="margin-top:4px"><input type="url" id="zf-s-panel-url" inputmode="url" autocomplete="off" spellcheck="false" aria-label="Endereço do painel"></label>
+        <p class="zf-about" style="margin-top:8px">Endereço do seu painel ZapFlow (ex.: https://meu-painel.vercel.app). É para onde vão o menu ☰ e os botões “Abrir no painel”. Vazio = endereço padrão.</p>
       </div>
       <div class="zf-sec">
         <h3>Tema</h3>

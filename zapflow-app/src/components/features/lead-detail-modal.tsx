@@ -10,6 +10,7 @@ import { LeadHistory } from "@/components/features/lead-history";
 import { useTasks } from "@/hooks/use-tasks";
 import { useAddToBoard, useDeleteLeads, useLead, useTags, useUpdateLead } from "@/hooks/use-leads";
 import { useAllColumns, useBoards, useRemoveCard } from "@/hooks/use-kanban";
+import { useOwners } from "@/hooks/use-owners";
 import { isOpen } from "@/lib/tasks";
 import { ORIGINS, formatPhone, initials, waLink } from "@/lib/leads";
 import { cn } from "@/lib/utils";
@@ -127,7 +128,9 @@ function LeadForm({ lead, onClose, initialTab }: { lead: LeadFull; onClose: () =
     origin: lead.origin || "",
     campaign: lead.campaign || "",
     notes: lead.notes || "",
+    owner_id: lead.owner_id ?? null,
   });
+  const { data: owners = [] } = useOwners();
   const [tagIds, setTagIds] = useState<number[]>(() => lead.lead_tags.map((t) => t.tag_id));
   const [cardEdits, setCardEdits] = useState<Map<number, CardEdit>>(new Map());
 
@@ -183,7 +186,8 @@ function LeadForm({ lead, onClose, initialTab }: { lead: LeadFull; onClose: () =
       return Object.keys(patch).length > 1 ? [patch] : [];
     });
     update.mutate(
-      { id: lead.id, lead: form, tagIds, cards: changed },
+      // sem responsáveis cadastrados (ou banco na versão antiga) o campo nem é enviado
+      { id: lead.id, lead: owners.length ? form : { ...form, owner_id: undefined }, tagIds, cards: changed },
       { onSuccess: () => { toast.success("Lead salvo"); setCardEdits(new Map()); onClose(); } }
     );
   };
@@ -249,6 +253,14 @@ function LeadForm({ lead, onClose, initialTab }: { lead: LeadFull; onClose: () =
               <Field label="Campanha" htmlFor="lead-campaign">
                 <input id="lead-campaign" className={inputCls} value={form.campaign} placeholder="Ex.: Black Friday" onChange={(e) => setForm({ ...form, campaign: e.target.value })} />
               </Field>
+              {owners.length > 0 && (
+                <Field label="Responsável" htmlFor="lead-owner" className="sm:col-span-2">
+                  <select id="lead-owner" className={inputCls} value={form.owner_id ?? ""} onChange={(e) => setForm({ ...form, owner_id: e.target.value ? Number(e.target.value) : null })}>
+                    <option value="">Sem responsável</option>
+                    {owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                  </select>
+                </Field>
+              )}
             </div>
             <TempPicker value={form.status} onChange={(status) => setForm({ ...form, status })} />
             <div className="flex flex-col gap-1.5">

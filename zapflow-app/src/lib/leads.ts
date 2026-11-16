@@ -142,7 +142,7 @@ export function tagsOf(lead: { lead_tags?: { tag_id: number }[] }, tags: Tag[]) 
 }
 
 /** Campos do lead que o formulário grava (phone_key é do banco e nunca vai junto). */
-export type LeadInput = Pick<Lead, "name" | "phone" | "email" | "origin" | "campaign" | "status" | "notes">;
+export type LeadInput = Pick<Lead, "name" | "phone" | "email" | "origin" | "campaign" | "status" | "notes"> & { owner_id?: number | null };
 
 export function cleanLeadInput(v: Partial<LeadInput>): Partial<LeadInput> {
   const o: Partial<LeadInput> = {};
@@ -154,5 +154,6 @@ export function cleanLeadInput(v: Partial<LeadInput>): Partial<LeadInput> {
   if (v.campaign !== undefined) o.campaign = txt(v.campaign);
   if (v.notes !== undefined) o.notes = txt(v.notes);
   if (v.status !== undefined) o.status = v.status;
+  if (v.owner_id !== undefined) o.owner_id = v.owner_id;
   return o;
 }

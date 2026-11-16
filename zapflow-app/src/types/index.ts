@@ -111,6 +111,19 @@ export interface Lead {
   wa_id: string | null;
   /** quando o contato mandou a última mensagem (a extensão atualiza) */
   last_contact_at: string | null;
+  /** quem atende este lead (Responsáveis) */
+  owner_id?: number | null;
+  created_at: string;
+}
+
+/** Pessoa da equipe que atende leads. Quem está no rodízio recebe os leads novos, um de cada vez. */
+export interface Owner {
+  id: number;
+  user_id: string;
+  name: string;
+  color: string;
+  in_rotation: boolean;
+  last_assigned_at: string | null;
   created_at: string;
 }
 
@@ -222,7 +235,7 @@ export interface Trigger {
   id: number;
   user_id: string;
   title: string;
-  event: "keyword" | "lead_created" | "lead_moved" | "lead_status_changed" | "tag_added" | "appointment_due" | "manual";
+  event: "keyword" | "lead_created" | "lead_moved" | "lead_status_changed" | "tag_added" | "lead_stale" | "appointment_due" | "manual";
   action: "send_message" | "send_audio" | "send_media" | "send_document" | "send_funnel" | "move_lead" | "notify";
   event_config: Record<string, unknown>; // e.g. { column_id: 5, status: "hot" }
   action_config: Record<string, unknown>; // e.g. { message_id: 3, funnel_id: 2 }

@@ -10,6 +10,8 @@ import { LeadDetailModal, TEMP, TempPicker, inputCls } from "@/components/featur
 import { TagList, TagManager, TagMenu, TagPicker } from "@/components/features/tags";
 import { blockedLeadIds, invalidateLeads, useAddToBoard, useBulkTag, useCreateLead, useDeleteLeads, useLeads, useTags } from "@/hooks/use-leads";
 import { useAllColumns, useBoards } from "@/hooks/use-kanban";
+import { useBulkOwner, useOwners } from "@/hooks/use-owners";
+import { OwnerLabel } from "@/components/features/owners";
 import { useOpenFromQuery } from "@/hooks/use-open-from-query";
 import { FIELD_LABEL, ORIGINS, deaccent, formatPhone, initials, phoneKey, tagsOf } from "@/lib/leads";
 import { downloadText, exportCsv, parseImport, runImport, type ImportReport, type ParsedImport } from "@/lib/leads-import";
@@ -268,6 +270,10 @@ export default function LeadsPage() {
   const bulkTag = useBulkTag();
   const addToBoard = useAddToBoard();
   const del = useDeleteLeads();
+  const { data: owners = [] } = useOwners();
+  const bulkOwner = useBulkOwner();
+  const ownerById = useMemo(() => new Map(owners.map((o) => [o.id, o])), [owners]);
+  const [ownerFilter, setOwnerFilter] = useState<number | "" | "none">("");
 
   const [query, setQuery] = useState("");
   const [temp, setTemp] = useState<"" | LeadTemp>("");
@@ -300,12 +306,13 @@ export default function LeadsPage() {
       (!temp || l.status === temp) &&
       (tagFilter === "" || (tagFilter === "none" ? l.lead_tags.length === 0 : l.lead_tags.some((t) => t.tag_id === tagFilter))) &&
       (kanban === "" || (kanban === "none" ? l.kanban_cards.length === 0 : l.kanban_cards.some((c) => c.board_id === kanban))) &&
-      (!origin || l.origin === origin)
+      (!origin || l.origin === origin) &&
+      (ownerFilter === "" || (ownerFilter === "none" ? !l.owner_id : l.owner_id === ownerFilter))
     );
-  }, [leads, query, temp, tagFilter, kanban, origin]);
+  }, [leads, query, temp, tagFilter, kanban, origin, ownerFilter]);
 
   const shown = filtered.slice(0, limit);
-  const filtering = !!(query.trim() || temp || tagFilter !== "" || kanban !== "" || origin);
+  const filtering = !!(query.trim() || temp || tagFilter !== "" || kanban !== "" || origin || ownerFilter !== "");
   const selIds = [...selected].filter((id) => leads.some((l) => l.id === id));
   const blocked = useMemo(() => blockedLeadIds(leads, tags), [leads, tags]);
   const bulkAllowed = selIds.filter((id) => !blocked.has(id));
@@ -317,7 +324,7 @@ export default function LeadsPage() {
     if (allShownSelected) shown.forEach((l) => n.delete(l.id)); else filtered.forEach((l) => n.add(l.id));
     return n;
   });
-  const clearFilters = () => { setQuery(""); setTemp(""); setTagFilter(""); setKanban(""); setOrigin(""); };
+  const clearFilters = () => { setQuery(""); setTemp(""); setTagFilter(""); setKanban(""); setOrigin(""); setOwnerFilter(""); };
 
   const doExport = () => {
     const list = selIds.length ? leads.filter((l) => selected.has(l.id)) : filtered;
@@ -358,6 +365,13 @@ export default function LeadsPage() {
             {origins.map((o) => <option key={o} value={o}>{o}</option>)}
           </select>
         )}
+        {owners.length > 0 && (
+          <select aria-label="Responsável" className={selectCls} value={ownerFilter} onChange={(e) => setOwnerFilter(e.target.value === "" ? "" : e.target.value === "none" ? "none" : Number(e.target.value))}>
+            <option value="">Todos os responsáveis</option>
+            <option value="none">Sem responsável</option>
+            {owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+          </select>
+        )}
         <div className="flex flex-wrap items-center gap-2 ml-auto">
           <Button variant="secondary" onClick={() => setTagsOpen(true)}><TagIcon className="w-4 h-4" /> Etiquetas</Button>
           <Button variant="secondary" onClick={() => setImportOpen(true)}><Upload className="w-4 h-4" /> Importar</Button>
@@ -381,6 +395,15 @@ export default function LeadsPage() {
             </div>
           )}
           {boards.length > 0 && <button type="button" onClick={() => setBoardOpen(true)} className="h-8 px-3 rounded-lg text-sm font-medium hover:bg-white/15 inline-flex items-center gap-1.5 cursor-pointer"><Columns3 className="w-4 h-4" /> Colocar no Kanban</button>}
+          {owners.length > 0 && (
+            <select aria-label="Definir responsável dos selecionados" value="" disabled={bulkOwner.isPending}
+              onChange={(e) => { const v = e.target.value; if (v) bulkOwner.mutate({ leadIds: selIds, ownerId: v === "none" ? null : Number(v) }); }}
+              className="h-8 pl-2 pr-6 rounded-lg text-sm font-medium bg-transparent hover:bg-white/15 cursor-pointer outline-none [&>option]:text-black">
+              <option value="">Responsável…</option>
+              {owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+              <option value="none">Sem responsável</option>
+            </select>
+          )}
           <button type="button" onClick={() => setConfirmDelete(true)} className="h-8 px-3 rounded-lg text-sm font-medium hover:bg-white/15 inline-flex items-center gap-1.5 cursor-pointer"><Trash2 className="w-4 h-4" /> Excluir</button>
           <button type="button" onClick={() => setSelected(new Set())} aria-label="Limpar seleção" className="ml-auto h-8 w-8 rounded-lg hover:bg-white/15 grid place-items-center cursor-pointer"><X className="w-4 h-4" /></button>
         </div>
@@ -419,6 +442,7 @@ export default function LeadsPage() {
                     <th scope="col" className="px-3 py-3 font-semibold">Etiquetas</th>
                     <th scope="col" className="px-3 py-3 font-semibold">Temperatura</th>
                     <th scope="col" className="px-3 py-3 font-semibold">Kanban</th>
+                    {owners.length > 0 && <th scope="col" className="px-3 py-3 font-semibold">Responsável</th>}
                     <th scope="col" className="px-3 py-3 font-semibold">Origem</th>
                     <th scope="col" className="px-4 py-3 font-semibold">Criado em</th>
                   </tr>
@@ -459,6 +483,9 @@ export default function LeadsPage() {
                             </div>
                           )}
                         </td>
+                        {owners.length > 0 && (
+                          <td className="px-3 py-3 max-w-[160px]">{l.owner_id && ownerById.get(l.owner_id) ? <OwnerLabel owner={ownerById.get(l.owner_id)!} /> : <span className="text-xs text-muted">—</span>}</td>
+                        )}
                         <td className="px-3 py-3 text-muted">{l.origin || "—"}</td>
                         <td className="px-4 py-3 text-muted tabular-nums whitespace-nowrap">{fmtDate(l.created_at)}</td>
                       </tr>

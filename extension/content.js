@@ -5,12 +5,20 @@
   const SUPABASE_KEY = window.SUPABASE_KEY || '';
   if (!SUPABASE_URL || !SUPABASE_KEY) console.warn('⚠️ ZapFlow: configuração do Supabase ausente (config.js)');
   // Endereço do painel (config.js). Troque quando o painel estiver publicado.
-  const PANEL_URL = String(window.ZAPFLOW_PANEL_URL || 'http://localhost:3002').replace(/\/+$/, '');
+  // Endereço do painel: o que estiver nos Ajustes da extensão; sem nada lá, o do config.js
+  const DEFAULT_PANEL_URL = String(window.ZAPFLOW_PANEL_URL || 'http://localhost:3002').replace(/\/+$/, '');
+  const cleanPanelUrl = (v) => {
+    let u = String(v || '').trim().replace(/\/+$/, '');
+    if (!u) return '';
+    if (!/^https?:\/\//i.test(u)) u = (/^(localhost|127\.)/i.test(u) ? 'http://' : 'https://') + u;
+    try { const p = new URL(u); if (!/^[a-z0-9.-]+$/i.test(p.hostname) || !(p.hostname.includes('.') || p.hostname === 'localhost')) return ''; return p.origin + p.pathname.replace(/\/(dashboard.*|auth.*)?$/, '').replace(/\/+$/, ''); } catch (e) { return ''; }
+  };
+  const panelUrl = () => cleanPanelUrl(settings.panelUrl) || DEFAULT_PANEL_URL;
 
   let sb = null;
   let currentFilter = 'all', showFavOnly = false, searchQuery = '';
   let messagesData = [], mediaData = [], funnelsData = [], triggersData = [], funnelsError = false, loaded = false;
-  const settings = { hideBar: false, barFav: false, barFunnels: true, stopOnReply: true, keywords: true, capture: true, captureSkip: false, labelSync: true, history: false, theme: 'auto' };
+  const settings = { panelUrl: '', hideBar: false, barFav: false, barFunnels: true, stopOnReply: true, keywords: true, capture: true, captureSkip: false, labelSync: true, history: false, theme: 'auto' };
   const $ = (id) => document.getElementById(id);
 
   // ===== INÍCIO =====
@@ -46,6 +54,7 @@
     if ($('zf-s-capture-skip')) $('zf-s-capture-skip').checked = !!settings.captureSkip;
     if ($('zf-s-label-sync')) $('zf-s-label-sync').checked = settings.labelSync !== false;
     if ($('zf-s-history')) $('zf-s-history').checked = settings.history === true;
+    if ($('zf-s-panel-url')) { $('zf-s-panel-url').value = settings.panelUrl || ''; $('zf-s-panel-url').placeholder = DEFAULT_PANEL_URL; }
     applyTheme();
     renderQuickBar();
   }
@@ -226,7 +235,7 @@
   // ===== PAINEL =====
   // Uma aba só para o painel: os atalhos reaproveitam a mesma aba em vez de abrir várias.
   function openPanel(path) {
-    const w = window.open(PANEL_URL + path, 'zapflow-painel');
+    const w = window.open(panelUrl() + path, 'zapflow-painel');
     if (w) { try { w.focus(); } catch (e) { /* outra origem */ } }
     else showToast('O navegador bloqueou a nova aba. Permita pop-ups para o WhatsApp Web.');
   }
@@ -327,6 +336,13 @@
     $('zf-s-bar-funnels').onchange = (e) => { settings.barFunnels = e.target.checked; saveSettings(); renderQuickBar(); };
     $('zf-s-stop-reply').onchange = (e) => { settings.stopOnReply = e.target.checked; saveSettings(); stopReplyChoice.clear(); renderFunnels(); };
     $('zf-s-keywords').onchange = (e) => { settings.keywords = e.target.checked; saveSettings(); };
+    $('zf-s-panel-url').onchange = (e) => {
+      const typed = e.target.value.trim();
+      const url = cleanPanelUrl(typed);
+      if (typed && !url) { showToast('Endereço inválido. Exemplo: https://meu-painel.vercel.app'); e.target.value = settings.panelUrl || ''; return; }
+      settings.panelUrl = url; e.target.value = url; saveSettings();
+      showToast(url ? 'Endereço do painel salvo' : 'Voltou ao endereço padrão do painel');
+    };
     $('zf-s-capture').onchange = (e) => { settings.capture = e.target.checked; saveSettings(); };
     $('zf-s-capture-skip').onchange = (e) => { settings.captureSkip = e.target.checked; saveSettings(); };
     $('zf-s-label-sync').onchange = (e) => { settings.labelSync = e.target.checked; saveSettings(); };
@@ -931,6 +947,22 @@
 
   setTimeout(pollTasks, 8000);
   setInterval(pollTasks, TASK_POLL_MS);
+
+  // Gatilhos de "lead parado numa etapa": pede a conferência ao banco de tempos em tempos
+  // (o painel faz o mesmo; o banco não deixa disparar duas vezes). Os envios criados chegam
+  // como tarefas, pelo mesmo caminho dos outros gatilhos.
+  let staleOff = false;
+  async function checkStaleLeads() {
+    if (staleOff || !sb) return;
+    try {
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session) return;
+      const { error } = await sb.rpc('zf_check_stale');
+      if (error) staleOff = true; // banco na versão antiga
+    } catch (e) { /* sem rede: tenta na próxima */ }
+  }
+  setTimeout(checkStaleLeads, 20000);
+  setInterval(checkStaleLeads, 10 * 60 * 1000);
 
   let taskChannel = null;
   function watchNewTasks() {

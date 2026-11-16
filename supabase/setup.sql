@@ -181,7 +181,7 @@
   -- event_config do keyword: { keywords: text[], match: 'contains'|'exact'|'starts', cooldown_hours: 24 (0 = toda vez, -1 = uma vez por conversa) }
   ALTER TABLE public.triggers DROP CONSTRAINT IF EXISTS triggers_event_check;
   ALTER TABLE public.triggers ADD CONSTRAINT triggers_event_check
-    CHECK (event IN ('keyword', 'lead_created', 'lead_moved', 'lead_status_changed', 'tag_added', 'appointment_due', 'manual'));
+    CHECK (event IN ('keyword', 'lead_created', 'lead_moved', 'lead_status_changed', 'tag_added', 'lead_stale', 'appointment_due', 'manual'));
   ALTER TABLE public.triggers DROP CONSTRAINT IF EXISTS triggers_action_check;
   ALTER TABLE public.triggers ADD CONSTRAINT triggers_action_check
     CHECK (action IN ('send_message', 'send_audio', 'send_media', 'send_document', 'send_funnel', 'move_lead', 'notify'));
@@ -639,13 +639,16 @@
     FOR t IN SELECT * FROM triggers WHERE user_id = v_lead.user_id AND is_active AND event = p_event ORDER BY id LOOP
       v_cfg := coalesce(t.event_config, '{}'::jsonb);
       v_act := coalesce(t.action_config, '{}'::jsonb);
+      -- 'lead_stale' vem sempre de zf_check_stale, que já escolheu o gatilho e conferiu o prazo
+      CONTINUE WHEN p_ctx ? 'trigger_id' AND t.id::text <> p_ctx->>'trigger_id';
+      CONTINUE WHEN p_event = 'lead_stale' AND NOT (p_ctx ? 'trigger_id');
       -- condições do gatilho (vazio = qualquer)
       CONTINUE WHEN p_event = 'lead_moved' AND nullif(v_cfg->>'column_id', '') IS NOT NULL AND v_cfg->>'column_id' <> coalesce(p_ctx->>'column_id', '');
       CONTINUE WHEN p_event = 'lead_status_changed' AND nullif(v_cfg->>'status', '') IS NOT NULL AND v_cfg->>'status' <> coalesce(p_ctx->>'status', '');
       CONTINUE WHEN p_event = 'tag_added' AND nullif(v_cfg->>'tag_id', '') IS NOT NULL AND v_cfg->>'tag_id' <> coalesce(p_ctx->>'tag_id', '');
       CONTINUE WHEN p_event = 'lead_created' AND nullif(v_cfg->>'origin', '') IS NOT NULL AND v_cfg->>'origin' <> coalesce(v_lead.origin, '');
       -- uma vez por lead, a não ser que o gatilho diga "toda vez"
-      CONTINUE WHEN coalesce((v_cfg->>'repeat')::boolean, false) = false
+      CONTINUE WHEN p_event <> 'lead_stale' AND coalesce((v_cfg->>'repeat')::boolean, false) = false
         AND EXISTS (SELECT 1 FROM trigger_fires f WHERE f.trigger_id = t.id AND f.lead_id = p_lead);
 
       v_result := NULL; v_task := NULL; v_text := NULL; v_media := NULL; v_funnel := NULL;
@@ -838,11 +841,89 @@
   FROM public.kanban_cards c
   WHERE NOT EXISTS (SELECT 1 FROM public.kanban_card_moves m WHERE m.card_id = c.id);
 
+  -- 6i. LEAD PARADO NUMA ETAPA (gatilho 'lead_stale') --------------
+  -- event_config: { column_id, days, no_reply }. Quem confere é esta função, chamada de tempos em
+  -- tempos pelo painel e pela extensão (não há servidor rodando sozinho). Dispara uma vez por
+  -- passagem do lead pela etapa. O prazo conta da entrada na etapa ou da criação do gatilho, o que
+  -- for mais recente: criar o gatilho não dispara de uma vez para todo mundo que já estava parado.
+  CREATE OR REPLACE FUNCTION public.zf_check_stale() RETURNS INT
+  LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
+  DECLARE
+    t RECORD;
+    r RECORD;
+    v_col BIGINT;
+    v_wait INTERVAL;
+    v_n INT := 0;
+  BEGIN
+    IF auth.uid() IS NULL THEN RETURN 0; END IF;
+    -- painel e extensão podem chamar ao mesmo tempo: um espera o outro
+    PERFORM pg_advisory_xact_lock(hashtext('zf_stale:' || auth.uid()::text));
+    FOR t IN SELECT * FROM triggers WHERE user_id = auth.uid() AND is_active AND event = 'lead_stale' ORDER BY id LOOP
+      v_col := nullif(t.event_config->>'column_id', '')::bigint;
+      CONTINUE WHEN v_col IS NULL;
+      v_wait := make_interval(secs => greatest(coalesce(nullif(t.event_config->>'days', '')::numeric, 3), 0.001) * 86400);
+      FOR r IN
+        SELECT c.lead_id, c.board_id
+        FROM kanban_cards c
+        JOIN leads l ON l.id = c.lead_id
+        CROSS JOIN LATERAL (
+          SELECT greatest(coalesce((SELECT max(m.at) FROM kanban_card_moves m WHERE m.card_id = c.id AND m.to_column_id = c.column_id), c.created_at), t.created_at) AS entered
+        ) e
+        WHERE c.user_id = auth.uid() AND c.column_id = v_col
+          AND e.entered <= now() - v_wait
+          AND (coalesce((t.event_config->>'no_reply')::boolean, false) = false OR l.last_contact_at IS NULL OR l.last_contact_at <= now() - v_wait)
+          AND NOT EXISTS (SELECT 1 FROM trigger_fires f WHERE f.trigger_id = t.id AND f.lead_id = c.lead_id AND f.created_at >= e.entered)
+        ORDER BY e.entered
+        LIMIT 50
+      LOOP
+        v_n := v_n + zf_fire_lead_event('lead_stale', r.lead_id, jsonb_build_object('column_id', v_col, 'board_id', r.board_id, 'trigger_id', t.id));
+      END LOOP;
+    END LOOP;
+    RETURN v_n;
+  END $$;
+
+  -- 6j. RESPONSÁVEIS (quem atende cada lead) -----------------------
+  -- Pessoas da equipe dentro da mesma conta. Quem está "no rodízio" recebe os leads novos, um de
+  -- cada vez (sempre quem está há mais tempo sem receber; quem entra no rodízio depois recebe primeiro até igualar). Sem ninguém no rodízio, nada é distribuído.
+  CREATE TABLE IF NOT EXISTS public.owners (
+    id BIGSERIAL PRIMARY KEY,
+    user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    color TEXT NOT NULL DEFAULT '#1d4ed8',
+    in_rotation BOOLEAN NOT NULL DEFAULT true,
+    last_assigned_at TIMESTAMPTZ,
+    assign_seq BIGINT NOT NULL DEFAULT 0,  -- ordem do rodízio: recebe quem tem o menor
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_owners_name ON public.owners(user_id, lower(name));
+  ALTER TABLE public.leads ADD COLUMN IF NOT EXISTS owner_id BIGINT REFERENCES public.owners(id) ON DELETE SET NULL;
+
+  CREATE OR REPLACE FUNCTION public.zf_assign_owner() RETURNS trigger
+  LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
+  DECLARE v_owner BIGINT;
+  BEGIN
+    -- lead com data antiga = veio de um backup: fica como estava
+    IF NEW.owner_id IS NULL AND NEW.created_at >= now() - interval '1 minute' THEN
+      SELECT id INTO v_owner FROM owners WHERE user_id = NEW.user_id AND in_rotation
+      ORDER BY assign_seq, id LIMIT 1 FOR UPDATE;
+      IF v_owner IS NOT NULL THEN
+        NEW.owner_id := v_owner;
+        UPDATE owners SET last_assigned_at = now(),
+          assign_seq = (SELECT coalesce(max(assign_seq), 0) + 1 FROM owners WHERE user_id = NEW.user_id)
+        WHERE id = v_owner;
+      END IF;
+    END IF;
+    RETURN NEW;
+  END $$;
+  DROP TRIGGER IF EXISTS zf_assign_owner ON public.leads;
+  CREATE TRIGGER zf_assign_owner BEFORE INSERT ON public.leads
+    FOR EACH ROW EXECUTE FUNCTION public.zf_assign_owner();
+
   -- 7. SEGURANÇA: cada usuário só vê e altera os próprios dados (RLS)
   DO $$
   DECLARE t TEXT;
   BEGIN
-    FOREACH t IN ARRAY ARRAY['messages','media_library','funnels','funnel_items','kanban_boards','kanban_columns','leads','tags','lead_tags','kanban_cards','lead_messages','triggers','trigger_fires','kanban_card_moves','appointments','tasks']
+    FOREACH t IN ARRAY ARRAY['messages','media_library','funnels','funnel_items','kanban_boards','kanban_columns','leads','tags','lead_tags','kanban_cards','lead_messages','triggers','trigger_fires','kanban_card_moves','owners','appointments','tasks']
     LOOP
       EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
       EXECUTE format('DROP POLICY IF EXISTS "own_rows" ON public.%I', t);
@@ -902,6 +983,7 @@
   CREATE INDEX IF NOT EXISTS idx_trigger_fires ON public.trigger_fires(trigger_id, lead_id);
   CREATE INDEX IF NOT EXISTS idx_card_moves_board ON public.kanban_card_moves(board_id, at);
   CREATE INDEX IF NOT EXISTS idx_card_moves_card ON public.kanban_card_moves(card_id);
+  CREATE INDEX IF NOT EXISTS idx_leads_owner ON public.leads(owner_id);
   CREATE INDEX IF NOT EXISTS idx_appointments_user_date ON public.appointments(user_id, date);
   CREATE INDEX IF NOT EXISTS idx_tasks_user_due ON public.tasks(user_id, status, due_at);
   CREATE INDEX IF NOT EXISTS idx_tasks_lead ON public.tasks(lead_id);
@@ -917,4 +999,4 @@
   FROM public.appointments a
   WHERE NOT EXISTS (SELECT 1 FROM public.tasks t WHERE t.options->>'from_appointment' = a.id::text);
 
-  -- Pronto. Confira em Table Editor: devem aparecer 16 tabelas.
+  -- Pronto. Confira em Table Editor: devem aparecer 17 tabelas.

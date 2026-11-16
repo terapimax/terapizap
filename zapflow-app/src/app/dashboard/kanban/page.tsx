@@ -31,8 +31,10 @@ import { blockedLeadIds, useAddToBoard, useCreateLead, useLeads, useTags } from 
 import { Modal } from "@/components/ui/modal";
 import { LeadDetailModal, TEMP, TempPicker, inputCls } from "@/components/features/lead-detail-modal";
 import { TagList, TagPicker } from "@/components/features/tags";
+import { useOwners } from "@/hooks/use-owners";
+import { OwnerDot } from "@/components/features/owners";
 import { Button, Chip, EmptyState, SearchInput } from "@/components/ui/shared";
-import type { ColumnOutcome, KanbanCardWithLead, KanbanColumnWithCards, LeadTemp, Tag, Task } from "@/types";
+import type { ColumnOutcome, KanbanCardWithLead, KanbanColumnWithCards, LeadTemp, Owner, Tag, Task } from "@/types";
 import { useTasks } from "@/hooks/use-tasks";
 import { formatDue, isOpen, taskState } from "@/lib/tasks";
 import { brl, deaccent, formatPhone, initials, phoneKey, tagsOf } from "@/lib/leads";
@@ -128,14 +130,18 @@ function CardBody({ card, tags, next }: { card: KanbanCardWithLead; tags: Tag[];
   const lead = card.lead;
   const temp = TEMP[lead.status] ?? TEMP.warm;
   const late = next ? taskState(next.next) === "overdue" : false;
+  // a lista de responsáveis já está carregada pela página (mesma consulta, sem ida extra ao banco)
+  const { data: owners = [] } = useOwners();
+  const owner: Owner | undefined = lead.owner_id ? owners.find((o) => o.id === lead.owner_id) : undefined;
   return (
     <>
       <div className="flex items-center gap-2.5">
         <span className="w-8 h-8 rounded-full bg-surface border border-line grid place-items-center text-xs font-semibold shrink-0">{initials(lead.name)}</span>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p className="font-semibold leading-tight truncate">{lead.name}</p>
           {lead.phone && <p className="text-xs text-muted tabular-nums truncate">{formatPhone(lead.phone)}</p>}
         </div>
+        {owner && <OwnerDot owner={owner} />}
       </div>
       {(card.product || lead.last_message) && <p className="text-[13px] text-muted line-clamp-2">{card.product || lead.last_message}</p>}
       <TagList tags={tagsOf(lead, tags)} />
@@ -504,6 +510,8 @@ export default function KanbanPage() {
   const [colToDelete, setColToDelete] = useState<KanbanColumnWithCards | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [tagFilter, setTagFilter] = useState<number | "">("");
+  const { data: owners = [] } = useOwners();
+  const [ownerFilter, setOwnerFilter] = useState<number | "" | "none">("");
   const [query, setQuery] = useState("");
 
   const currentBoardId = (activeBoardId && boards.some((b) => b.id === activeBoardId) ? activeBoardId : null) || boards[0]?.id || null;
@@ -518,13 +526,14 @@ export default function KanbanPage() {
   const localColumns = dragColumns ?? columns;
   const collision = useCollision(dragColumns);
 
-  const filtering = filter !== "all" || tagFilter !== "" || query.trim() !== "";
+  const filtering = filter !== "all" || tagFilter !== "" || ownerFilter !== "" || query.trim() !== "";
   const visibleItems = (col: KanbanColumnWithCards) => {
     const q = deaccent(query.trim()).toLowerCase();
     const digits = q.replace(/\D/g, "");
     return col.items.filter((c) =>
       (filter === "all" || c.lead.status === filter) &&
       (tagFilter === "" || c.lead.lead_tags.some((t) => t.tag_id === tagFilter)) &&
+      (ownerFilter === "" || (ownerFilter === "none" ? !c.lead.owner_id : c.lead.owner_id === ownerFilter)) &&
       (!q || deaccent(c.lead.name).toLowerCase().includes(q) || (!!digits && (c.lead.phone || "").replace(/\D/g, "").includes(digits)))
     );
   };
@@ -735,6 +744,15 @@ export default function KanbanPage() {
             className="h-10 pl-3 pr-8 rounded-[10px] border border-line bg-card text-sm cursor-pointer outline-none focus:border-fg">
             <option value="">Todas as etiquetas</option>
             {tags.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+        )}
+
+        {owners.length > 0 && (
+          <select aria-label="Filtrar por responsável" value={ownerFilter} onChange={(e) => setOwnerFilter(e.target.value === "" ? "" : e.target.value === "none" ? "none" : Number(e.target.value))}
+            className="h-10 pl-3 pr-8 rounded-[10px] border border-line bg-card text-sm cursor-pointer outline-none focus:border-fg">
+            <option value="">Todos os responsáveis</option>
+            <option value="none">Sem responsável</option>
+            {owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
           </select>
         )}
 

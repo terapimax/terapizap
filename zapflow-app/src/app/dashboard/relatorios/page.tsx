@@ -7,6 +7,7 @@ import { useBoards, useBoardData } from "@/hooks/use-kanban";
 import { useLeads } from "@/hooks/use-leads";
 import { useTriggers } from "@/hooks/use-triggers";
 import { useCardMoves, useFiresSince } from "@/hooks/use-reports";
+import { useOwners } from "@/hooks/use-owners";
 import { buildReport, brl, formatDays, pct, PERIODS, STALE_DAYS, type FunnelReport } from "@/lib/reports";
 import { LeadDetailModal } from "@/components/features/lead-detail-modal";
 import { Panel, EmptyState, Button } from "@/components/ui/shared";
@@ -27,6 +28,7 @@ export default function RelatoriosPage() {
   const leads = useLeads();
   const triggers = useTriggers();
   const fires = useFiresSince(days);
+  const owners = useOwners();
 
   const report = useMemo<FunnelReport | null>(() => {
     if (!board.data || !moves.data || !leads.data) return null;
@@ -37,9 +39,10 @@ export default function RelatoriosPage() {
       leads: leads.data,
       fires: fires.data ?? [],
       triggers: triggers.data ?? [],
+      owners: owners.data ?? [],
       days,
     });
-  }, [board.data, moves.data, leads.data, fires.data, triggers.data, days]);
+  }, [board.data, moves.data, leads.data, fires.data, triggers.data, owners.data, days]);
 
   if (boards.isError || board.isError || moves.isError || leads.isError) {
     return (
@@ -160,6 +163,46 @@ export default function RelatoriosPage() {
         </div>
         {!r ? <Skeletons n={3} /> : <StageTable report={r} />}
       </Panel>
+
+      {r && r.owners.length > 0 && (
+        <Panel aria-labelledby="h-equipe" className="p-6 flex flex-col gap-4">
+          <div>
+            <h2 id="h-equipe" className="text-base font-semibold">Por responsável</h2>
+            <p className="text-[13px] text-muted mt-0.5">Leads novos e vendas {periodLabel}; em aberto é o que cada um tem agora neste quadro</p>
+          </div>
+          <div className="overflow-x-auto -mx-6 px-6">
+            <table className="w-full text-sm min-w-[520px]">
+              <thead>
+                <tr className="text-left text-xs text-muted">
+                  <th scope="col" className="font-medium pb-2">Responsável</th>
+                  <th scope="col" className="font-medium pb-2 text-right">Leads novos</th>
+                  <th scope="col" className="font-medium pb-2 text-right">Em aberto</th>
+                  <th scope="col" className="font-medium pb-2 text-right">Valor em aberto</th>
+                  {r.hasWon && <th scope="col" className="font-medium pb-2 text-right">Vendas</th>}
+                  {r.hasWon && <th scope="col" className="font-medium pb-2 text-right">Valor vendido</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {r.owners.map((o) => (
+                  <tr key={o.id ?? "none"} className="border-t border-line">
+                    <td className="py-2.5 pr-3">
+                      <span className={cn("flex items-center gap-2", o.id != null ? "font-medium" : "text-muted")}>
+                        <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: o.color }} aria-hidden="true" />
+                        <span className="truncate">{o.name}</span>
+                      </span>
+                    </td>
+                    <td className="py-2.5 text-right tabular-nums">{o.leads}</td>
+                    <td className="py-2.5 text-right tabular-nums">{o.open}</td>
+                    <td className="py-2.5 text-right tabular-nums">{brl(o.openValue)}</td>
+                    {r.hasWon && <td className="py-2.5 text-right tabular-nums">{o.won}</td>}
+                    {r.hasWon && <td className="py-2.5 text-right tabular-nums">{brl(o.wonValue)}</td>}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+      )}
 
       <Panel aria-labelledby="h-novos" className="p-6 flex flex-col gap-4">
         <div>
