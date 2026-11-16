@@ -1344,11 +1344,14 @@
     const name = st === 'lead' ? leadState.lead.name : leadChat.name;
     const phone = st === 'lead' ? (leadState.lead.phone || leadChat.phone) : leadChat.phone;
     const photo = st === 'lead' && /^https:\/\//.test(leadState.lead.avatar || '') ? leadState.lead.avatar : '';
+    const photoBlob = photo ? avatarBlobs.get(photo) : '';
     const head = `
       <div class="zf-lead-head">
-        <span class="zf-avatar">${photo ? `<img src="${escapeHtml(photo)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}${photo ? '' : escapeHtml(initialsOf(name))}</span>
+        <span class="zf-avatar" id="zf-lead-avatar">${photoBlob ? `<img src="${escapeHtml(photoBlob)}" alt="">` : escapeHtml(initialsOf(name))}</span>
         <div class="zf-lead-id"><b>${escapeHtml(name)}</b><span class="zf-mm">${phone ? escapeHtml(fmtPhone(phone)) : 'Número escondido pelo WhatsApp'}</span></div>
       </div>`;
+
+    if (photo && !photoBlob) paintLeadAvatar(photo);
 
     if (st === 'none') {
       const col = inboxColumn();
@@ -1540,6 +1543,23 @@
   const avatarAge = (url) => { const m = /[?&]v=(\d+)/.exec(url || ''); return m ? Date.now() - Number(m[1]) : Infinity; };
   const avatarNeeded = (lead) => !lead.avatar || avatarAge(lead.avatar) > AVATAR_TTL;
   const isBlockedLead = (lead) => (lead.lead_tags || []).some((x) => (crm.tags.find((t) => t.id === x.tag_id) || {}).is_blocking);
+
+  // O WhatsApp Web só deixa a página carregar imagens de endereços da lista dele (CSP), então a foto
+  // do Supabase não pode ir direto no <img>: baixa (como as miniaturas dos itens) e mostra como blob:.
+  // Até chegar, ficam as iniciais; se não carregar, também.
+  const avatarBlobs = new Map(); // endereço da foto -> blob:
+  async function paintLeadAvatar(url) {
+    try {
+      const blob = await getBlobUrl(url);
+      avatarBlobs.set(url, blob);
+      const el = $('zf-lead-avatar');
+      if (!el || !el.isConnected || !leadState.lead || leadState.lead.avatar !== url) return;
+      const img = new Image();
+      img.alt = '';
+      img.onload = () => { if (el.isConnected) { el.textContent = ''; el.appendChild(img); } };
+      img.src = blob;
+    } catch (e) { /* sem foto: ficam as iniciais */ }
+  }
 
   function fetchAvatarBlob(url) {
     return new Promise((resolve, reject) => {
