@@ -27,7 +27,9 @@ export async function generateMetadata(): Promise<Metadata> {
     description:
       "Gerencie leads, envie mensagens, áudios e mídias no WhatsApp Web com automação inteligente. CRM Kanban e funis de vendas.",
     keywords: ["WhatsApp", "automação", "CRM", "Kanban", "leads", "funil de vendas"],
-    ...(brandFavicon(brand) ? { icons: { icon: brandFavicon(brand)! } } : {}),
+    // O favicon.ico fica em public/ (e não em app/) para ser o ÚNICO ícone da página: se o Next o
+    // declarasse junto com o da marca, o Chrome preferiria o .ico e ignoraria o ícone da conta.
+    icons: { icon: brandFavicon(brand) ?? "/favicon.ico" },
   };
 }
 
