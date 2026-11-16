@@ -186,6 +186,24 @@ export async function openBackup(file: File): Promise<BackupSource> {
   throw new Error("Arquivo não reconhecido. Escolha o .zip do ZapFlow ou o .json do ZapVoice.");
 }
 
+/**
+ * O que "Substituir" pode apagar: só os grupos que o arquivo traz. Um backup só de mídias (como o do
+ * ZapVoice) troca as mensagens e as mídias e NUNCA encosta em leads, Kanban, funis, gatilhos ou tarefas.
+ */
+export const REPLACE_GROUPS: { label: string; tables: TableName[] }[] = [
+  { label: "mensagens", tables: ["messages"] },
+  { label: "mídias", tables: ["media_library"] },
+  { label: "funis", tables: ["funnels", "funnel_items"] },
+  { label: "gatilhos", tables: ["triggers"] },
+  { label: "leads, Kanban, etiquetas e responsáveis", tables: ["leads", "lead_tags", "kanban_cards", "kanban_columns", "kanban_boards", "tags", "owners"] },
+  { label: "tarefas", tables: ["tasks", "appointments"] },
+];
+
+export function replaceScope(tables: Tables) {
+  const groups = REPLACE_GROUPS.filter((g) => g.tables.some((t) => (tables[t]?.length ?? 0) > 0));
+  return { groups, tables: new Set<TableName>(groups.flatMap((g) => g.tables)) };
+}
+
 export function summarize(s: BackupSource) {
   const m = s.tables.media_library;
   return [
@@ -463,11 +481,14 @@ export async function restoreBackup(db: SupabaseClient, src: BackupSource, mode:
         ...T.media_library.map((r) => storagePath(r.url as string)),
         ...T.tasks.map((r) => storagePath(r.file_url as string)),
       ]);
+      const replacing = replaceScope(T).tables;
       const oldPaths = [
-        ...before.media_library.map((r) => storagePath(r.url as string)),
-        ...before.tasks.map((r) => storagePath(r.file_url as string)),
+        ...(replacing.has("media_library") ? before.media_library.map((r) => storagePath(r.url as string)) : []),
+        ...(replacing.has("tasks") ? before.tasks.map((r) => storagePath(r.file_url as string)) : []),
       ].filter((p): p is string => !!p && !keep.has(p) && !newUrls.has(p));
-      const order: TableName[] = ["tasks", "triggers", "funnel_items", "funnels", "kanban_cards", "lead_tags", "leads", "owners", "tags", "kanban_columns", "kanban_boards", "appointments", "media_library", "messages"];
+      // só apaga o que o arquivo traz (ver REPLACE_GROUPS)
+      const scope = replaceScope(T).tables;
+      const order = (["tasks", "triggers", "funnel_items", "funnels", "kanban_cards", "lead_tags", "leads", "owners", "tags", "kanban_columns", "kanban_boards", "appointments", "media_library", "messages"] as TableName[]).filter((t) => scope.has(t));
       for (let i = 0; i < order.length; i++) {
         onProgress?.({ label: "Apagando os dados antigos", done: i, total: order.length });
         const ids = before[order[i]].map((r) => r.id).filter((id) => !reusedIds[order[i]].has(id));

@@ -6,7 +6,7 @@ import { AlertTriangle, CheckCircle2, Download, FileArchive, Loader2, Upload } f
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/shared";
 import { Sheet } from "@/components/ui/modal";
-import { createBackup, openBackup, restoreBackup, summarize, type Progress, type RestoreMode, type RestoreReport } from "@/lib/backup/engine";
+import { createBackup, openBackup, replaceScope, restoreBackup, summarize, type Progress, type RestoreMode, type RestoreReport } from "@/lib/backup/engine";
 import { fmtBytes, type BackupSource, type TableName } from "@/lib/backup/format";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -124,6 +124,9 @@ export function BackupTools() {
   const closeSheet = () => { if (!restoring) setSource(null); };
 
   const summary = source ? summarize(source.src).filter((s) => s.n > 0) : [];
+  // "Substituir" só troca o que o arquivo traz; o resto da conta fica intacto
+  const scopeLabels = source ? replaceScope(source.src.tables).groups.map((g) => g.label) : [];
+  const scopeText = scopeLabels.length > 1 ? `${scopeLabels.slice(0, -1).join(", ")} e ${scopeLabels[scopeLabels.length - 1]}` : scopeLabels[0] ?? "";
   const total = (r: Partial<Record<TableName, number>>) => Object.values(r).reduce((a, b) => a + (b ?? 0), 0);
 
   return (
@@ -188,7 +191,7 @@ export function BackupTools() {
             <>
               <Button variant="ghost" onClick={closeSheet} disabled={restoring}>Cancelar</Button>
               <Button variant={mode === "replace" ? "danger" : "primary"} onClick={doRestore} disabled={restoring || !summary.length || (mode === "replace" && !agree)}>
-                {restoring && <Loader2 className="w-4 h-4 animate-spin" />} {mode === "replace" ? "Substituir tudo" : "Restaurar"}
+                {restoring && <Loader2 className="w-4 h-4 animate-spin" />} {mode === "replace" ? "Substituir" : "Restaurar"}
               </Button>
             </>
           )
@@ -230,7 +233,7 @@ export function BackupTools() {
                 <legend className="font-sans text-xs font-semibold text-muted uppercase tracking-wide mb-2">Como restaurar</legend>
                 {([
                   ["merge", "Juntar com o que já tenho", "Recomendado. O que já existe com o mesmo nome não é duplicado, então dá para rodar de novo se parar no meio."],
-                  ["replace", "Substituir tudo", "Deixa a conta igual ao backup: o que você tem hoje é apagado. Só apaga no final, depois que tudo do backup entrou; se algo falhar, nada é apagado."],
+                  ["replace", "Substituir", `Troca só ${scopeText || "o que vem no arquivo"} pelo que está no backup. O resto da conta não é tocado. Só apaga no final, depois que tudo do backup entrou; se algo falhar, nada é apagado.`],
                 ] as const).map(([id, label, hint]) => (
                   <label key={id} className={cn("flex gap-3 p-3 rounded-xl border cursor-pointer transition-colors", mode === id ? "border-fg bg-surface" : "border-line hover:border-fg")}>
                     <input type="radio" name="restore-mode" value={id} checked={mode === id} onChange={() => { setMode(id); setAgree(false); }} className="mt-0.5 accent-[var(--fg)] cursor-pointer" />
@@ -243,7 +246,7 @@ export function BackupTools() {
                 {mode === "replace" && (
                   <label className="flex gap-2.5 items-start text-sm mt-1 p-3 rounded-xl bg-hot-soft text-hot cursor-pointer">
                     <input type="checkbox" checked={agree} onChange={(e) => setAgree(e.target.checked)} className="mt-0.5 w-4 h-4 cursor-pointer" />
-                    Entendo que minhas mensagens, mídias, funis, gatilhos, leads e tarefas de hoje serão apagados.
+                    Entendo que {scopeText ? `minhas ${scopeText} de hoje serão apagados` : "nada será apagado"} e trocados pelos do backup.
                   </label>
                 )}
               </fieldset>
