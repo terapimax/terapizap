@@ -12,7 +12,7 @@ O código já está pronto para isso. Faltam só os passos abaixo, que dependem 
 1. Abra o seu projeto em <https://supabase.com/dashboard> e entre em **SQL Editor**.
 2. Cole todo o conteúdo do arquivo `supabase/setup.sql` e clique em **Run**.
    Pode rodar quantas vezes quiser: ele não apaga nem duplica nada.
-3. Em **Table Editor** devem aparecer **18 tabelas**.
+3. Em **Table Editor** devem aparecer **22 tabelas**.
 
 ## 2. Criar o projeto na Vercel
 
