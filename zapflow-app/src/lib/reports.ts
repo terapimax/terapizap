@@ -95,7 +95,8 @@ export interface FunnelReport {
   owners: { id: number | null; name: string; color: string; leads: number; open: number; openValue: number; won: number; wonValue: number }[];
   triggers: { id: number; title: string; fires: number; ok: number; problems: number }[];
   bucket: Bucket;
-  series: { start: Date; label: string; count: number }[];
+  /** por dia/semana/mês: leads novos (count) e vendas fechadas (won, wonValue) */
+  series: { start: Date; label: string; count: number; won: number; wonValue: number }[];
   /** quando começou o histórico de etapas (antes disso não há tempo por etapa) */
   historySince: Date | null;
 }
@@ -159,12 +160,13 @@ export function buildReport(input: ReportInput): FunnelReport {
 
   // vendas e perdas no período (entrou numa etapa de ganho/perda vindo de fora dela)
   const wonCards = new Map<string, number>();
+  const wonAt = new Map<string, number>();
   const wonLeadOf = new Map<string, number>();
   const lostCards = new Set<string>();
   for (const c of cards) {
     let prev: number | null = null;
     for (const s of c.stays) {
-      if (isWon(s.col) && !isWon(prev) && inPeriod(s.start)) { wonCards.set(c.key, s.value); wonLeadOf.set(c.key, c.leadId); }
+      if (isWon(s.col) && !isWon(prev) && inPeriod(s.start)) { wonCards.set(c.key, s.value); wonLeadOf.set(c.key, c.leadId); wonAt.set(c.key, s.start); }
       if (isLost(s.col) && !isLost(prev) && inPeriod(s.start)) lostCards.add(c.key);
       prev = s.col;
     }
@@ -255,11 +257,13 @@ export function buildReport(input: ReportInput): FunnelReport {
   const from = since ?? (Number.isFinite(firstLead) ? startOfDay(new Date(firstLead)) : startOfDay(now));
   const spanDays = (nowMs - from.getTime()) / DAY;
   const bucket: Bucket = spanDays <= 31 ? "day" : spanDays <= 180 ? "week" : "month";
-  const series = buckets(from, now, bucket).map((start) => ({ start, label: bucketLabel(start, bucket), count: 0 }));
-  for (const l of newLeads) {
-    const ms = t(l.created_at);
-    for (let i = series.length - 1; i >= 0; i--) if (ms >= series[i].start.getTime()) { series[i].count++; break; }
-  }
+  const series = buckets(from, now, bucket).map((start) => ({ start, label: bucketLabel(start, bucket), count: 0, won: 0, wonValue: 0 }));
+  const bucketOf = (ms: number) => {
+    for (let i = series.length - 1; i >= 0; i--) if (ms >= series[i].start.getTime()) return series[i];
+    return series[0];
+  };
+  for (const l of newLeads) { const b = bucketOf(t(l.created_at)); if (b) b.count++; }
+  for (const [key, value] of wonCards) { const b = bucketOf(wonAt.get(key)!); if (b) { b.won++; b.wonValue += value; } }
 
   return {
     since,

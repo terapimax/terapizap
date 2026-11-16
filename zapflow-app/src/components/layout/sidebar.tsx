@@ -9,16 +9,7 @@ import { useAppStore } from "@/stores/app-store";
 import { MAIN_NAV, SETTINGS_NAV, isNavActive, type NavItem } from "./nav-items";
 import { useTasks } from "@/hooks/use-tasks";
 import { attentionCount } from "@/lib/tasks";
-
-function BrandMark() {
-  return (
-    <span className="w-[30px] h-[30px] rounded-lg bg-accent text-white grid place-items-center shrink-0" aria-hidden="true">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M13 2 4 14h7l-1 8 9-12h-7z" />
-      </svg>
-    </span>
-  );
-}
+import { BrandLogo } from "@/components/brand";
 
 export function Sidebar() {
   const { sidebarOpen, toggleSidebar, mobileSidebarOpen, closeMobileSidebar } = useAppStore();
@@ -82,9 +73,9 @@ export function Sidebar() {
           mobileSidebarOpen ? "translate-x-0" : "max-md:-translate-x-full"
         )}
       >
-        <div className={cn("flex items-center gap-2.5 h-16 px-5 shrink-0", collapsed && "md:justify-center md:px-0")}>
-          <BrandMark />
-          <span className={cn("font-display text-[17px] font-bold tracking-tight", collapsed && "md:hidden")}>ZapFlow</span>
+        <div className={cn("flex items-center gap-2.5 h-16 px-5 shrink-0 min-w-0", collapsed && "md:justify-center md:px-0")}>
+          {/* marca da conta: logotipo horizontal (ou ícone + nome); recolhido, só o ícone quadrado */}
+          <BrandLogo collapsed={collapsed} />
         </div>
 
         <nav className="flex-1 overflow-y-auto px-3 py-2 flex flex-col gap-0.5">{MAIN_NAV.map(link)}</nav>

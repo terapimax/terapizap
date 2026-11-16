@@ -12,7 +12,7 @@ O código já está pronto para isso. Faltam só os passos abaixo, que dependem 
 1. Abra o seu projeto em <https://supabase.com/dashboard> e entre em **SQL Editor**.
 2. Cole todo o conteúdo do arquivo `supabase/setup.sql` e clique em **Run**.
    Pode rodar quantas vezes quiser: ele não apaga nem duplica nada.
-3. Em **Table Editor** devem aparecer **17 tabelas**.
+3. Em **Table Editor** devem aparecer **18 tabelas**.
 
 ## 2. Criar o projeto na Vercel
 
@@ -49,7 +49,7 @@ Sem isto, o link de confirmação de e-mail continua apontando para o `localhost
 ## 4. Apontar a extensão para o painel publicado
 
 1. Em `chrome://extensions`, clique em **recarregar** (a seta circular) no ZapFlow.
-   A versão deve ser **3.11.0** ou maior.
+   A versão deve ser **3.12.0** ou maior.
 2. Abra o WhatsApp Web, abra o ZapFlow e vá em **Ajustes → Painel**.
 3. Cole o endereço do painel e aperte Enter.
 
@@ -67,7 +67,49 @@ Pronto: o menu ☰ e os botões “Abrir no painel” passam a abrir o painel pu
   vá em **Deployments → ⋯ → Redeploy**.
 - **Apareceu o painel antigo**: o **Root Directory** não ficou como `zapflow-app`
   (em **Settings → Build and Deployment**). Corrija e faça **Redeploy**.
-- **Quero um endereço próprio (meusite.com.br)**: em **Settings → Domains** do projeto na
-  Vercel. Depois repita os passos 3 e 4 com o endereço novo.
+- **Quero um endereço próprio (meusite.com.br)**: veja “Marca própria” logo abaixo.
 - **Os envios continuam precisando do WhatsApp Web aberto?** Sim. Publicar o painel não muda
   isso: quem envia é a extensão, no seu navegador.
+
+## Marca própria (white label)
+
+Em **Configurações → Marca**, cada conta troca o nome, envia o logotipo horizontal e o ícone
+quadrado e liga um domínio próprio. A extensão usa a mesma marca sozinha (ela lê do banco ao
+abrir o WhatsApp Web). Precisa do `supabase/setup.sql` atualizado (passo 1).
+
+### Domínio próprio por conta
+
+O domínio é salvo na conta e precisa ser ligado ao projeto na Vercel. Há dois jeitos:
+
+**Automático (recomendado se você vai ter vários clientes).** O painel adiciona o domínio na
+Vercel sozinho quando o cliente clica em **Conectar**. Para isso, crie mais estas variáveis em
+**Settings → Environment Variables** do projeto e faça **Redeploy**:
+
+| Nome | Valor |
+|---|---|
+| `VERCEL_TOKEN` | um token criado em <https://vercel.com/account/tokens> |
+| `VERCEL_PROJECT_ID` | em **Settings → General → Project ID** do projeto |
+| `VERCEL_TEAM_ID` | só se o projeto for de um time: **Settings → General → Team ID** do time |
+
+O token dá acesso à sua conta da Vercel: guarde só nas variáveis do projeto, nunca no código.
+
+**Manual.** Sem essas variáveis, o cliente salva o domínio em Configurações e você adiciona o
+mesmo domínio em **Settings → Domains** do projeto na Vercel.
+
+Nos dois casos o dono do domínio cria o registro de DNS que a tela mostra (CNAME para
+`cname.vercel-dns.com` em subdomínio, ou A para `76.76.21.21` no domínio raiz). Quando o DNS
+propagar, a tela passa para **Conectado** e o endereço já abre o login com a marca do cliente.
+
+Se o cadastro usa confirmação de e-mail, inclua também `https://dominio-do-cliente/**` nas
+**Redirect URLs** do Supabase (passo 3).
+
+### Trocar o nome padrão da instalação inteira
+
+Para que o nome padrão (antes de qualquer conta personalizar) não seja “ZapFlow”, crie a
+variável `NEXT_PUBLIC_BRAND_NAME` na Vercel com o nome desejado e faça **Redeploy**.
+
+### O que não muda sozinho
+
+O nome e o ícone da extensão na lista do Chrome (`chrome://extensions`) vêm do arquivo
+`extension/manifest.json` e da pasta `extension/icons`: são fixos por pacote da extensão. Para
+entregar a um cliente com outro nome ali, edite esses arquivos antes de empacotar.

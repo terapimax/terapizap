@@ -52,7 +52,16 @@ html.zf-push-bottom #main { padding-bottom: var(--zf-push-bottom) !important; bo
 /* ===== Cabeçalho ===== */
 .zf-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--zf-line); }
 .zf-mark { width: 28px; height: 28px; border-radius: 8px; background: var(--zf-accent); color: #fff; display: grid; place-items: center; flex-shrink: 0; }
-.zf-brand { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
+.zf-brand { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Marca (padrão ou a da conta: ícone quadrado + nome, ou só o logotipo) */
+.zf-brandbox { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.zf-head .zf-brandbox { flex: 0 1 auto; }
+.zf-mark.zf-mark-img { background: transparent; overflow: hidden; }
+.zf-mark-img img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.zf-mark.zf-mark-letter { font-size: 14px; font-weight: 700; }
+.zf-logo { height: 28px; max-width: 150px; object-fit: contain; object-position: left center; display: block; }
+.zf-auth .zf-logo { height: 36px; max-width: 220px; }
+#zf-toggle-btn img { width: 22px; height: 22px; object-fit: contain; border-radius: 5px; display: block; }
 .zf-engine { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--zf-muted); }
 .zf-engine i { width: 7px; height: 7px; border-radius: 50%; background: var(--zf-muted); }
 .zf-engine[data-state="ready"] i { background: var(--zf-ok); }
@@ -75,6 +84,18 @@ html.zf-push-bottom #main { padding-bottom: var(--zf-push-bottom) !important; bo
 .zf-search input::placeholder { color: var(--zf-muted); }
 .zf-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .zf-chips button { height: 28px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--zf-line); background: transparent; font-size: 12px; font-weight: 500; color: var(--zf-muted) !important; display: inline-flex; align-items: center; gap: 4px; }
+.zf-chips .zf-chip-ic { position: relative; width: 34px; padding: 0; justify-content: center; }
+.zf-chips .zf-chip-ic svg { width: 15px; height: 15px; }
+.zf-chip-sep { width: 1px; height: 18px; align-self: center; background: var(--zf-line); margin: 0 2px; }
+.zf-chips .zf-chip-fav[aria-pressed="true"] { background: var(--zf-warn-soft); border-color: var(--zf-warn); color: var(--zf-warn) !important; }
+.zf-chips .zf-chip-fav[aria-pressed="true"] svg { fill: currentColor; }
+/* nome do filtro ao passar o mouse (os botões são só ícone) */
+.zf-chip-ic::after {
+  content: attr(data-zf-tip); position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); z-index: 5;
+  padding: 4px 8px; border-radius: 6px; background: var(--zf-primary); color: var(--zf-on-primary); font-size: 11px; font-weight: 600; white-space: nowrap;
+  opacity: 0; pointer-events: none; transition: opacity 0.12s;
+}
+.zf-chip-ic:hover::after, .zf-chip-ic:focus-visible::after { opacity: 1; }
 .zf-chips button:hover { color: var(--zf-fg) !important; border-color: var(--zf-fg); }
 .zf-chips button[aria-pressed="true"] { background: var(--zf-primary); border-color: var(--zf-primary); color: var(--zf-on-primary) !important; }
 
@@ -198,6 +219,12 @@ html.zf-push-bottom #main { padding-bottom: var(--zf-push-bottom) !important; bo
 }
 #zf-quickbar.zf-qb-hidden { transform: translateY(100%); visibility: hidden; }
 .zf-qb-filter-btn { width: 34px; height: 34px; border-radius: 50%; border: 0; flex-shrink: 0; background: var(--zf-primary); color: var(--zf-on-primary) !important; display: grid; place-items: center; }
+.zf-qb-filter-btn { transition: background 0.15s, color 0.15s; }
+.zf-qb-filter-btn[aria-pressed="false"] { background: var(--zf-surface); color: var(--zf-muted) !important; box-shadow: inset 0 0 0 1px var(--zf-line); }
+.zf-qb-filter-btn[aria-pressed="false"]:hover { color: var(--zf-fg) !important; }
+.zf-qb-filter-btn[aria-pressed="true"] { background: var(--zf-warn-soft); color: var(--zf-warn) !important; box-shadow: inset 0 0 0 1px var(--zf-warn); }
+.zf-qb-filter-btn[aria-pressed="true"] svg { fill: currentColor; }
+.zf-qb-hint { font-size: 12px; color: var(--zf-muted); white-space: nowrap; align-self: center; padding: 0 4px; }
 .zf-qb-scroll { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
 .zf-qb-scroll::-webkit-scrollbar { display: none; }
 .zf-qb-item { height: 34px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--zf-line); background: var(--zf-bg); color: var(--zf-fg) !important; font-size: 13px; font-weight: 500; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
@@ -499,3 +526,18 @@ html[data-zf-theme="light"] .zf-sched-when input { color-scheme: light; }
 .zf-imp-err { padding: 12px; border-radius: 10px; background: var(--zf-hot-soft); color: var(--zf-hot); font-size: 13px; margin-bottom: 12px; }
 .zf-lead .zf-set { padding: 4px 0; }
 .zf-lead-block { font-size: 13px; line-height: 1.45; padding: 10px 12px; border-radius: 10px; background: var(--zf-warn-soft); color: var(--zf-warn); margin: 12px 0 4px; }
+
+/* ===== Temperatura do lead (igual ao painel: três botões com ícone) ===== */
+.zf-lead-head + .zf-lead-h { margin-top: 2px; }
+.zf-temp { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.zf-temp button {
+  height: 38px; padding: 0 6px; border-radius: 10px; border: 1px solid var(--zf-line); background: transparent;
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  font-size: 13px; font-weight: 500; color: var(--zf-muted) !important; transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+.zf-temp button svg { width: 15px; height: 15px; flex-shrink: 0; }
+.zf-temp button:hover { color: var(--zf-fg) !important; border-color: var(--zf-muted); }
+.zf-temp button[aria-pressed="true"] { border-color: var(--zf-fg); background: var(--zf-surface); color: var(--zf-fg) !important; font-weight: 600; }
+.zf-temp button[data-zf-temp="hot"][aria-pressed="true"] svg { color: var(--zf-hot); }
+.zf-temp button[data-zf-temp="warm"][aria-pressed="true"] svg { color: var(--zf-warn); }
+.zf-temp button[data-zf-temp="cold"][aria-pressed="true"] svg { color: var(--zf-cold); }

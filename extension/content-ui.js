@@ -1,6 +1,6 @@
 // ZapFlow v3.7 — HTML da barra lateral (só estrutura; a lógica fica em content.js)
 
-const ZF_VERSION = '3.11.0';
+const ZF_VERSION = '3.12.0';
 
 const _zfIcon = (paths, size = 16, extra = '') =>
   `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" ${extra}>${paths}</svg>`;
@@ -16,6 +16,10 @@ window._zfSVG = {
   close: _zfIcon('<path d="M18 6 6 18M6 6l12 12"/>', 18),
   bolt: _zfIcon('<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>', 15, 'stroke-width="2.4"'),
   star: '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z"/></svg>',
+  starLine: _zfIcon('<path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z"/>'),
+  flame: _zfIcon('<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.07-2.14-.22-4.05 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.15.43-2.29 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>'),
+  thermo: _zfIcon('<path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0z"/>'),
+  snow: _zfIcon('<path d="M12 2v20M2 12h20M4.9 4.9l14.2 14.2M19.1 4.9 4.9 19.1M12 6l-2-2M12 6l2-2M12 18l-2 2M12 18l2 2M6 12l-2-2M6 12l-2 2M18 12l2-2M18 12l2 2"/>'),
   list: _zfIcon('<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>'),
   menu: _zfIcon('<path d="M4 6h16M4 12h16M4 18h16"/>', 18),
   external: _zfIcon('<path d="M7 17 17 7M8 7h9v9"/>'),
@@ -75,8 +79,8 @@ function zfBuildSidebar() {
   return `
 <div class="zf-panel">
   <div class="zf-auth" id="zf-auth-overlay" role="dialog" aria-labelledby="zf-auth-title">
-    <span class="zf-mark">${S.bolt}</span>
-    <h2 id="zf-auth-title">Entrar no ZapFlow</h2>
+    <span class="zf-brandbox" data-zf-brand="auth"><span class="zf-mark">${S.bolt}</span></span>
+    <h2 id="zf-auth-title">Entrar no <span data-zf-brand-name>ZapFlow</span></h2>
     <p>Use o mesmo e-mail e senha do painel.</p>
     <form id="zf-auth-form" novalidate>
       <label>E-mail<input type="email" id="zf-auth-email" autocomplete="email" placeholder="voce@empresa.com"></label>
@@ -87,11 +91,10 @@ function zfBuildSidebar() {
   </div>
 
   <header class="zf-head">
-    <span class="zf-mark">${S.bolt}</span>
-    <span class="zf-brand">ZapFlow</span>
+    <span class="zf-brandbox" data-zf-brand="head"><span class="zf-mark">${S.bolt}</span><span class="zf-brand">ZapFlow</span></span>
     <span class="zf-engine" id="zf-engine" data-state="loading" title="Motor de envio"><i></i><span>Conectando…</span></span>
     <button type="button" class="zf-icon-btn" id="zf-menu-btn" aria-label="Menu" title="Painel e atalhos" aria-haspopup="menu" aria-expanded="false" aria-controls="zf-menu">${S.menu}</button>
-    <button type="button" class="zf-icon-btn" id="zf-close" aria-label="Fechar ZapFlow">${S.close}</button>
+    <button type="button" class="zf-icon-btn" id="zf-close" aria-label="Fechar">${S.close}</button>
   </header>
   <div class="zf-menu" id="zf-menu" role="menu" aria-label="Painel e atalhos">${zfBuildMenu()}</div>
 
@@ -107,11 +110,12 @@ function zfBuildSidebar() {
       <label class="zf-search">${S.search}<input type="search" id="zf-search" placeholder="Buscar itens" aria-label="Buscar itens"></label>
       <div class="zf-chips" role="group" aria-label="Filtrar por tipo">
         <button type="button" data-filter="all" aria-pressed="true">Todos</button>
-        <button type="button" data-filter="msg" aria-pressed="false">Mensagens</button>
-        <button type="button" data-filter="audio" aria-pressed="false">Áudios</button>
-        <button type="button" data-filter="media" aria-pressed="false">Mídias</button>
-        <button type="button" data-filter="doc" aria-pressed="false">Docs</button>
-        <button type="button" id="zf-fav-only" aria-pressed="false">${S.star} Favoritos</button>
+        <button type="button" class="zf-chip-ic" data-filter="msg" aria-pressed="false" aria-label="Mensagens" data-zf-tip="Mensagens">${S.msg}</button>
+        <button type="button" class="zf-chip-ic" data-filter="audio" aria-pressed="false" aria-label="Áudios" data-zf-tip="Áudios">${S.mic}</button>
+        <button type="button" class="zf-chip-ic" data-filter="media" aria-pressed="false" aria-label="Fotos e vídeos" data-zf-tip="Fotos e vídeos">${S.img}</button>
+        <button type="button" class="zf-chip-ic" data-filter="doc" aria-pressed="false" aria-label="Documentos" data-zf-tip="Documentos">${S.doc}</button>
+        <span class="zf-chip-sep" aria-hidden="true"></span>
+        <button type="button" class="zf-chip-ic zf-chip-fav" id="zf-fav-only" aria-pressed="false" aria-label="Só favoritos" data-zf-tip="Só favoritos">${S.starLine}</button>
       </div>
     </div>
     <ul class="zf-list" id="zf-items-list" aria-label="Itens da biblioteca"><li class="zf-skel"></li><li class="zf-skel"></li><li class="zf-skel"></li></ul>
@@ -184,7 +188,7 @@ function zfBuildSidebar() {
       <div class="zf-sec">
         <h3>Painel</h3>
         <label class="zf-search" style="margin-top:4px"><input type="url" id="zf-s-panel-url" inputmode="url" autocomplete="off" spellcheck="false" aria-label="Endereço do painel"></label>
-        <p class="zf-about" style="margin-top:8px">Endereço do seu painel ZapFlow (ex.: https://meu-painel.vercel.app). É para onde vão o menu ☰ e os botões “Abrir no painel”. Vazio = endereço padrão.</p>
+        <p class="zf-about" style="margin-top:8px">Endereço do seu painel (ex.: https://meu-painel.vercel.app). É para onde vão o menu ☰ e os botões “Abrir no painel”. Vazio = endereço padrão.</p>
       </div>
       <div class="zf-sec">
         <h3>Tema</h3>
@@ -197,7 +201,7 @@ function zfBuildSidebar() {
       </div>
       <div class="zf-sec">
         <h3>Sobre</h3>
-        <p class="zf-about">ZapFlow ${ZF_VERSION}<br><span id="zf-engine-version">Motor de envio carregando…</span><br>Crie e organize seus itens no painel do ZapFlow.</p>
+        <p class="zf-about"><span data-zf-brand-name>ZapFlow</span> ${ZF_VERSION}<br><span id="zf-engine-version">Motor de envio carregando…</span><br>Crie e organize seus itens no painel.</p>
       </div>
     </div>
   </section>
@@ -205,5 +209,5 @@ function zfBuildSidebar() {
 }
 
 function zfBuildQuickBar() {
-  return `<button type="button" class="zf-qb-filter-btn" id="zf-qb-toggle" aria-label="Abrir todos os itens">${window._zfSVG.list}</button><div class="zf-qb-scroll" id="zf-qb-scroll"></div>`;
+  return `<button type="button" class="zf-qb-filter-btn" id="zf-qb-toggle" aria-pressed="false" aria-label="Mostrar só favoritos na barra" title="Mostrar só favoritos">${window._zfSVG.starLine}</button><div class="zf-qb-scroll" id="zf-qb-scroll"></div>`;
 }

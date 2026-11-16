@@ -13,13 +13,17 @@
     if (!/^https?:\/\//i.test(u)) u = (/^(localhost|127\.)/i.test(u) ? 'http://' : 'https://') + u;
     try { const p = new URL(u); if (!/^[a-z0-9.-]+$/i.test(p.hostname) || !(p.hostname.includes('.') || p.hostname === 'localhost')) return ''; return p.origin + p.pathname.replace(/\/(dashboard.*|auth.*)?$/, '').replace(/\/+$/, ''); } catch (e) { return ''; }
   };
-  const panelUrl = () => cleanPanelUrl(settings.panelUrl) || DEFAULT_PANEL_URL;
+  // ordem: o que foi digitado nos Ajustes > o domínio próprio da conta (marca) > o do config.js
+  const panelUrl = () => cleanPanelUrl(settings.panelUrl) || (brand.custom_domain ? 'https://' + brand.custom_domain : '') || DEFAULT_PANEL_URL;
 
   let sb = null;
   let currentFilter = 'all', showFavOnly = false, searchQuery = '';
   let messagesData = [], mediaData = [], funnelsData = [], triggersData = [], funnelsError = false, loaded = false;
   const settings = { panelUrl: '', hideBar: false, barFav: false, barFunnels: true, stopOnReply: true, keywords: true, capture: true, captureSkip: false, labelSync: true, history: false, theme: 'auto' };
   const $ = (id) => document.getElementById(id);
+  // Marca da conta (white label): a mesma escolhida no painel, em Configurações > Marca
+  let brand = { name: '', logo_url: '', icon_url: '', custom_domain: '' };
+  const brandName = () => brand.name || 'ZapFlow';
 
   // ===== INÍCIO =====
   function init() {
@@ -29,6 +33,7 @@
         clearInterval(check);
         createSidebar();
         createQuickBar();
+        loadBrandCache();
         loadSettings();
         watchWhatsAppTheme();
         pollEngine();
@@ -47,6 +52,7 @@
     } catch (e) { /* sem storage: usa padrões */ }
     if ($('zf-s-hide-bar')) $('zf-s-hide-bar').checked = !!settings.hideBar;
     if ($('zf-s-bar-fav')) $('zf-s-bar-fav').checked = !!settings.barFav;
+    syncBarFav();
     if ($('zf-s-bar-funnels')) $('zf-s-bar-funnels').checked = !!settings.barFunnels;
     if ($('zf-s-stop-reply')) $('zf-s-stop-reply').checked = !!settings.stopOnReply;
     if ($('zf-s-keywords')) $('zf-s-keywords').checked = settings.keywords !== false;
@@ -149,7 +155,7 @@
       loadAllData();
     });
 
-    if (typeof supabase === 'undefined' || !supabase.createClient) return showAuth('Não foi possível carregar o ZapFlow. Recarregue a página.');
+    if (typeof supabase === 'undefined' || !supabase.createClient) return showAuth('Não foi possível carregar. Recarregue a página.');
     if (!(await supabaseReachable())) return showAuth('Sem conexão com o banco. Verifique a internet e recarregue a página.');
 
     sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -158,7 +164,7 @@
     sb.auth.onAuthStateChange((ev) => {
       if (ev === 'SIGNED_OUT') {
         stopAllRuns();
-        messagesData = []; mediaData = []; funnelsData = []; triggersData = []; loaded = false; setAccount(''); clearBlobCache();
+        messagesData = []; mediaData = []; funnelsData = []; triggersData = []; loaded = false; setAccount(''); clearBlobCache(); applyBrand();
         if (taskChannel) { try { sb.removeChannel(taskChannel); } catch (e) { /* já fechado */ } taskChannel = null; }
         crm = { boards: [], columns: [], tags: [], error: false }; leadState = { status: 'idle' }; renderLead();
         renderItems(); renderFunnels(); renderQuickBar(); showAuth();
@@ -189,6 +195,7 @@
       // funis com problema não derrubam a lista de itens
       if (funnels.error) console.warn('ZapFlow: falha ao carregar funis', funnels.error);
       lastLoadAt = Date.now();
+      fetchBrand();
       watchNewTasks();
       loadCrm().then(() => (leadChat ? loadLead({ quiet: true }) : syncLeadChat())).catch((e) => console.warn('ZapFlow: Kanban', e));
       const sig = JSON.stringify([msgs.data, media.data, funnels.data, !!funnels.error]);
@@ -230,6 +237,74 @@
     };
     document.addEventListener('visibilitychange', refresh);
     window.addEventListener('focus', refresh);
+  }
+
+  // ===== MARCA (white label) =====
+  // Nome e logotipos vêm da tabela `branding` da conta (os mesmos do painel). Ficam guardados no
+  // navegador para a marca já aparecer na tela de login e antes de os dados carregarem.
+  async function loadBrandCache() {
+    try {
+      const r = await chrome.storage.local.get('zf_brand');
+      if (r.zf_brand) brand = Object.assign(brand, r.zf_brand);
+    } catch (e) { /* sem storage */ }
+    applyBrand();
+  }
+  async function fetchBrand() {
+    try {
+      const { data, error } = await sb.from('branding').select('name, logo_url, icon_url, custom_domain').maybeSingle();
+      if (error) return; // banco na versão antiga (sem a tabela): fica a marca que já estava
+      const next = { name: (data && data.name) || '', logo_url: (data && data.logo_url) || '', icon_url: (data && data.icon_url) || '', custom_domain: (data && data.custom_domain) || '' };
+      if (JSON.stringify(next) === JSON.stringify(brand)) return;
+      brand = next;
+      try { chrome.storage.local.set({ zf_brand: brand }); } catch (e) { /* sem storage */ }
+      applyBrand();
+    } catch (e) { /* sem rede: mantém a marca guardada */ }
+  }
+  // Baixa a imagem uma vez (o WhatsApp Web bloqueia imagens de outros sites) e só então chama
+  // `use`. Se o download falhar, quem chamou continua com o visual padrão.
+  let brandVersion = 0;
+  function loadBrandImg(url, alt, use) {
+    const v = brandVersion;
+    getBlobUrl(url).then((src) => {
+      const img = document.createElement('img');
+      img.alt = alt;
+      img.onload = () => { if (v === brandVersion) use(img); };
+      img.src = src;
+    }).catch(() => { /* fica o padrão */ });
+  }
+  function applyBrand() {
+    brandVersion++;
+    const S = window._zfSVG;
+    const name = brandName();
+    const custom = !!brand.name && brand.name !== 'ZapFlow';
+    document.querySelectorAll('[data-zf-brand-name]').forEach((el) => { el.textContent = name; });
+    // quadradinho: o ícone da conta; sem ícone, a inicial do nome (ou o raio, na marca padrão)
+    const makeMark = () => {
+      const m = document.createElement('span');
+      m.className = 'zf-mark' + (custom ? ' zf-mark-letter' : '');
+      if (custom) m.textContent = name.trim().charAt(0).toUpperCase();
+      else m.innerHTML = S.bolt;
+      if (brand.icon_url) loadBrandImg(brand.icon_url, '', (img) => { m.className = 'zf-mark zf-mark-img'; m.replaceChildren(img); });
+      return m;
+    };
+    document.querySelectorAll('[data-zf-brand]').forEach((box) => {
+      const withName = box.dataset.zfBrand === 'head';
+      box.replaceChildren(makeMark());
+      if (withName) {
+        const n = document.createElement('span');
+        n.className = 'zf-brand';
+        n.textContent = name;
+        box.appendChild(n);
+      }
+      // logotipo horizontal: ocupa o lugar do ícone + nome
+      if (brand.logo_url) loadBrandImg(brand.logo_url, name, (img) => { img.className = 'zf-logo'; box.replaceChildren(img); });
+    });
+    const tb = $('zf-toggle-btn');
+    if (tb) {
+      tb.innerHTML = S.bolt.replace('width="15" height="15"', 'width="18" height="18"');
+      if (brand.icon_url) loadBrandImg(brand.icon_url, '', (img) => tb.replaceChildren(img));
+      tb.setAttribute('aria-label', (tb.classList.contains('zf-sidebar-open') ? 'Fechar ' : 'Abrir ') + name);
+    }
   }
 
   // ===== PAINEL =====
@@ -296,7 +371,7 @@
     const toggleBtn = document.createElement('button');
     toggleBtn.id = 'zf-toggle-btn';
     toggleBtn.type = 'button';
-    toggleBtn.setAttribute('aria-label', 'Abrir ZapFlow');
+    toggleBtn.setAttribute('aria-label', 'Abrir ' + brandName());
     toggleBtn.innerHTML = window._zfSVG.bolt.replace('width="15" height="15"', 'width="18" height="18"');
     toggleBtn.onclick = () => toggleSidebar();
     document.body.appendChild(toggleBtn);
@@ -332,7 +407,7 @@
     $('zf-logout').onclick = async () => { if (sb) await sb.auth.signOut(); };
 
     $('zf-s-hide-bar').onchange = (e) => { settings.hideBar = e.target.checked; saveSettings(); updateQuickBarVisibility(); };
-    $('zf-s-bar-fav').onchange = (e) => { settings.barFav = e.target.checked; saveSettings(); renderQuickBar(); };
+    $('zf-s-bar-fav').onchange = (e) => { settings.barFav = e.target.checked; saveSettings(); syncBarFav(); renderQuickBar(); };
     $('zf-s-bar-funnels').onchange = (e) => { settings.barFunnels = e.target.checked; saveSettings(); renderQuickBar(); };
     $('zf-s-stop-reply').onchange = (e) => { settings.stopOnReply = e.target.checked; saveSettings(); stopReplyChoice.clear(); renderFunnels(); };
     $('zf-s-keywords').onchange = (e) => { settings.keywords = e.target.checked; saveSettings(); };
@@ -374,7 +449,7 @@
     const open = forceOpen === true ? true : root.classList.contains('zf-hidden');
     root.classList.toggle('zf-hidden', !open);
     btn.classList.toggle('zf-sidebar-open', open);
-    btn.setAttribute('aria-label', open ? 'Fechar ZapFlow' : 'Abrir ZapFlow');
+    btn.setAttribute('aria-label', (open ? 'Fechar ' : 'Abrir ') + brandName());
     updateQuickBarVisibility();
     positionQuickBar();
     for (const t of [100, 200, 300]) setTimeout(positionQuickBar, t);
@@ -385,14 +460,32 @@
   function createQuickBar() {
     const bar = document.createElement('div');
     bar.id = 'zf-quickbar';
-    bar.setAttribute('aria-label', 'Barra rápida do ZapFlow');
+    bar.setAttribute('aria-label', 'Barra rápida');
     bar.innerHTML = zfBuildQuickBar();
     document.body.appendChild(bar);
-    $('zf-qb-toggle').onclick = () => { toggleSidebar(true); switchTab('itens'); $('zf-search')?.focus(); };
+    // estrela da barra: liga/desliga "só favoritos" (o mesmo ajuste de Ajustes > Barra rápida)
+    $('zf-qb-toggle').onclick = () => {
+      settings.barFav = !settings.barFav;
+      saveSettings();
+      syncBarFav();
+      renderQuickBar();
+      showToast(settings.barFav ? 'Barra rápida: só favoritos' : 'Barra rápida: todos os itens');
+    };
+    syncBarFav();
     positionQuickBar();
     updateQuickBarVisibility();
     window.addEventListener('resize', positionQuickBar);
     setInterval(positionQuickBar, 1000);
+  }
+
+  function syncBarFav() {
+    const on = !!settings.barFav;
+    const b = $('zf-qb-toggle');
+    if (b) {
+      b.setAttribute('aria-pressed', String(on));
+      b.title = on ? 'Mostrando só favoritos. Clique para ver todos' : 'Mostrar só favoritos';
+    }
+    if ($('zf-s-bar-fav')) $('zf-s-bar-fav').checked = on;
   }
 
   function positionQuickBar() {
@@ -444,6 +537,9 @@
     ).join('') + items.map((i) =>
       `<button type="button" class="zf-qb-item" data-qb-id="${i.id}" data-qb-type="${i.type}" title="Enviar ${escapeHtml(i.title)}">${S[TYPE_ICON[i.type]] || ''}${escapeHtml(i.title.substring(0, 30))}</button>`
     ).join('');
+    if (settings.barFav && loaded && !funnels.length && !items.length) {
+      scroll.innerHTML = '<span class="zf-qb-hint">Nenhum favorito ainda. Marque a estrela nos itens, no painel.</span>';
+    }
     scroll.querySelectorAll('.zf-qb-item').forEach((btn) => {
       btn.onclick = (e) => {
         e.preventDefault();
@@ -1088,7 +1184,7 @@
   let leadState = { status: 'idle' };       // idle | loading | nochat | group | none | lead | error
   let leadSeq = 0;
   const LEAD_SELECT = '*, lead_tags(tag_id), kanban_cards(id,board_id,column_id,position,value,product)';
-  const TEMP_OPTS = [['hot', 'Quente'], ['warm', 'Morno'], ['cold', 'Frio']];
+  const TEMP_OPTS = [['hot', 'Quente', 'flame'], ['warm', 'Morno', 'thermo'], ['cold', 'Frio', 'snow']];
   const MSG_LABEL = { ptt: 'Áudio', audio: 'Áudio', image: 'Foto', video: 'Vídeo', document: 'Documento', sticker: 'Figurinha', location: 'Localização', vcard: 'Contato', multi_vcard: 'Contatos' };
   const TAG_COLORS = ['#6b7280', '#d1236f', '#b42318', '#c2410c', '#9a5b00', '#0e7a4f', '#0f766e', '#1d4ed8', '#6b21a8', '#be185d'];
 
@@ -1270,7 +1366,8 @@
       </div>` : '';
 
     box.innerHTML = `${head}
-      <div class="zf-seg zf-lead-temp" role="group" aria-label="Temperatura">${TEMP_OPTS.map(([v, l]) => `<button type="button" data-zf-temp="${v}" aria-pressed="${L.status === v}">${l}</button>`).join('')}</div>
+      <h3 class="zf-lead-h">Temperatura</h3>
+      <div class="zf-temp" role="group" aria-label="Temperatura">${TEMP_OPTS.map(([v, l, ic]) => `<button type="button" data-zf-temp="${v}" aria-pressed="${L.status === v}">${window._zfSVG[ic]}<span>${l}</span></button>`).join('')}</div>
 
       ${blocking ? `<p class="zf-lead-block">Ignorado pela etiqueta “${escapeHtml(blocking.name)}”: não é capturado, não entra no Kanban e não guarda histórico. Tire a etiqueta para voltar ao normal.</p>` : `
       <h3 class="zf-lead-h">Kanban</h3>
@@ -1455,7 +1552,7 @@
   }
 
   async function scanChats() {
-    if (!sb || !loaded) { imp.stage = 'error'; imp.error = 'Entre na sua conta do ZapFlow primeiro.'; return renderImport(); }
+    if (!sb || !loaded) { imp.stage = 'error'; imp.error = 'Entre na sua conta primeiro.'; return renderImport(); }
     imp.stage = 'scanning';
     imp.result = null;
     renderImport();
@@ -1542,7 +1639,7 @@
         <option value=""${!o.column || (o.column === 'inbox' && !inbox) ? ' selected' : ''}>Só em Leads (fora do Kanban)</option>
         ${colOptions}
       </select>
-      ${imp.labels.length ? setRow('zf-imp-tags', 'Trazer as etiquetas do WhatsApp', 'Viram etiquetas do ZapFlow e ficam ligadas às do WhatsApp.', o.withLabels) : ''}
+      ${imp.labels.length ? setRow('zf-imp-tags', 'Trazer as etiquetas do WhatsApp', 'Viram etiquetas do seu painel e ficam ligadas às do WhatsApp.', o.withLabels) : ''}
 
       <button type="button" class="zf-btn-primary" id="zf-imp-go" style="margin-top:16px"></button>
       <p class="zf-about" style="margin-top:8px">Quem já é lead não é duplicado: só ganha a conversa, o último contato e as etiquetas. Grupos não entram.</p>

@@ -116,6 +116,16 @@ export interface Lead {
   created_at: string;
 }
 
+/** Marca da conta (white label): uma linha por conta. */
+export interface Branding {
+  user_id: string;
+  name: string | null;
+  logo_url: string | null;
+  icon_url: string | null;
+  custom_domain: string | null;
+  updated_at: string;
+}
+
 /** Pessoa da equipe que atende leads. Quem está no rodízio recebe os leads novos, um de cada vez. */
 export interface Owner {
   id: number;

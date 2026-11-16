@@ -65,5 +65,5 @@ export function routeMeta(pathname: string): { title: string; description: strin
   if (lib) return { title: "Biblioteca", description: "Mensagens, áudios, mídias e documentos para enviar com um clique" };
   const all = [...MAIN_NAV, SETTINGS_NAV];
   const hit = all.find((i) => isNavActive(i, pathname));
-  return hit ? { title: hit.label === "Início" ? "Visão geral" : hit.label, description: hit.description } : { title: "ZapFlow", description: "" };
+  return hit ? { title: hit.label === "Início" ? "Visão geral" : hit.label, description: hit.description } : { title: "Painel", description: "" };
 }

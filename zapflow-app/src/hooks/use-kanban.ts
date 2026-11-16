@@ -101,6 +101,29 @@ export function useCreateColumn() {
   });
 }
 
+/** Troca o nome da etapa (a tela já mostra o nome novo enquanto grava). */
+export function useRenameColumn() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, title }: { id: number; boardId: number; title: string }) => {
+      const { error } = await supabase.from("kanban_columns").update({ title }).eq("id", id);
+      if (error) throw error;
+    },
+    onMutate: async ({ id, boardId, title }) => {
+      const key = ["kanban", "board", boardId];
+      await qc.cancelQueries({ queryKey: key });
+      const before = qc.getQueryData<KanbanColumnWithCards[]>(key);
+      if (before) qc.setQueryData(key, before.map((c) => (c.id === id ? { ...c, title } : c)));
+      return { key, before };
+    },
+    onError: (e, _v, ctx) => {
+      if (ctx?.before) qc.setQueryData(ctx.key, ctx.before);
+      toast.error(leadErrorMessage(e));
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["kanban"] }),
+  });
+}
+
 /** Apaga a etapa. Os cards dela saem do quadro; os leads continuam em Leads. */
 export function useDeleteColumn() {
   const qc = useQueryClient();

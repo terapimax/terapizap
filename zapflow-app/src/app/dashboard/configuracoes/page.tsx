@@ -10,6 +10,8 @@ import { applyThemePref, getServerThemePref, getThemePref, subscribeThemePref, t
 import { cn } from "@/lib/utils";
 import { BackupTools } from "@/components/features/backup-tools";
 import { OwnerManager } from "@/components/features/owners";
+import { BrandingSettings } from "@/components/features/branding-settings";
+import { useBrand } from "@/components/brand";
 import { toast } from "sonner";
 
 const supabase = createClient();
@@ -37,6 +39,7 @@ function Section({ title, description, children }: { title: string; description?
 
 export default function ConfiguracoesPage() {
   const router = useRouter();
+  const brand = useBrand();
   const pref = useSyncExternalStore(subscribeThemePref, getThemePref, getServerThemePref);
   const me = useQuery({ queryKey: ["me"], queryFn: async () => (await supabase.auth.getUser()).data.user, staleTime: 5 * 60 * 1000 });
 
@@ -115,6 +118,10 @@ export default function ConfiguracoesPage() {
         </div>
       </Section>
 
+      <Section title="Marca" description="Deixe o painel e a extensão com a cara da sua empresa: nome, logotipo e endereço próprio.">
+        <BrandingSettings />
+      </Section>
+
       <Section title="Equipe" description="Mais de uma pessoa atendendo? Cadastre quem atende para dividir os leads e ver o resultado de cada um.">
         <OwnerManager />
       </Section>
@@ -128,7 +135,7 @@ export default function ConfiguracoesPage() {
           {[
             "No Chrome, abra chrome://extensions e ative o Modo do desenvolvedor.",
             "Clique em Carregar sem compactação e escolha a pasta extension do projeto.",
-            "Abra o WhatsApp Web, clique no raio do ZapFlow e entre com a mesma conta.",
+            `Abra o WhatsApp Web, clique na aba ${brand.custom ? `de ${brand.name}` : "com o raio"} na lateral direita e entre com a mesma conta.`,
             "Painel publicado na internet? Nos Ajustes da extensão, em Painel, cole o endereço desta página (só o começo, até .app ou .com.br).",
           ].map((t, i) => (
             <li key={i} className="flex gap-3">

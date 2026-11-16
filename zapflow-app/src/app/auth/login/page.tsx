@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
+import { BrandLogo, useBrand } from "@/components/brand";
 import { Eye, EyeOff, Loader2, AlertCircle, CheckCircle2, Mic, Filter, MessageSquareText } from "lucide-react";
 
 const errorMessages: Record<string, string> = {
@@ -32,6 +33,7 @@ export default function LoginPage() {
   const [success, setSuccess] = useState("");
   const [isRegister, setIsRegister] = useState(false);
   const router = useRouter();
+  const brand = useBrand();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -116,10 +118,12 @@ export default function LoginPage() {
       {/* Marca */}
       <aside className="hidden lg:flex flex-col justify-between p-12 bg-[#0b0b0d] text-[#f4f4f6]">
         <div className="flex items-center gap-2.5">
-          <span className="w-9 h-9 rounded-[10px] bg-[#e8478f] text-white grid place-items-center" aria-hidden="true">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z" /></svg>
-          </span>
-          <span className="font-display text-xl font-bold tracking-tight">ZapFlow</span>
+          {/* com logotipo próprio, ele fica sobre uma placa clara: o fundo desta coluna é sempre preto */}
+          {brand.logoUrl ? (
+            <span className="inline-flex items-center rounded-xl bg-white px-3.5 py-2.5"><BrandLogo size={36} /></span>
+          ) : (
+            <BrandLogo size={36} textClassName="text-xl" />
+          )}
         </div>
         <div className="flex flex-col gap-8 max-w-md">
           <h2 className="font-display text-4xl font-bold tracking-tight leading-tight">Atenda no WhatsApp sem perder tempo.</h2>
@@ -135,21 +139,18 @@ export default function LoginPage() {
             ))}
           </ul>
         </div>
-        <p className="text-xs text-[#a3a3ad]">ZapFlow · Automação para WhatsApp Web</p>
+        <p className="text-xs text-[#a3a3ad]">{brand.name} · Automação para WhatsApp Web</p>
       </aside>
 
       {/* Formulário */}
       <main className="flex items-center justify-center px-5 py-10">
         <div className="w-full max-w-[400px] animate-fade-in">
           <div className="flex items-center gap-2.5 mb-10 lg:hidden">
-            <span className="w-9 h-9 rounded-[10px] bg-accent text-white grid place-items-center" aria-hidden="true">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z" /></svg>
-            </span>
-            <span className="font-display text-xl font-bold tracking-tight">ZapFlow</span>
+            <BrandLogo size={36} textClassName="text-xl" />
           </div>
 
           <h1 className="text-3xl font-bold tracking-tight">{isRegister ? "Criar sua conta" : "Entrar"}</h1>
-          <p className="text-muted mt-1.5 mb-8">{isRegister ? "Leva menos de um minuto." : "Use o e-mail da sua conta ZapFlow."}</p>
+          <p className="text-muted mt-1.5 mb-8">{isRegister ? "Leva menos de um minuto." : `Use o e-mail da sua conta ${brand.name}.`}</p>
 
           <form onSubmit={handleSubmit} className="flex flex-col gap-5" noValidate>
             <div className="flex flex-col gap-1.5">

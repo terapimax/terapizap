@@ -164,7 +164,7 @@ export function BackupTools() {
           <span className="w-9 h-9 rounded-[10px] bg-surface grid place-items-center shrink-0" aria-hidden="true"><Upload className="w-4 h-4" /></span>
           <div>
             <h3 className="font-sans text-sm font-semibold tracking-normal">Restaurar backup</h3>
-            <p className="text-xs text-muted mt-0.5">Aceita o .zip do ZapFlow e também o backup .json do ZapVoice. Antes de gravar, mostra o que tem dentro.</p>
+            <p className="text-xs text-muted mt-0.5">Aceita o .zip de backup deste painel e também o backup .json do ZapVoice. Antes de gravar, mostra o que tem dentro.</p>
           </div>
         </div>
         <input ref={fileRef} type="file" accept=".zip,.json,application/zip,application/json" className="sr-only" tabIndex={-1} aria-hidden="true" onChange={(e) => pickFile(e.target.files?.[0])} />

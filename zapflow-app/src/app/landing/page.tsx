@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { ArrowRight, Calendar, Filter, Image as ImageIcon, MessageSquareText, Mic, Users } from "lucide-react";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { BrandLogo } from "@/components/brand";
+import { hostBrand } from "@/lib/brand-server";
+import { resolveBrand } from "@/lib/brand";
 
 export const metadata = {
-  title: "ZapFlow — Automação para WhatsApp Web",
   description: "Envie mensagens, áudios, imagens e documentos com um clique no WhatsApp Web, com “digitando…” e “gravando áudio…” antes de cada envio. Leads e funis no mesmo lugar.",
 };
 
@@ -22,21 +24,13 @@ const steps = [
   { title: "Envie com um clique", text: "O contato vê “digitando…” ou “gravando áudio…” antes de cada envio." },
 ];
 
-function Mark({ size = 36 }: { size?: number }) {
-  return (
-    <span className="rounded-[10px] bg-accent text-white grid place-items-center" style={{ width: size, height: size }} aria-hidden="true">
-      <svg width={size / 2} height={size / 2} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z" /></svg>
-    </span>
-  );
-}
-
-export default function LandingPage() {
+export default async function LandingPage() {
+  const brand = resolveBrand(await hostBrand());
   return (
     <div className="min-h-screen bg-bg text-fg">
       <header className="sticky top-0 z-30 bg-bg/95 border-b border-line">
         <div className="max-w-6xl mx-auto flex items-center gap-3 px-5 h-16">
-          <Mark />
-          <span className="font-display text-lg font-bold tracking-tight mr-auto">ZapFlow</span>
+          <span className="flex items-center gap-3 mr-auto min-w-0"><BrandLogo size={36} textClassName="text-lg" /></span>
           <ThemeToggle />
           <Link href="/auth/login" className="h-10 px-4 rounded-[10px] text-sm font-semibold inline-flex items-center hover:bg-surface transition-colors">Entrar</Link>
           <Link href="/auth/login" className="h-10 px-4 rounded-[10px] bg-primary text-on-primary text-sm font-semibold inline-flex items-center hover:opacity-90 transition-opacity">Criar conta</Link>
@@ -104,8 +98,8 @@ export default function LandingPage() {
 
       <footer className="border-t border-line">
         <div className="max-w-6xl mx-auto px-5 py-6 text-sm text-muted flex flex-wrap items-center justify-between gap-2">
-          <span>ZapFlow · Automação para WhatsApp Web</span>
-          <span>O ZapFlow não é afiliado ao WhatsApp nem à Meta.</span>
+          <span>{brand.name} · Automação para WhatsApp Web</span>
+          <span>{brand.name} não é afiliado ao WhatsApp nem à Meta.</span>
         </div>
       </footer>
     </div>

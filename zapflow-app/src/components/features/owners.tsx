@@ -106,7 +106,7 @@ export function OwnerManager() {
             : rotating === 1
               ? `Todo lead novo vai para ${owners.find((o) => o.in_rotation)?.name}.`
               : `Os leads novos (WhatsApp, cadastro e importação) são divididos por igual entre as ${rotating} pessoas do rodízio, um de cada vez.`}
-          {" "}Todos usam a mesma conta do ZapFlow; o responsável serve para organizar e medir quem atende o quê.
+          {" "}Todos usam a mesma conta; o responsável serve para organizar e medir quem atende o quê.
         </p>
       )}
 

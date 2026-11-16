@@ -919,11 +919,40 @@
   CREATE TRIGGER zf_assign_owner BEFORE INSERT ON public.leads
     FOR EACH ROW EXECUTE FUNCTION public.zf_assign_owner();
 
+  -- 6k. MARCA PRÓPRIA (white label) ------------------------------
+  -- Uma linha por conta: nome, logotipo horizontal, ícone quadrado (menu recolhido, extensão e aba
+  -- do navegador) e domínio próprio. O painel e a extensão leem daqui, então a marca é a mesma nos dois.
+  CREATE TABLE IF NOT EXISTS public.branding (
+    user_id UUID PRIMARY KEY DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
+    name TEXT,
+    logo_url TEXT,        -- logotipo horizontal (substitui ícone + nome)
+    icon_url TEXT,        -- ícone quadrado
+    custom_domain TEXT,   -- ex.: painel.suaempresa.com.br (sem https://)
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  ALTER TABLE public.branding DROP CONSTRAINT IF EXISTS branding_domain_format;
+  ALTER TABLE public.branding ADD CONSTRAINT branding_domain_format
+    CHECK (custom_domain IS NULL OR custom_domain ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$');
+  -- um domínio só pode ser de uma conta
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_branding_domain ON public.branding(custom_domain) WHERE custom_domain IS NOT NULL;
+
+  -- A tela de login (ainda sem ninguém logado) pergunta "de quem é este endereço?" e recebe só
+  -- o nome e os logotipos da conta dona do domínio. Nada mais sai daqui.
+  CREATE OR REPLACE FUNCTION public.zf_brand_for_host(p_host TEXT)
+  RETURNS TABLE (name TEXT, logo_url TEXT, icon_url TEXT)
+  LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+    SELECT b.name, b.logo_url, b.icon_url FROM branding b
+    WHERE b.custom_domain = lower(split_part(coalesce(p_host, ''), ':', 1))
+    LIMIT 1
+  $$;
+  REVOKE ALL ON FUNCTION public.zf_brand_for_host(TEXT) FROM PUBLIC;
+  GRANT EXECUTE ON FUNCTION public.zf_brand_for_host(TEXT) TO anon, authenticated;
+
   -- 7. SEGURANÇA: cada usuário só vê e altera os próprios dados (RLS)
   DO $$
   DECLARE t TEXT;
   BEGIN
-    FOREACH t IN ARRAY ARRAY['messages','media_library','funnels','funnel_items','kanban_boards','kanban_columns','leads','tags','lead_tags','kanban_cards','lead_messages','triggers','trigger_fires','kanban_card_moves','owners','appointments','tasks']
+    FOREACH t IN ARRAY ARRAY['messages','media_library','funnels','funnel_items','kanban_boards','kanban_columns','leads','tags','lead_tags','kanban_cards','lead_messages','triggers','trigger_fires','kanban_card_moves','owners','branding','appointments','tasks']
     LOOP
       EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
       EXECUTE format('DROP POLICY IF EXISTS "own_rows" ON public.%I', t);
@@ -999,4 +1028,4 @@
   FROM public.appointments a
   WHERE NOT EXISTS (SELECT 1 FROM public.tasks t WHERE t.options->>'from_appointment' = a.id::text);
 
-  -- Pronto. Confira em Table Editor: devem aparecer 17 tabelas.
+  -- Pronto. Confira em Table Editor: devem aparecer 18 tabelas.

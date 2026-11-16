@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo, useRef, useCallback, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   DndContext,
@@ -25,7 +26,7 @@ import { SortableContext, verticalListSortingStrategy, useSortable, sortableKeyb
 import { CSS } from "@dnd-kit/utilities";
 import {
   useBoards, useCreateBoard, useDeleteBoard, useBoardData,
-  useCreateColumn, useDeleteColumn, useMoveCard, useInboxColumn, useSetInboxColumn, useSetColumnOutcome,
+  useCreateColumn, useDeleteColumn, useRenameColumn, useMoveCard, useInboxColumn, useSetInboxColumn, useSetColumnOutcome,
 } from "@/hooks/use-kanban";
 import { blockedLeadIds, useAddToBoard, useCreateLead, useLeads, useTags } from "@/hooks/use-leads";
 import { Modal } from "@/components/ui/modal";
@@ -41,7 +42,7 @@ import { brl, deaccent, formatPhone, initials, phoneKey, tagsOf } from "@/lib/le
 import { TaskIcon } from "@/components/features/task-sheets";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { Columns3, Plus, Trash2, Loader2, AlertCircle, UserPlus, Users, Check, Inbox, Trophy } from "lucide-react";
+import { Columns3, Plus, Trash2, Loader2, AlertCircle, UserPlus, Users, Check, Inbox, Trophy, Pencil } from "lucide-react";
 
 /** Próxima tarefa em aberto de cada lead (a lista vem ordenada por horário). */
 type NextTasks = Map<number, { next: Task; count: number }>;
@@ -185,7 +186,8 @@ function SortableCard({ card, tags, next, onOpen, dragDisabled }: { card: Kanban
         "bg-card border border-line rounded-xl p-3 flex flex-col gap-2.5 text-left touch-manipulation select-none",
         "hover:border-fg transition-colors",
         dragDisabled ? "cursor-pointer" : "cursor-grab active:cursor-grabbing",
-        isDragging && "opacity-0"
+        // o lugar do card fica marcado enquanto ele é arrastado
+        isDragging && "border-dashed border-muted/50 bg-transparent hover:border-muted/50 [&>*]:invisible"
       )}
     >
       <CardBody card={card} tags={tags} next={next} />
@@ -248,8 +250,66 @@ function OutcomeMenu({ column, onPick }: { column: KanbanColumnWithCards; onPick
   );
 }
 
-function StageColumn({ column, items, tags, dragDisabled, onAdd, onDeleteColumn, onOpen, nextTasks, isInbox, onMakeInbox, onSetOutcome }: {
+/** Nome da etapa: aparece inteiro e vira campo de texto ao clicar (Enter salva, Esc desiste). */
+function StageTitle({ title, onRename }: { title: string; onRename: (title: string) => void }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const editing = draft !== null;
+  useEffect(() => {
+    const el = ref.current;
+    if (!editing || !el) return;
+    el.focus();
+    el.select();
+  }, [editing]);
+  // o campo cresce com o texto (nomes longos ocupam duas ou três linhas)
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [draft]);
+  const commit = () => {
+    const t = (draft ?? "").replace(/\s+/g, " ").trim();
+    setDraft(null);
+    if (t && t !== title) onRename(t);
+  };
+  if (editing) {
+    return (
+      <textarea
+        ref={ref}
+        rows={1}
+        value={draft}
+        maxLength={60}
+        aria-label="Nome da etapa"
+        onChange={(e) => setDraft(e.target.value.replace(/[\r\n]+/g, " "))}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") { e.preventDefault(); commit(); }
+          else if (e.key === "Escape") { e.preventDefault(); setDraft(null); }
+        }}
+        className="flex-1 min-w-0 -my-[3px] -mx-1.5 px-1.5 py-[2px] rounded-md bg-card border border-fg outline-none resize-none overflow-hidden font-display text-sm font-semibold leading-snug"
+      />
+    );
+  }
+  return (
+    <h3 className="flex-1 min-w-0 font-sans text-sm font-semibold tracking-normal leading-snug">
+      <button
+        type="button"
+        onClick={() => setDraft(title)}
+        title="Clique para renomear a etapa"
+        aria-label={`${title}. Clique para renomear a etapa`}
+        className="group/title text-left break-words [overflow-wrap:anywhere] cursor-text rounded-md -mx-1.5 px-1.5 hover:bg-card transition-colors"
+      >
+        {title}
+        <Pencil className="inline-block w-3 h-3 ml-1.5 -mt-0.5 text-muted opacity-0 group-hover/title:opacity-100 transition-opacity" aria-hidden="true" />
+      </button>
+    </h3>
+  );
+}
+
+function StageColumn({ column, items, tags, dragDisabled, onAdd, onDeleteColumn, onOpen, nextTasks, isInbox, onMakeInbox, onSetOutcome, onRename }: {
   isInbox: boolean;
+  onRename: (col: KanbanColumnWithCards, title: string) => void;
   onMakeInbox: (col: KanbanColumnWithCards) => void;
   onSetOutcome: (col: KanbanColumnWithCards, outcome: ColumnOutcome | null) => void;
   column: KanbanColumnWithCards;
@@ -267,36 +327,43 @@ function StageColumn({ column, items, tags, dragDisabled, onAdd, onDeleteColumn,
 
   return (
     <section aria-label={column.title} className="w-[296px] shrink-0 flex flex-col max-h-full bg-surface rounded-2xl">
-      <header className="flex items-center gap-2 px-4 pt-3.5 pb-2 group">
-        <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: column.color }} aria-hidden="true" />
-        <h3 className="font-sans text-sm font-semibold tracking-normal truncate">{column.title}</h3>
-        <span className="text-xs text-muted tabular-nums">{items.length}</span>
-        {isInbox && (
-          <span title="Os novos leads do WhatsApp entram aqui" className="inline-flex items-center gap-1 h-5 px-1.5 rounded-full bg-accent-soft text-accent-fg text-[11px] font-semibold">
-            <Inbox className="w-3 h-3" aria-hidden="true" /> Entrada
+      <header className="px-4 pt-3.5 pb-2 group flex flex-col gap-1.5">
+        {/* linha 1: o nome inteiro (quebra em duas linhas se precisar); clique para renomear */}
+        <div className="flex items-start gap-2">
+          <span className="w-2 h-2 rounded-full shrink-0 mt-[7px]" style={{ backgroundColor: column.color }} aria-hidden="true" />
+          <StageTitle title={column.title} onRename={(t) => onRename(column, t)} />
+        </div>
+        {/* linha 2: números e ações da etapa */}
+        <div className="flex items-center gap-2 min-h-7 pl-4">
+          <span className="text-xs text-muted tabular-nums whitespace-nowrap">{items.length} {items.length === 1 ? "lead" : "leads"} · {brl(total)}</span>
+          {isInbox && (
+            <span title="Os novos leads do WhatsApp entram aqui" className="inline-flex items-center gap-1 h-5 px-1.5 rounded-full bg-accent-soft text-accent-fg text-[11px] font-semibold">
+              <Inbox className="w-3 h-3" aria-hidden="true" /> Entrada
+            </span>
+          )}
+          <span className="ml-auto flex items-center">
+            <OutcomeMenu column={column} onPick={(o) => onSetOutcome(column, o)} />
+            {!isInbox && (
+              <button
+                type="button"
+                onClick={() => onMakeInbox(column)}
+                aria-label={`Usar ${column.title} como etapa de entrada dos leads do WhatsApp`}
+                title="Usar como etapa de entrada (leads novos do WhatsApp caem aqui)"
+                className="h-7 w-7 grid place-items-center rounded-lg text-muted hover:text-fg hover:bg-card opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
+              >
+                <Inbox className="w-3.5 h-3.5" />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => onDeleteColumn(column)}
+              aria-label={`Excluir etapa ${column.title}`}
+              className="h-7 w-7 grid place-items-center rounded-lg text-muted hover:text-hot hover:bg-hot-soft opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
           </span>
-        )}
-        <span className="ml-auto text-xs text-muted tabular-nums">{brl(total)}</span>
-        <OutcomeMenu column={column} onPick={(o) => onSetOutcome(column, o)} />
-        {!isInbox && (
-          <button
-            type="button"
-            onClick={() => onMakeInbox(column)}
-            aria-label={`Usar ${column.title} como etapa de entrada dos leads do WhatsApp`}
-            title="Usar como etapa de entrada (leads novos do WhatsApp caem aqui)"
-            className="h-7 w-7 grid place-items-center rounded-lg text-muted hover:text-fg hover:bg-card opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
-          >
-            <Inbox className="w-3.5 h-3.5" />
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={() => onDeleteColumn(column)}
-          aria-label={`Excluir etapa ${column.title}`}
-          className="h-7 w-7 grid place-items-center rounded-lg text-muted hover:text-hot hover:bg-hot-soft opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-        </button>
+        </div>
       </header>
 
       <div ref={setNodeRef} className={cn("flex-1 overflow-y-auto px-2.5 pb-2.5 flex flex-col gap-2 min-h-[120px] rounded-b-2xl transition-colors", isOver && "bg-line/40")}>
@@ -480,6 +547,7 @@ export default function KanbanPage() {
   const deleteBoard = useDeleteBoard();
   const createColumn = useCreateColumn();
   const deleteColumn = useDeleteColumn();
+  const renameColumn = useRenameColumn();
   const moveCard = useMoveCard();
   const inbox = useInboxColumn();
   const setInbox = useSetInboxColumn();
@@ -556,6 +624,7 @@ export default function KanbanPage() {
     collision.start(e.active.id);
     setActiveDrag(card);
     setDragColumns(columns);
+    document.body.classList.add("zf-dragging");
   };
 
   // Enquanto arrasta para outra etapa, já mostra o card nela.
@@ -603,6 +672,7 @@ export default function KanbanPage() {
   const handleDragEnd = (e: DragEndEvent) => {
     lastDragEnd.current = Date.now();
     setActiveDrag(null);
+    document.body.classList.remove("zf-dragging");
     const { active, over } = e;
     if (!over) { setDragColumns(null); return; }
     const id = cardIdOf(String(active.id));
@@ -775,7 +845,7 @@ export default function KanbanPage() {
         {colsLoading ? (
           <div className="flex gap-4">{[0, 1, 2].map((i) => <span key={i} className="skeleton w-[296px] h-[420px] rounded-2xl shrink-0" />)}</div>
         ) : (
-          <DndContext sensors={sensors} collisionDetection={collision.detect} measuring={{ droppable: { strategy: MeasuringStrategy.Always } }} onDragStart={handleDragStart} onDragOver={handleDragOver} onDragEnd={handleDragEnd} onDragCancel={() => { setActiveDrag(null); setDragColumns(null); }}>
+          <DndContext sensors={sensors} collisionDetection={collision.detect} measuring={{ droppable: { strategy: MeasuringStrategy.Always } }} onDragStart={handleDragStart} onDragOver={handleDragOver} onDragEnd={handleDragEnd} onDragCancel={() => { document.body.classList.remove("zf-dragging"); setActiveDrag(null); setDragColumns(null); }}>
             <div className="flex gap-4 h-full pb-4 items-start">
               {localColumns.map((col) => (
                 <StageColumn
@@ -791,6 +861,7 @@ export default function KanbanPage() {
                   isInbox={inbox.column?.id === col.id}
                   onMakeInbox={(c) => setInbox.mutate(c.id)}
                   onSetOutcome={(c, outcome) => setOutcome.mutate({ id: c.id, outcome })}
+                  onRename={(c, title) => renameColumn.mutate({ id: c.id, boardId: c.board_id, title })}
                 />
               ))}
               <button
@@ -802,13 +873,18 @@ export default function KanbanPage() {
               </button>
             </div>
 
-            <DragOverlay>
-              {activeDrag && (
-                <div className="w-[272px] bg-card border border-fg rounded-xl p-3 flex flex-col gap-2.5 shadow-elev pointer-events-none">
-                  <CardBody card={activeDrag} tags={tags} next={nextTasks.get(activeDrag.lead_id)} />
-                </div>
-              )}
-            </DragOverlay>
+            {/* O card que segue o ponteiro vai direto no <body>: dentro da página, a animação de entrada
+                (transform) e a rolagem do quadro deslocavam o card para longe do cursor. */}
+            {typeof document !== "undefined" && createPortal(
+              <DragOverlay zIndex={80} dropAnimation={{ duration: 180, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" }}>
+                {activeDrag && (
+                  <div className="zf-drag-card bg-card border border-fg rounded-xl p-3 flex flex-col gap-2.5 shadow-elev cursor-grabbing select-none">
+                    <CardBody card={activeDrag} tags={tags} next={nextTasks.get(activeDrag.lead_id)} />
+                  </div>
+                )}
+              </DragOverlay>,
+              document.body
+            )}
           </DndContext>
         )}
       </div>

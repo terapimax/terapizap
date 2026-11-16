@@ -95,7 +95,7 @@ export function LeadHistory({ lead, origin }: { lead: LeadFull; origin: string }
                     )}
                     {m.body && <p className="whitespace-pre-wrap break-words">{m.body}</p>}
                     <p className={cn("mt-1 text-[10px] flex items-center gap-1 justify-end tabular-nums", m.from_me ? "opacity-70" : "text-muted")}>
-                      {m.by_zapflow && <span className="inline-flex items-center gap-0.5 font-semibold" title="Enviada pelo ZapFlow (funil, gatilho ou tarefa)"><Zap className="w-3 h-3" aria-hidden="true" /> ZapFlow ·</span>}
+                      {m.by_zapflow && <span className="inline-flex items-center gap-0.5 font-semibold" title="Enviada automaticamente (funil, gatilho ou tarefa)"><Zap className="w-3 h-3" aria-hidden="true" /> Automática ·</span>}
                       {time(m.at)}
                     </p>
                   </div>
