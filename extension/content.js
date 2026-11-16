@@ -1535,10 +1535,62 @@
   let imp = { stage: 'idle', chats: [], labels: [], isBusiness: false, known: null, error: '', progress: null, result: null,
     opts: { days: 90, contacts: true, archived: true, label: '', withLabels: true, column: 'inbox' } };
 
-  function openImport() {
+  // Sincronizar = importar de novo com os mesmos filtros, só o que mudou desde a última vez.
+  // Fica guardado no navegador, por conta: os filtros escolhidos e quando foi a última sincronização.
+  const SYNC_KEY = 'zf_sync';
+  const SYNC_MARGIN = 10 * 60000; // revisa também os últimos 10 min antes da última vez (relógio/atraso)
+  let syncState = { uid: null, opts: null, lastAt: 0, last: null };
+
+  async function loadSyncState() {
+    let uid = null;
+    try { uid = (await sb.auth.getSession()).data.session?.user?.id || null; } catch (e) { /* sem sessão */ }
+    let saved = null;
+    try { saved = (await chrome.storage.local.get(SYNC_KEY))[SYNC_KEY]; } catch (e) { /* sem storage */ }
+    syncState = saved && saved.uid === uid ? saved : { uid, opts: null, lastAt: 0, last: null };
+    if (syncState.opts) Object.assign(imp.opts, syncState.opts);
+  }
+  function saveSyncState() {
+    try { chrome.storage.local.set({ [SYNC_KEY]: syncState }); } catch (e) { /* sem storage */ }
+  }
+
+  async function openImport() {
     toggleSidebar(true);
     switchTab('importar');
-    if (imp.stage !== 'scanning' && imp.stage !== 'importing') scanChats();
+    if (imp.stage === 'scanning' || imp.stage === 'importing') return;
+    if (!sb || !loaded) { imp.stage = 'error'; imp.error = 'Entre na sua conta primeiro.'; return renderImport(); }
+    await loadSyncState();
+    // já sincronizou antes: mostra o resumo e o botão de um clique; senão, a escolha dos filtros
+    if (syncState.lastAt) { imp.stage = 'home'; renderImport(); } else scanChats();
+  }
+
+  // Um clique: lê as conversas e sincroniza na hora com os filtros salvos (sem tela de prévia).
+  async function quickSync() {
+    await scanChats({ quiet: true });
+    if (imp.stage !== 'ready') return;
+    const since = syncState.lastAt - SYNC_MARGIN;
+    // quem ainda não é lead + quem já é lead e conversou desde a última vez (o resto não mudou)
+    const list = importList().filter((c) => !isKnown(c) || (c.t && c.t >= since));
+    if (!list.length) {
+      syncState.lastAt = imp.scannedAt;
+      syncState.last = { created: 0, existing: 0, tagged: 0, cards: 0, skipped: 0 };
+      saveSyncState();
+      imp.stage = 'done';
+      imp.result = syncState.last;
+      return renderImport();
+    }
+    return runImport(list);
+  }
+
+  function filtersText() {
+    const o = imp.opts;
+    const days = (IMPORT_DAYS.find(([v]) => v === o.days) || [0, 'Todas as conversas'])[1];
+    const parts = [o.days ? `Conversas dos últimos ${days}` : 'Todas as conversas'];
+    if (o.label) parts.push(`só com a etiqueta “${o.labelName || 'escolhida'}”`);
+    if (!o.contacts) parts.push('sem contatos salvos');
+    if (!o.archived) parts.push('sem arquivadas');
+    const col = o.column === 'inbox' ? inboxColumn() : crm.columns.find((c) => String(c.id) === String(o.column));
+    parts.push(col ? `novos vão para ${stageLabel(col)}` : 'novos ficam só em Leads');
+    return parts.join(' · ');
   }
 
   async function knownLeads() {
@@ -1551,10 +1603,12 @@
     }
   }
 
-  async function scanChats() {
+  async function scanChats({ quiet = false } = {}) {
     if (!sb || !loaded) { imp.stage = 'error'; imp.error = 'Entre na sua conta primeiro.'; return renderImport(); }
     imp.stage = 'scanning';
     imp.result = null;
+    imp.quick = quiet;
+    imp.scannedAt = Date.now();
     renderImport();
     try {
       const r = await engineRequest('ZF_ENGINE_LIST_CHATS', {}, 90000);
@@ -1562,6 +1616,8 @@
       const [known] = await Promise.all([knownLeads(), loadCrm()]);
       Object.assign(imp, { stage: 'ready', chats: r.chats || [], labels: r.labels || [], isBusiness: !!r.isBusiness, known });
       if (imp.opts.label && !imp.labels.some((l) => l.id === imp.opts.label)) imp.opts.label = '';
+      // a etapa salva pode ter sido apagada no painel: volta para a etapa de entrada
+      if (imp.opts.column && imp.opts.column !== 'inbox' && !crm.columns.some((c) => String(c.id) === String(imp.opts.column))) imp.opts.column = 'inbox';
     } catch (e) {
       imp.stage = 'error';
       imp.error = /column|schema|function/i.test((e && e.message) || '') ? 'O banco está na versão antiga. Rode o supabase/setup.sql de novo no Supabase.' : ((e && e.message) || 'Não foi possível ler as conversas.');
@@ -1593,26 +1649,46 @@
     const box = $('zf-import');
     if (!box) return;
     if (imp.stage === 'idle' || imp.stage === 'scanning') {
-      box.innerHTML = '<p class="zf-lead-note">Lendo suas conversas do WhatsApp…</p><div class="zf-skel"></div><div class="zf-skel"></div><div class="zf-skel"></div>';
+      box.innerHTML = `<p class="zf-lead-note">${imp.quick ? 'Sincronizando… lendo suas conversas do WhatsApp.' : 'Lendo suas conversas do WhatsApp…'}</p><div class="zf-skel"></div><div class="zf-skel"></div><div class="zf-skel"></div>`;
+      return;
+    }
+    if (imp.stage === 'home') {
+      const r = syncState.last;
+      const res = r ? (r.created || r.existing ? `${r.created} ${r.created === 1 ? 'lead novo' : 'leads novos'} · ${r.existing} ${r.existing === 1 ? 'atualizado' : 'atualizados'}` : 'Nada novo naquela vez') : '';
+      box.innerHTML = `
+        <div class="zf-sync-card">
+          <small>Última sincronização</small>
+          <b>${escapeHtml(fmtDue(new Date(syncState.lastAt).toISOString()))}</b>
+          ${res ? `<span>${res}</span>` : ''}
+          <span class="zf-sync-filters">${escapeHtml(filtersText())}</span>
+        </div>
+        <button type="button" class="zf-btn-primary" id="zf-sync-go">${window._zfSVG.retry}<span>Sincronizar agora</span></button>
+        <button type="button" class="zf-btn zf-btn-wide" id="zf-sync-edit">Mudar filtros</button>
+        <p class="zf-about" style="margin-top:12px">Traz quem conversou com você desde a última vez e atualiza quem já é lead (último contato e etiquetas). Pode repetir quantas vezes quiser: ninguém é duplicado. Grupos e contatos com etiqueta de ignorar não entram.</p>`;
+      $('zf-sync-go').onclick = quickSync;
+      $('zf-sync-edit').onclick = () => scanChats();
       return;
     }
     if (imp.stage === 'error') {
       box.innerHTML = `<div class="zf-imp-err" role="alert">${escapeHtml(imp.error)}</div><button type="button" class="zf-btn" id="zf-imp-retry">Tentar de novo</button>`;
-      $('zf-imp-retry').onclick = scanChats;
+      $('zf-imp-retry').onclick = () => (syncState.lastAt ? quickSync() : scanChats());
       return;
     }
     if (imp.stage === 'importing') {
       const p = imp.progress || { done: 0, total: 1 };
-      box.innerHTML = `<p class="zf-lead-note">Importando… não feche o WhatsApp.</p><div class="zf-progress" role="progressbar" aria-valuemin="0" aria-valuemax="${p.total}" aria-valuenow="${p.done}"><i style="width:${Math.round((p.done / Math.max(1, p.total)) * 100)}%"></i></div><p class="zf-about">${p.done} de ${p.total} conversas</p>`;
+      box.innerHTML = `<p class="zf-lead-note">Sincronizando… não feche o WhatsApp.</p><div class="zf-progress" role="progressbar" aria-valuemin="0" aria-valuemax="${p.total}" aria-valuenow="${p.done}"><i style="width:${Math.round((p.done / Math.max(1, p.total)) * 100)}%"></i></div><p class="zf-about">${p.done} de ${p.total} conversas</p>`;
       return;
     }
     if (imp.stage === 'done') {
       const r = imp.result;
-      box.innerHTML = `<div class="zf-imp-done" role="status"><b>Importação concluída</b>${r.created} ${r.created === 1 ? 'lead novo' : 'leads novos'}${r.cards ? ` · ${r.cards} no Kanban` : ''}<br>${r.existing} já ${r.existing === 1 ? 'era lead' : 'eram leads'} (completados)${r.tagged ? ` · ${r.tagged} etiquetas aplicadas` : ''}${r.skipped ? `<br>${r.skipped} sem número nem conversa válida foram pulados` : ''}</div>
-        <button type="button" class="zf-btn-primary" id="zf-imp-panel">Ver no painel</button>
-        <button type="button" class="zf-btn" id="zf-imp-again" style="margin-top:10px;width:100%">Importar outras</button>`;
+      const nothing = !r.created && !r.existing;
+      box.innerHTML = (nothing
+        ? `<div class="zf-imp-done zf-imp-none" role="status"><b>Tudo em dia</b>Ninguém novo conversou com você desde a última sincronização.</div>`
+        : `<div class="zf-imp-done" role="status"><b>Sincronização concluída</b>${r.created} ${r.created === 1 ? 'lead novo' : 'leads novos'}${r.cards ? ` · ${r.cards} no Kanban` : ''}<br>${r.existing} ${r.existing === 1 ? 'lead atualizado' : 'leads atualizados'}${r.tagged ? ` · ${r.tagged} etiquetas aplicadas` : ''}${r.skipped ? `<br>${r.skipped} sem número nem conversa válida foram pulados` : ''}</div>`)
+        + `<button type="button" class="zf-btn-primary" id="zf-imp-panel">Ver no painel</button>
+        <button type="button" class="zf-btn zf-btn-wide" id="zf-imp-again">Voltar</button>`;
       $('zf-imp-panel').onclick = () => openPanel('/dashboard/leads');
-      $('zf-imp-again').onclick = scanChats;
+      $('zf-imp-again').onclick = () => { imp.stage = 'home'; renderImport(); };
       return;
     }
 
@@ -1642,11 +1718,11 @@
       ${imp.labels.length ? setRow('zf-imp-tags', 'Trazer as etiquetas do WhatsApp', 'Viram etiquetas do seu painel e ficam ligadas às do WhatsApp.', o.withLabels) : ''}
 
       <button type="button" class="zf-btn-primary" id="zf-imp-go" style="margin-top:16px"></button>
-      <p class="zf-about" style="margin-top:8px">Quem já é lead não é duplicado: só ganha a conversa, o último contato e as etiquetas. Grupos não entram.</p>
+      <p class="zf-about" style="margin-top:8px">Quem já é lead não é duplicado: só ganha a conversa, o último contato e as etiquetas. Grupos não entram. Os filtros ficam salvos: da próxima vez é só clicar em Sincronizar agora.</p>
       <ul class="zf-imp-list" id="zf-imp-list" aria-label="Conversas que serão importadas"></ul>`;
 
     const days = $('zf-imp-days'); days.onchange = () => { o.days = Number(days.value); renderImportSummary(); };
-    if ($('zf-imp-label')) $('zf-imp-label').onchange = (e) => { o.label = e.target.value; renderImportSummary(); };
+    if ($('zf-imp-label')) $('zf-imp-label').onchange = (e) => { o.label = e.target.value; o.labelName = (imp.labels.find((l) => l.id === o.label) || {}).name || ''; renderImportSummary(); };
     $('zf-imp-contacts').onchange = (e) => { o.contacts = e.target.checked; renderImportSummary(); };
     $('zf-imp-archived').onchange = (e) => { o.archived = e.target.checked; renderImportSummary(); };
     $('zf-imp-col').onchange = (e) => { o.column = e.target.value; };
@@ -1662,7 +1738,7 @@
     const sum = $('zf-imp-sum');
     if (sum) sum.innerHTML = `<b>${list.length} ${list.length === 1 ? 'conversa' : 'conversas'}</b><span>${fresh.length} ${fresh.length === 1 ? 'nova' : 'novas'} · ${list.length - fresh.length} já ${list.length - fresh.length === 1 ? 'é lead' : 'são leads'}${ignored ? ` · ${ignored} com etiqueta de ignorar (fica${ignored === 1 ? '' : 'm'} de fora)` : ''}</span>`;
     const go = $('zf-imp-go');
-    if (go) { go.disabled = !list.length; go.textContent = list.length ? `Importar ${list.length} ${list.length === 1 ? 'conversa' : 'conversas'}` : 'Nenhuma conversa com esses filtros'; }
+    if (go) { go.disabled = !list.length; go.textContent = list.length ? `Sincronizar ${list.length} ${list.length === 1 ? 'conversa' : 'conversas'}` : 'Nenhuma conversa com esses filtros'; }
     const ul = $('zf-imp-list');
     if (ul) {
       const shown = list.slice(0, 60);
@@ -1672,9 +1748,10 @@
     }
   }
 
-  async function runImport() {
-    const list = importList();
+  async function runImport(given) {
+    const list = Array.isArray(given) ? given : importList();
     if (!list.length) return;
+    const startedAt = imp.scannedAt || Date.now();
     const labels = imp.opts.withLabels ? imp.labels.map((l) => ({ id: l.id, name: l.name, color: l.color })) : [];
     const columnId = importColumnId();
     const total = { created: 0, existing: 0, tagged: 0, cards: 0, skipped: 0 };
@@ -1696,11 +1773,16 @@
       }
       imp.stage = 'done';
       imp.result = total;
-      showToast(`${total.created} ${total.created === 1 ? 'lead importado' : 'leads importados'}`);
+      // guarda os filtros e a hora: a próxima sincronização olha só o que mudou desde agora
+      syncState.lastAt = startedAt;
+      syncState.last = total;
+      syncState.opts = { ...imp.opts };
+      saveSyncState();
+      showToast(total.created ? `${total.created} ${total.created === 1 ? 'lead novo' : 'leads novos'}` : 'Conversas sincronizadas');
     } catch (e) {
       console.warn('ZapFlow: importação falhou', e);
       imp.stage = 'error';
-      imp.error = (total.created ? `Parou no meio (${total.created} já foram importados; pode importar de novo sem duplicar). ` : '') + (/function|schema/i.test((e && e.message) || '') ? 'Rode o supabase/setup.sql de novo no Supabase.' : ((e && e.message) || 'Erro desconhecido.'));
+      imp.error = (total.created ? `Parou no meio (${total.created} já entraram; pode sincronizar de novo sem duplicar). ` : '') + (/function|schema/i.test((e && e.message) || '') ? 'Rode o supabase/setup.sql de novo no Supabase.' : ((e && e.message) || 'Erro desconhecido.'));
     }
     renderImport();
     loadCrm().then(() => loadLead({ quiet: true }));

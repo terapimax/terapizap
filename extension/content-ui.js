@@ -1,6 +1,6 @@
 // ZapFlow v3.7 — HTML da barra lateral (só estrutura; a lógica fica em content.js)
 
-const ZF_VERSION = '3.12.0';
+const ZF_VERSION = '3.13.0';
 
 const _zfIcon = (paths, size = 16, extra = '') =>
   `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" ${extra}>${paths}</svg>`;
@@ -54,7 +54,7 @@ const ZF_MENU = [
   { label: 'Tarefas', icon: 'tasks', path: '/dashboard/tarefas' },
   { label: 'Leads', icon: 'users', path: '/dashboard/leads' },
   { label: 'Kanban', icon: 'kanban', path: '/dashboard/kanban' },
-  { label: 'Importar conversas', icon: 'download', action: 'importar' },
+  { label: 'Sincronizar conversas', icon: 'retry', action: 'importar' },
   '-',
   { label: 'Ajustes', icon: 'gear', action: 'ajustes' },
   { label: 'Sair', icon: 'logout', action: 'logout', id: 'zf-menu-logout' },
@@ -133,10 +133,10 @@ function zfBuildSidebar() {
     </footer>
   </section>
 
-  <section class="zf-page" data-page="importar" aria-label="Importar conversas">
+  <section class="zf-page" data-page="importar" aria-label="Sincronizar conversas">
     <div class="zf-subhead">
       <button type="button" class="zf-icon-btn" id="zf-import-back" aria-label="Voltar">${S.back}</button>
-      <h2>Importar conversas</h2>
+      <h2>Sincronizar conversas</h2>
     </div>
     <div class="zf-lead" id="zf-import" aria-live="polite"></div>
   </section>
@@ -175,7 +175,7 @@ function zfBuildSidebar() {
         ${toggle('zf-s-history', 'Guardar histórico de conversas', 'As últimas 50 mensagens de cada lead (só o texto; mídias aparecem como “Áudio”, “Foto”…), por 90 dias, para ver na ficha do lead no painel. Contatos ignorados nunca.')}
         ${toggle('zf-s-label-sync', 'Sincronizar etiquetas do WhatsApp Business', 'Etiquetar uma conversa no WhatsApp põe a etiqueta no lead, e o contrário pela aba Lead.')}
         <p class="zf-about" id="zf-capture-where" style="margin-top:6px"></p>
-        <button type="button" class="zf-btn" id="zf-open-import" style="margin-top:10px">${S.download} Importar conversas do WhatsApp</button>
+        <button type="button" class="zf-btn" id="zf-open-import" style="margin-top:10px">${S.retry} Sincronizar conversas do WhatsApp</button>
       </div>
       <div class="zf-sec">
         <h3>Funis</h3>

@@ -523,6 +523,17 @@ html[data-zf-theme="light"] .zf-sched-when input { color-scheme: light; }
 .zf-progress i { display: block; height: 100%; background: var(--zf-primary); transition: width 0.2s; }
 .zf-imp-done { padding: 14px; border-radius: 10px; background: var(--zf-ok-soft); color: var(--zf-ok); font-size: 13px; line-height: 1.5; margin-bottom: 12px; }
 .zf-imp-done b { display: block; font-size: 14px; }
+.zf-imp-done.zf-imp-none { background: var(--zf-surface); color: var(--zf-muted); }
+.zf-imp-done.zf-imp-none b { color: var(--zf-fg); }
+/* Sincronizar: resumo da última vez + filtros salvos */
+.zf-sync-card { display: flex; flex-direction: column; gap: 4px; padding: 14px; border-radius: 12px; border: 1px solid var(--zf-line); margin: 4px 0 14px; }
+.zf-sync-card small { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--zf-muted); }
+.zf-sync-card b { font-size: 15px; font-weight: 700; color: var(--zf-fg); }
+.zf-sync-card span { font-size: 12px; color: var(--zf-muted); line-height: 1.5; }
+.zf-sync-filters { margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--zf-line); }
+.zf-btn-primary svg { width: 16px; height: 16px; }
+.zf-btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.zf-btn-wide { width: 100%; margin-top: 10px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .zf-imp-err { padding: 12px; border-radius: 10px; background: var(--zf-hot-soft); color: var(--zf-hot); font-size: 13px; margin-bottom: 12px; }
 .zf-lead .zf-set { padding: 4px 0; }
 .zf-lead-block { font-size: 13px; line-height: 1.45; padding: 10px 12px; border-radius: 10px; background: var(--zf-warn-soft); color: var(--zf-warn); margin: 12px 0 4px; }
