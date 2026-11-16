@@ -272,6 +272,20 @@
                 reply(msg.requestId, info ? Object.assign({ ok: true }, info) : { ok: false, error: 'Conversa não encontrada.' });
                 break;
             }
+            case 'ZF_ENGINE_AVATAR': {
+                // Endereço da foto de perfil (miniatura). Sem foto, ou escondida pela privacidade da pessoa: url null.
+                if (!(await waitReady(5000))) return reply(msg.requestId, { ok: false, notReady: true, error: 'Motor do WhatsApp não carregou.' });
+                try {
+                    const url = await Promise.race([
+                        WPP.contact.getProfilePictureUrl(msg.chatId, false),
+                        new Promise((_, rej) => setTimeout(() => rej(new Error('demorou')), 9000)),
+                    ]);
+                    reply(msg.requestId, { ok: true, url: url && /^https:\/\//.test(String(url)) ? String(url) : null });
+                } catch (e) {
+                    reply(msg.requestId, { ok: false, error: (e && e.message) || 'Não foi possível ver a foto.' });
+                }
+                break;
+            }
             case 'ZF_ENGINE_SEND':
                 handleSend(msg);
                 break;

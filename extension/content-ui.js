@@ -1,6 +1,6 @@
 // ZapFlow v3.7 — HTML da barra lateral (só estrutura; a lógica fica em content.js)
 
-const ZF_VERSION = '3.14.0';
+const ZF_VERSION = '3.15.0';
 
 const _zfIcon = (paths, size = 16, extra = '') =>
   `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" ${extra}>${paths}</svg>`;
@@ -173,6 +173,7 @@ function zfBuildSidebar() {
         ${toggle('zf-s-capture', 'Capturar novos contatos', 'Quem mandar mensagem e ainda não for lead vira lead e entra no Kanban. Só conversas individuais.')}
         ${toggle('zf-s-capture-skip', 'Ignorar contatos salvos na agenda', 'Útil se você usa o mesmo WhatsApp para amigos e família.')}
         ${toggle('zf-s-history', 'Guardar histórico de conversas', 'As últimas 50 mensagens de cada lead (só o texto; mídias aparecem como “Áudio”, “Foto”…), por 90 dias, para ver na ficha do lead no painel. Contatos ignorados nunca.')}
+        ${toggle('zf-s-avatars', 'Guardar a foto de perfil dos leads', 'A foto vem do WhatsApp (só de quem deixa visível para você) e aparece no painel, em Leads e no Kanban. Uma cópia pequena fica na sua conta; contatos ignorados nunca.')}
         ${toggle('zf-s-label-sync', 'Sincronizar etiquetas do WhatsApp Business', 'Etiquetar uma conversa no WhatsApp põe a etiqueta no lead, e o contrário pela aba Lead.')}
         <p class="zf-about" id="zf-capture-where" style="margin-top:6px"></p>
         <button type="button" class="zf-btn" id="zf-open-import" style="margin-top:10px">${S.retry} Sincronizar conversas do WhatsApp</button>

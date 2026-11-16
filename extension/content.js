@@ -19,7 +19,7 @@
   let sb = null;
   let currentFilter = 'all', showFavOnly = false, searchQuery = '';
   let messagesData = [], mediaData = [], funnelsData = [], triggersData = [], funnelsError = false, loaded = false;
-  const settings = { panelUrl: '', hideBar: false, barFav: false, barFunnels: true, stopOnReply: true, keywords: true, capture: true, captureSkip: false, labelSync: true, history: false, theme: 'auto' };
+  const settings = { panelUrl: '', hideBar: false, barFav: false, barFunnels: true, stopOnReply: true, keywords: true, capture: true, captureSkip: false, labelSync: true, history: false, avatars: true, theme: 'auto' };
   const $ = (id) => document.getElementById(id);
   // Marca da conta (white label): a mesma escolhida no painel, em Configurações > Marca
   let brand = { name: '', logo_url: '', icon_url: '', mark: '', accent: '', custom_domain: '' };
@@ -60,6 +60,7 @@
     if ($('zf-s-capture-skip')) $('zf-s-capture-skip').checked = !!settings.captureSkip;
     if ($('zf-s-label-sync')) $('zf-s-label-sync').checked = settings.labelSync !== false;
     if ($('zf-s-history')) $('zf-s-history').checked = settings.history === true;
+    if ($('zf-s-avatars')) $('zf-s-avatars').checked = settings.avatars !== false;
     if ($('zf-s-panel-url')) { $('zf-s-panel-url').value = settings.panelUrl || ''; $('zf-s-panel-url').placeholder = DEFAULT_PANEL_URL; }
     applyTheme();
     renderQuickBar();
@@ -440,6 +441,7 @@
       settings.history = e.target.checked; saveSettings();
       if (settings.history && leadState.status === 'lead' && leadChat) backfillHistory(leadChat, true);
     };
+    $('zf-s-avatars').onchange = (e) => { settings.avatars = e.target.checked; saveSettings(); if (settings.avatars && leadState.status === 'lead' && leadChat) syncAvatar(leadState.lead, leadChat.chatId); };
     $('zf-open-import').onclick = () => openImport();
     $('zf-import-back').onclick = () => switchTab('lead');
     $('zf-lead-open').onclick = () => { if (leadState.lead) openPanel('/dashboard/leads?lead=' + leadState.lead.id); };
@@ -1295,7 +1297,7 @@
       }
       if (my !== leadSeq) return;
       leadState = lead ? { status: 'lead', lead, tasks } : { status: 'none' };
-      if (lead) backfillHistory(leadChat);
+      if (lead) { backfillHistory(leadChat); syncAvatar(lead, leadChat.chatId); }
     } catch (e) {
       if (my !== leadSeq) return;
       console.warn('ZapFlow: falha ao carregar o lead', e);
@@ -1341,9 +1343,10 @@
 
     const name = st === 'lead' ? leadState.lead.name : leadChat.name;
     const phone = st === 'lead' ? (leadState.lead.phone || leadChat.phone) : leadChat.phone;
+    const photo = st === 'lead' && /^https:\/\//.test(leadState.lead.avatar || '') ? leadState.lead.avatar : '';
     const head = `
       <div class="zf-lead-head">
-        <span class="zf-avatar">${escapeHtml(initialsOf(name))}</span>
+        <span class="zf-avatar">${photo ? `<img src="${escapeHtml(photo)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}${photo ? '' : escapeHtml(initialsOf(name))}</span>
         <div class="zf-lead-id"><b>${escapeHtml(name)}</b><span class="zf-mm">${phone ? escapeHtml(fmtPhone(phone)) : 'Número escondido pelo WhatsApp'}</span></div>
       </div>`;
 
@@ -1510,8 +1513,133 @@
     }
     showToast(data && data.stage ? `Lead salvo em ${data.stage}` : 'Lead salvo');
     backfillHistory(leadChat, true);
+    if (data && data.lead_id) syncAvatar({ id: data.lead_id, avatar: null, lead_tags: [] }, leadChat.chatId);
     loadLead();
   }
+
+  // ===== FOTO DE PERFIL DOS LEADS =====
+  // O WhatsApp entrega o endereço da foto (que expira em poucos dias): a extensão baixa, reduz para 96 px
+  // (uns 5 KB) e guarda uma cópia na pasta da conta no Supabase; o endereço da cópia vai em leads.avatar,
+  // com ?v=<hora> para saber a idade. Atualiza a cada 30 dias. Quem não tem foto (ou esconde pela privacidade)
+  // é anotado e só é consultado de novo depois de 14 dias. Contatos com etiqueta de ignorar nunca.
+  const AVATAR_BUCKET = 'campaign_files';
+  const AVATAR_TTL = 30 * 86400000;
+  const AVATAR_MISS_KEY = 'zf_avatar_miss';
+  let avatarMiss = {};          // "<usuário>:<lead>" -> até quando não perguntar de novo
+  let avatarMissLoaded = false;
+  const avatarBusy = new Set();
+
+  async function loadAvatarMiss() {
+    if (avatarMissLoaded) return;
+    avatarMissLoaded = true;
+    try { avatarMiss = (await chrome.storage.local.get(AVATAR_MISS_KEY))[AVATAR_MISS_KEY] || {}; } catch (e) { avatarMiss = {}; }
+    const now = Date.now();
+    for (const k of Object.keys(avatarMiss)) if (avatarMiss[k] < now) delete avatarMiss[k];
+  }
+  function saveAvatarMiss() { try { chrome.storage.local.set({ [AVATAR_MISS_KEY]: avatarMiss }); } catch (e) { /* sem storage */ } }
+  const avatarAge = (url) => { const m = /[?&]v=(\d+)/.exec(url || ''); return m ? Date.now() - Number(m[1]) : Infinity; };
+  const avatarNeeded = (lead) => !lead.avatar || avatarAge(lead.avatar) > AVATAR_TTL;
+  const isBlockedLead = (lead) => (lead.lead_tags || []).some((x) => (crm.tags.find((t) => t.id === x.tag_id) || {}).is_blocking);
+
+  function fetchAvatarBlob(url) {
+    return new Promise((resolve, reject) => {
+      try {
+        chrome.runtime.sendMessage({ type: 'ZAPFLOW_FETCH_AVATAR', url }, (r) => {
+          if (chrome.runtime.lastError || !r || !r.success) return reject(new Error((r && r.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'sem resposta'));
+          const img = new Image();
+          img.onload = () => {
+            try {
+              const S = 96, side = Math.min(img.naturalWidth, img.naturalHeight);
+              if (!side) return reject(new Error('imagem vazia'));
+              const c = document.createElement('canvas');
+              c.width = c.height = S;
+              c.getContext('2d').drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, S, S);
+              c.toBlob((b) => (b ? resolve(b) : reject(new Error('não deu para reduzir'))), 'image/jpeg', 0.78);
+            } catch (e) { reject(e); }
+          };
+          img.onerror = () => reject(new Error('imagem inválida'));
+          img.src = r.base64;
+        });
+      } catch (e) { reject(e); }
+    });
+  }
+
+  /** Busca a foto do lead e guarda. Devolve 'ok' | 'miss' | 'skip' | 'fail'. Nunca lança. */
+  async function syncAvatar(lead, chatId, opts) {
+    opts = opts || {};
+    try {
+      if (!sb || !lead || !lead.id || !chatId || settings.avatars === false) return 'skip';
+      if (!/@(c\.us|lid)$/.test(chatId)) return 'skip';
+      if (isBlockedLead(lead)) return 'skip';
+      if (!opts.force && !avatarNeeded(lead)) return 'skip';
+      const uid = await userId();
+      if (!uid) return 'skip';
+      await loadAvatarMiss();
+      const missKey = uid + ':' + lead.id;
+      if (!opts.force && avatarMiss[missKey] > Date.now()) return 'skip';
+      if (avatarBusy.has(lead.id)) return 'skip';
+      avatarBusy.add(lead.id);
+      try {
+        const r = await engineRequest('ZF_ENGINE_AVATAR', { chatId }, 12000);
+        if (!r.ok) return 'fail'; // motor ocupado ou sem carregar: tenta depois, sem anotar
+        if (!r.url) { avatarMiss[missKey] = Date.now() + 14 * 86400000; saveAvatarMiss(); return 'miss'; }
+        let blob;
+        try { blob = await fetchAvatarBlob(r.url); }
+        catch (e) { console.warn('ZapFlow: não foi possível baixar a foto', e && e.message); avatarMiss[missKey] = Date.now() + 86400000; saveAvatarMiss(); return 'fail'; }
+        const path = `${uid}/avatars/${lead.id}-${Math.random().toString(36).slice(2, 10)}.jpg`;
+        const up = await sb.storage.from(AVATAR_BUCKET).upload(path, blob, { contentType: 'image/jpeg', upsert: false });
+        if (up.error) throw up.error;
+        const url = sb.storage.from(AVATAR_BUCKET).getPublicUrl(path).data.publicUrl + '?v=' + Date.now();
+        const { error } = await sb.from('leads').update({ avatar: url }).eq('id', lead.id);
+        if (error) { await sb.storage.from(AVATAR_BUCKET).remove([path]).catch(() => {}); throw error; }
+        // apaga a foto anterior (cada lead guarda uma só)
+        const old = /\/campaign_files\/([^?]+)/.exec(lead.avatar || '');
+        if (old) sb.storage.from(AVATAR_BUCKET).remove([decodeURIComponent(old[1])]).catch(() => {});
+        lead.avatar = url;
+        if (avatarMiss[missKey]) { delete avatarMiss[missKey]; saveAvatarMiss(); }
+        if (leadState.lead && leadState.lead.id === lead.id) { leadState.lead.avatar = url; if (!leadDirty) renderLead(); }
+        return 'ok';
+      } finally { avatarBusy.delete(lead.id); }
+    } catch (e) {
+      console.warn('ZapFlow: foto de perfil falhou', e && e.message);
+      return 'fail';
+    }
+  }
+
+  // Leads antigos (e fotos com mais de 30 dias): um por vez, devagar, enquanto o WhatsApp Web está aberto.
+  let avatarQueue = [];
+  let avatarQueueAt = 0;
+  async function buildAvatarQueue() {
+    avatarQueueAt = Date.now();
+    const uid = await userId();
+    if (!uid) return;
+    await loadAvatarMiss();
+    const rows = [];
+    for (let from = 0; from < 5000; from += 1000) {
+      const { data, error } = await sb.from('leads').select('id,wa_id,phone_key,avatar,last_contact_at,lead_tags(tag_id)').order('id').range(from, from + 999);
+      if (error) return;
+      rows.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+    avatarQueue = rows
+      .filter((l) => (l.wa_id || l.phone_key) && avatarNeeded(l) && !isBlockedLead(l) && !(avatarMiss[uid + ':' + l.id] > Date.now()))
+      .sort((a, b) => String(b.last_contact_at || '').localeCompare(String(a.last_contact_at || '')) || b.id - a.id);
+  }
+  async function avatarTick() {
+    let wait = 60000;
+    try {
+      if (sb && loaded && settings.avatars !== false && !document.hidden) {
+        if (!avatarQueue.length && Date.now() - avatarQueueAt > 30 * 60000) await buildAvatarQueue();
+        const lead = avatarQueue.shift();
+        if (lead) {
+          const r = await syncAvatar(lead, lead.wa_id || (lead.phone_key + '@c.us'));
+          wait = (r === 'skip' ? 1500 : 12000) + Math.random() * 13000; // 12 a 25 s entre uma consulta e outra
+        }
+      }
+    } catch (e) { /* tenta no próximo ciclo */ }
+    setTimeout(avatarTick, wait);
+  }
+  setTimeout(avatarTick, 60000);
 
   // ----- Captura automática (mensagem recebida) -----
   const seenLeadMsgs = new Set();
@@ -1533,6 +1661,7 @@
     if (data && data.created) {
       showToast(`Novo lead: ${m.name}${data.stage ? ' → ' + data.stage : ''}`);
       backfillHistory({ chatId: m.chatId, phone: m.phone, isGroup: false });
+      if (data.lead_id) syncAvatar({ id: data.lead_id, avatar: null, lead_tags: [] }, m.chatId);
     }
     if (leadChat && leadChat.chatId === m.chatId) loadLead({ quiet: true });
   }

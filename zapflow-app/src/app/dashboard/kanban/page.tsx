@@ -32,6 +32,7 @@ import { blockedLeadIds, useAddToBoard, useCreateLead, useLeads, useTags } from 
 import { Modal } from "@/components/ui/modal";
 import { LeadDetailModal, TEMP, TempPicker, inputCls } from "@/components/features/lead-detail-modal";
 import { TagList, TagPicker } from "@/components/features/tags";
+import { LeadAvatar } from "@/components/features/lead-avatar";
 import { useOwners } from "@/hooks/use-owners";
 import { OwnerDot } from "@/components/features/owners";
 import { CampaignPicker, CardItemsEditor } from "@/components/features/catalog";
@@ -41,7 +42,7 @@ import { Button, Chip, EmptyState, SearchInput } from "@/components/ui/shared";
 import type { ColumnOutcome, KanbanCardWithLead, KanbanColumnWithCards, LeadTemp, Owner, Tag, Task } from "@/types";
 import { useTasks } from "@/hooks/use-tasks";
 import { formatDue, isOpen, taskState } from "@/lib/tasks";
-import { brl, deaccent, formatPhone, initials, phoneKey, tagsOf } from "@/lib/leads";
+import { brl, deaccent, formatPhone, phoneKey, tagsOf } from "@/lib/leads";
 import { TaskIcon } from "@/components/features/task-sheets";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -140,7 +141,7 @@ function CardBody({ card, tags, next }: { card: KanbanCardWithLead; tags: Tag[];
   return (
     <>
       <div className="flex items-center gap-2.5">
-        <span className="w-8 h-8 rounded-full bg-surface border border-line grid place-items-center text-xs font-semibold shrink-0">{initials(lead.name)}</span>
+        <LeadAvatar name={lead.name} src={lead.avatar} className="w-8 h-8 text-xs" />
         <div className="min-w-0 flex-1">
           <p className="font-semibold leading-tight truncate">{lead.name}</p>
           {lead.phone && <p className="text-xs text-muted tabular-nums truncate">{formatPhone(lead.phone)}</p>}

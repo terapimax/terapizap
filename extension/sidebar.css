@@ -181,7 +181,8 @@ html.zf-push-bottom #main { padding-bottom: var(--zf-push-bottom) !important; bo
 .zf-seg button { height: 32px; border: 0; border-radius: 8px; background: transparent; font-size: 13px; font-weight: 500; color: var(--zf-muted) !important; }
 .zf-seg button[aria-pressed="true"] { background: var(--zf-bg); color: var(--zf-fg) !important; font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
 .zf-account { display: flex; align-items: center; gap: 10px; }
-.zf-avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--zf-surface); border: 1px solid var(--zf-line); display: grid; place-items: center; font-size: 12px; font-weight: 600; flex-shrink: 0; }
+.zf-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.zf-avatar { overflow: hidden; width: 34px; height: 34px; border-radius: 50%; background: var(--zf-surface); border: 1px solid var(--zf-line); display: grid; place-items: center; font-size: 12px; font-weight: 600; flex-shrink: 0; }
 .zf-account .zf-mm { flex: 1; font-size: 13px; color: var(--zf-fg); }
 .zf-btn { height: 34px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--zf-line); background: var(--zf-bg); font-size: 13px; font-weight: 600; }
 .zf-btn:hover { background: var(--zf-surface); }

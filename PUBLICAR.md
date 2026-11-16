@@ -71,6 +71,23 @@ Pronto: o menu ☰ e os botões “Abrir no painel” passam a abrir o painel pu
 - **Os envios continuam precisando do WhatsApp Web aberto?** Sim. Publicar o painel não muda
   isso: quem envia é a extensão, no seu navegador.
 
+## Foto de perfil dos leads
+
+A extensão (versão **3.15.0** ou maior) busca a foto de perfil do WhatsApp e mostra no painel, em
+**Leads**, no **Kanban** e na ficha do lead. Quem não tem foto (ou esconde pela privacidade do
+WhatsApp) continua com as iniciais.
+
+- **Não precisa mexer no banco**: a foto usa a coluna e a pasta de arquivos que já existem.
+- Ao recarregar a extensão, o Chrome pode pedir para **aceitar uma nova permissão** (acesso aos
+  endereços do WhatsApp para baixar as fotos). Aceite. Sem isso a foto não aparece.
+- A foto aparece quando você abre a conversa e quando um lead novo chega. Os leads antigos são
+  preenchidos aos poucos, **um a cada 12–25 segundos**, enquanto o WhatsApp Web estiver aberto
+  (uns 150 por hora, começando pelos contatos mais recentes). Isso é de propósito, para não
+  chamar a atenção do WhatsApp.
+- A cópia é pequena (96 px, uns 5 KB) e fica na sua conta. É renovada a cada 30 dias e apagada
+  quando o lead é excluído. Contatos com etiqueta de ignorar nunca têm foto guardada.
+- Para desligar: **Ajustes da extensão → Guardar a foto de perfil dos leads**.
+
 ## Marca própria (white label)
 
 Em **Configurações → Marca**, cada conta troca o nome, envia o logotipo horizontal e o ícone

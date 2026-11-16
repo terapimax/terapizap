@@ -8,6 +8,7 @@ import { Modal } from "@/components/ui/modal";
 import { Button, Chip, EmptyState, SearchInput } from "@/components/ui/shared";
 import { LeadDetailModal, TEMP, TempPicker, inputCls } from "@/components/features/lead-detail-modal";
 import { TagList, TagManager, TagMenu, TagPicker } from "@/components/features/tags";
+import { LeadAvatar } from "@/components/features/lead-avatar";
 import { blockedLeadIds, invalidateLeads, useAddToBoard, useBulkTag, useCreateLead, useDeleteLeads, useLeads, useTags } from "@/hooks/use-leads";
 import { useAllColumns, useBoards } from "@/hooks/use-kanban";
 import { useBulkOwner, useOwners } from "@/hooks/use-owners";
@@ -15,7 +16,7 @@ import { OwnerLabel } from "@/components/features/owners";
 import { CampaignPicker } from "@/components/features/catalog";
 import { useCampaigns } from "@/hooks/use-catalog";
 import { useOpenFromQuery } from "@/hooks/use-open-from-query";
-import { FIELD_LABEL, ORIGINS, deaccent, formatPhone, initials, phoneKey, tagsOf } from "@/lib/leads";
+import { FIELD_LABEL, ORIGINS, deaccent, formatPhone, phoneKey, tagsOf } from "@/lib/leads";
 import { downloadText, exportCsv, parseImport, runImport, type ImportReport, type ParsedImport } from "@/lib/leads-import";
 import { cn } from "@/lib/utils";
 import type { KanbanBoard, KanbanColumn, LeadFull, LeadTemp } from "@/types";
@@ -474,7 +475,7 @@ export default function LeadsPage() {
                         </td>
                         <td className="px-3 py-3">
                           <div className="flex items-center gap-2.5 min-w-0">
-                            <span className="w-8 h-8 rounded-full bg-surface border border-line grid place-items-center text-xs font-semibold shrink-0">{initials(l.name)}</span>
+                            <LeadAvatar name={l.name} src={l.avatar} className="w-8 h-8 text-xs" />
                             <div className="min-w-0">
                               <button type="button" className="font-semibold truncate block max-w-[240px] text-left hover:underline cursor-pointer" onClick={(e) => { e.stopPropagation(); setOpenId(l.id); }}>{l.name}</button>
                               <p className="text-xs text-muted tabular-nums truncate">{l.phone ? formatPhone(l.phone) : l.email || "Sem telefone"}</p>

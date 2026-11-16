@@ -147,6 +147,18 @@ export function useUpdateLead() {
   });
 }
 
+/** Apaga as cópias das fotos de perfil dos leads (ficam no Storage, junto das mídias). */
+/** Caminho da foto no Storage a partir do endereço público (que termina em ?v=<hora>). */
+const avatarPath = (url: string) => /\/campaign_files\/([^?]+)/.exec(url)?.[1];
+
+async function removeLeadAvatars(ids: number[]) {
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data } = await supabase.from("leads").select("avatar").in("id", ids.slice(i, i + 200)).not("avatar", "is", null);
+    const paths = (data ?? []).map((l) => avatarPath(l.avatar as string)).filter(Boolean).map((p) => decodeURIComponent(p as string));
+    if (paths.length) await supabase.storage.from("campaign_files").remove(paths);
+  }
+}
+
 /** Apaga leads de vez (com os cards, etiquetas e tarefas deles). */
 export function useDeleteLeads() {
   const qc = useQueryClient();
@@ -154,6 +166,7 @@ export function useDeleteLeads() {
     mutationFn: async (ids: number[]) => {
       // as tarefas somem junto (cascade); antes, apaga os áudios exclusivos delas
       for (const id of ids) await removeLeadTaskFiles(id).catch(() => {});
+      await removeLeadAvatars(ids).catch(() => {});
       for (let i = 0; i < ids.length; i += 200) {
         const { error } = await supabase.from("leads").delete().in("id", ids.slice(i, i + 200));
         if (error) throw error;

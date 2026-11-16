@@ -6,6 +6,7 @@ import { X, MessageCircle, Trash2, Loader2, CalendarClock, Bell, Send, Flame, Th
 import { isTopLayer, lockScroll, unlockScroll } from "@/components/ui/modal";
 import { TaskRow, useTaskSheets } from "@/components/features/task-sheets";
 import { TagPicker } from "@/components/features/tags";
+import { LeadAvatar } from "@/components/features/lead-avatar";
 import { LeadHistory } from "@/components/features/lead-history";
 import { useTasks } from "@/hooks/use-tasks";
 import { useAddToBoard, useDeleteLeads, useLead, useTags, useUpdateLead } from "@/hooks/use-leads";
@@ -15,7 +16,7 @@ import { useCampaigns, useCardItems, useCatalog } from "@/hooks/use-catalog";
 import { CampaignPicker, CardItemsEditor } from "@/components/features/catalog";
 import { draftFromSaved, itemsTotal, sameDraft, type DraftCardItem } from "@/lib/catalog";
 import { isOpen } from "@/lib/tasks";
-import { ORIGINS, formatPhone, initials, waLink } from "@/lib/leads";
+import { ORIGINS, formatPhone, waLink } from "@/lib/leads";
 import { cn } from "@/lib/utils";
 import { Button, Chip } from "@/components/ui/shared";
 import type { CardItem, LeadFull, LeadTemp } from "@/types";
@@ -227,7 +228,7 @@ function LeadForm({ lead, onClose, initialTab }: { lead: LeadFull; onClose: () =
     <>
       {/* Cabeçalho */}
       <div className="px-6 pt-5 pb-4 border-b border-line flex gap-4 items-start">
-        <span className="w-12 h-12 rounded-full bg-surface border border-line grid place-items-center text-base font-semibold shrink-0">{initials(form.name || lead.name)}</span>
+        <LeadAvatar name={form.name || lead.name} src={lead.avatar} className="w-12 h-12 text-base" />
         <div className="flex-1 min-w-0">
           <h2 id="lead-sheet-title" className="text-xl font-bold truncate">{form.name || lead.name}</h2>
           <p className="text-sm text-muted tabular-nums">{form.phone ? formatPhone(form.phone) : "Sem telefone"}</p>

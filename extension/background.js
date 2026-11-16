@@ -42,5 +42,28 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return true; // Keep message channel open for async response
     }
     
+    if (msg.type === 'ZAPFLOW_FETCH_AVATAR') {
+        // Foto de perfil: o segundo plano baixa porque a página do WhatsApp não permite (CORS).
+        // Só aceita endereços do WhatsApp, só imagem e no máximo 1 MB.
+        let host = '';
+        try { const u = new URL(msg.url); host = u.protocol === 'https:' ? u.hostname : ''; } catch (e) { /* endereço inválido */ }
+        if (!/(^|\.)(whatsapp\.net|fbcdn\.net)$/i.test(host)) { sendResponse({ success: false, error: 'Endereço não permitido.' }); return; }
+        fetch(msg.url, { credentials: 'omit' })
+            .then((res) => {
+                const type = (res.headers.get('content-type') || '').split(';')[0].trim();
+                if (!res.ok || !/^image\//i.test(type)) throw new Error('Resposta inválida (' + res.status + ').');
+                return res.arrayBuffer().then((buf) => ({ buf, type }));
+            })
+            .then(({ buf, type }) => {
+                if (buf.byteLength > 1048576) throw new Error('Imagem grande demais.');
+                let binary = '';
+                const bytes = new Uint8Array(buf);
+                for (let i = 0; i < bytes.byteLength; i += 8192) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+                sendResponse({ success: true, base64: 'data:' + type + ';base64,' + btoa(binary) });
+            })
+            .catch((err) => sendResponse({ success: false, error: err.message }));
+        return true;
+    }
+
     sendResponse({ ok: true });
 });
