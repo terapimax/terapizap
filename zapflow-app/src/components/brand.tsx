@@ -127,6 +127,8 @@ export function BrandHead() {
       document.head.appendChild(link);
     }
     link.href = favicon;
+    // Ao sair do painel (logout, login), o ícone do cliente sai junto e volta o favicon padrão.
+    return () => { link?.remove(); };
   }, [brand.name, favicon]);
   return null;
 }
