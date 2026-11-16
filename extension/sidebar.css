@@ -1,10 +1,10 @@
-/* ZapFlow — extensão v3.7 · visual alinhado ao painel (base neutra, preto nas ações, rosa na marca).
+/* ZapFlow — extensão v3.7 · visual alinhado ao painel (base neutra, preto nas ações, cor da marca nos detalhes — rosa por padrão, trocada pela conta em brand-kit.js).
    Tema: html[data-zf-theme] = "light" | "dark" (automático segue o tema do WhatsApp Web). */
 
 html {
   --zf-bg: #ffffff; --zf-surface: #f5f5f6; --zf-line: #e4e4e7; --zf-fg: #111113; --zf-muted: #5d5d66;
   --zf-primary: #111113; --zf-on-primary: #ffffff;
-  --zf-accent: #d1236f; --zf-accent-fg: #b3175b; --zf-accent-soft: #fce7f0;
+  --zf-accent: #d1236f; --zf-accent-fg: #b3175b; --zf-accent-soft: #fce7f0; --zf-on-accent: #fff; --zf-accent-deep: #8b2bd6;
   --zf-ok: #0e7a4f; --zf-ok-soft: #e3f5ec; --zf-warn: #9a5b00; --zf-warn-soft: #fff1d6;
   --zf-hot: #b42318; --zf-hot-soft: #fde8e7; --zf-cold: #1d4ed8; --zf-cold-soft: #e6edfd;
   --zf-shadow: 0 12px 40px rgba(17, 17, 19, 0.16);
@@ -13,7 +13,7 @@ html {
 html[data-zf-theme="dark"] {
   --zf-bg: #111214; --zf-surface: #1b1c20; --zf-line: #2c2d33; --zf-fg: #f4f4f6; --zf-muted: #a3a3ad;
   --zf-primary: #f4f4f6; --zf-on-primary: #0b0b0d;
-  --zf-accent: #e8478f; --zf-accent-fg: #f472b6; --zf-accent-soft: #3a1527;
+  --zf-accent: #e8478f; --zf-accent-fg: #f472b6; --zf-accent-soft: #3a1527; --zf-on-accent: #fff; --zf-accent-deep: #8b2bd6;
   --zf-ok: #4ade80; --zf-ok-soft: #11291c; --zf-warn: #fbbf24; --zf-warn-soft: #2e2208;
   --zf-hot: #f87171; --zf-hot-soft: #2d1414; --zf-cold: #93b4ff; --zf-cold-soft: #14203d;
   --zf-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
@@ -51,7 +51,7 @@ html.zf-push-bottom #main { padding-bottom: var(--zf-push-bottom) !important; bo
 
 /* ===== Cabeçalho ===== */
 .zf-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--zf-line); }
-.zf-mark { width: 28px; height: 28px; border-radius: 8px; background: var(--zf-accent); color: #fff; display: grid; place-items: center; flex-shrink: 0; }
+.zf-mark { width: 28px; height: 28px; border-radius: 8px; background: var(--zf-accent); color: var(--zf-on-accent); display: grid; place-items: center; flex-shrink: 0; }
 .zf-brand { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Marca (padrão ou a da conta: ícone quadrado + nome, ou só o logotipo) */
 .zf-brandbox { display: flex; align-items: center; gap: 10px; min-width: 0; }
@@ -61,6 +61,7 @@ html.zf-push-bottom #main { padding-bottom: var(--zf-push-bottom) !important; bo
 .zf-mark.zf-mark-letter { font-size: 14px; font-weight: 700; }
 .zf-logo { height: 28px; max-width: 150px; object-fit: contain; object-position: left center; display: block; }
 .zf-auth .zf-logo { height: 36px; max-width: 220px; }
+.zf-tb-letter { font: 700 16px/1 var(--zf-font); }
 #zf-toggle-btn img { width: 22px; height: 22px; object-fit: contain; border-radius: 5px; display: block; }
 .zf-engine { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--zf-muted); }
 .zf-engine i { width: 7px; height: 7px; border-radius: 50%; background: var(--zf-muted); }
@@ -202,7 +203,7 @@ html.zf-push-bottom #main { padding-bottom: var(--zf-push-bottom) !important; bo
 #zf-toggle-btn {
   position: fixed; top: 50%; right: 0; transform: translateY(-50%); z-index: 99998;
   width: 32px; height: 64px; border: 0; border-radius: 10px 0 0 10px; cursor: pointer;
-  background: var(--zf-accent); color: #fff; display: grid; place-items: center;
+  background: var(--zf-accent); color: var(--zf-on-accent); display: grid; place-items: center;
   box-shadow: -4px 0 16px rgba(0, 0, 0, 0.18); transition: right 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), width 0.15s;
 }
 #zf-toggle-btn:hover { width: 36px; }
@@ -280,7 +281,7 @@ html.zf-push-bottom #main { padding-bottom: var(--zf-push-bottom) !important; bo
 .zf-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* ===== Aba Funis ===== */
-.zf-tab-badge { display: inline-grid; place-items: center; min-width: 17px; height: 17px; padding: 0 5px; margin-left: 6px; border-radius: 999px; background: var(--zf-accent); color: #fff; font-size: 11px; font-weight: 700; vertical-align: 1px; animation: zf-badge-in 0.25s ease; }
+.zf-tab-badge { display: inline-grid; place-items: center; min-width: 17px; height: 17px; padding: 0 5px; margin-left: 6px; border-radius: 999px; background: var(--zf-accent); color: var(--zf-on-accent); font-size: 11px; font-weight: 700; vertical-align: 1px; animation: zf-badge-in 0.25s ease; }
 .zf-tab-badge[hidden] { display: none; }
 @keyframes zf-badge-in { from { transform: scale(0.4); opacity: 0; } to { transform: none; opacity: 1; } }
 .zf-th-fn, .zf-item:hover .zf-th-fn, .zf-item.zf-open .zf-th-fn { background: var(--zf-accent-soft); color: var(--zf-accent-fg); overflow: visible; }
@@ -289,7 +290,7 @@ html.zf-push-bottom #main { padding-bottom: var(--zf-push-bottom) !important; bo
 .zf-fn-running .zf-mm { color: var(--zf-accent-fg); font-weight: 600; }
 .zf-send:disabled { opacity: 0.35; cursor: not-allowed; }
 .zf-fire svg { width: 15px; height: 15px; }
-.zf-fire:not(:disabled):hover { background: var(--zf-accent); border-color: var(--zf-accent); color: #fff !important; }
+.zf-fire:not(:disabled):hover { background: var(--zf-accent); border-color: var(--zf-accent); color: var(--zf-on-accent) !important; }
 .zf-fn-detail { padding: 2px 8px 14px 14px; }
 .zf-steps { list-style: none; margin: 4px 0 10px; padding: 0; position: relative; }
 .zf-step { position: relative; display: flex; align-items: flex-start; gap: 10px; padding: 5px 0; }
@@ -308,7 +309,7 @@ html.zf-push-bottom #main { padding-bottom: var(--zf-push-bottom) !important; bo
 .zf-check input { width: 16px; height: 16px; margin: 0; accent-color: var(--zf-accent); cursor: pointer; }
 .zf-fire-btn {
   display: flex; align-items: center; justify-content: center; gap: 8px; position: relative; overflow: hidden;
-  background: linear-gradient(135deg, var(--zf-accent), #8b2bd6) !important; color: #fff !important;
+  background: linear-gradient(135deg, var(--zf-accent), var(--zf-accent-deep)) !important; color: var(--zf-on-accent) !important;
 }
 .zf-fire-btn span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .zf-fire-btn::after { content: ""; position: absolute; inset: 0; background: linear-gradient(100deg, transparent 30%, rgba(255,255,255,0.28) 50%, transparent 70%); transform: translateX(-100%); }
@@ -340,7 +341,7 @@ html.zf-firing #zf-toggle-btn svg { animation: zf-bolt-flicker 1.6s ease-in-out 
 .zf-run-retry { margin-top: 8px; height: 30px; padding: 0 10px; background: var(--zf-bg); }
 .zf-dock-count { margin-left: auto; color: var(--zf-muted); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .zf-dock-live .zf-dock-count { color: var(--zf-accent-fg); }
-.zf-dock-bolt { width: 20px; height: 20px; border-radius: 6px; background: var(--zf-accent); color: #fff; display: grid; place-items: center; flex-shrink: 0; }
+.zf-dock-bolt { width: 20px; height: 20px; border-radius: 6px; background: var(--zf-accent); color: var(--zf-on-accent); display: grid; place-items: center; flex-shrink: 0; }
 .zf-dock-bolt svg { width: 12px; height: 12px; }
 .zf-dock-live .zf-dock-bolt { animation: zf-bolt-flicker 1.2s ease-in-out infinite; }
 .zf-runs { max-height: 46vh; overflow-y: auto; }
@@ -377,7 +378,7 @@ html.zf-firing #zf-toggle-btn svg { animation: zf-bolt-flicker 1.6s ease-in-out 
 .zf-eng-ring circle { fill: none; stroke-width: 2.5; }
 .zf-eng-track { stroke: var(--zf-line); }
 .zf-eng-prog { stroke: var(--zf-accent); stroke-linecap: round; stroke-dasharray: 100; stroke-dashoffset: 100; transition: stroke-dashoffset 0.2s linear, opacity 0.3s ease, stroke 0.3s ease; }
-.zf-eng-core { position: absolute; inset: 14px; border-radius: 50%; background: var(--zf-accent); color: #fff; display: grid; place-items: center; font-size: 13px; font-weight: 800; transition: background 0.3s ease, transform 0.3s ease; }
+.zf-eng-core { position: absolute; inset: 14px; border-radius: 50%; background: var(--zf-accent); color: var(--zf-on-accent); display: grid; place-items: center; font-size: 13px; font-weight: 800; transition: background 0.3s ease, transform 0.3s ease; }
 .zf-eng-core svg { width: 12px; height: 12px; }
 .zf-eng[data-mode="fast"] .zf-eng-blades { opacity: 0.9; animation: zf-spin 0.55s linear infinite; }
 .zf-eng[data-mode="fast"] .zf-eng-core { animation: zf-core-glow 1s ease-in-out infinite; }
@@ -408,7 +409,7 @@ html.zf-firing #zf-toggle-btn svg { animation: zf-bolt-flicker 1.6s ease-in-out 
   transition: background 0.25s ease, border-color 0.25s ease, color 0.25s ease, transform 0.25s ease;
 }
 .zf-node svg { width: 55%; height: 55%; }
-.zf-node[data-s="done"] { background: var(--zf-accent); border-color: var(--zf-accent); color: #fff; }
+.zf-node[data-s="done"] { background: var(--zf-accent); border-color: var(--zf-accent); color: var(--zf-on-accent); }
 .zf-node[data-s="waiting"] { border-color: var(--zf-accent); border-style: dashed; color: var(--zf-accent-fg); }
 .zf-node[data-s="active"] { border-color: var(--zf-accent); color: var(--zf-accent-fg); background: var(--zf-accent-soft); transform: scale(1.15); }
 .zf-node[data-s="active"]::after { content: ""; position: absolute; inset: -2px; border-radius: 50%; border: 2px solid var(--zf-accent); animation: zf-ripple 1.1s ease-out infinite; }

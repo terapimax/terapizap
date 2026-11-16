@@ -1,7 +1,8 @@
 @import "tailwindcss";
 
 /* ============================================================
-   ZAPFLOW DESIGN SYSTEM v2 — base neutra, preto para ações, rosa ZapFlow para marca.
+   ZAPFLOW DESIGN SYSTEM v2 — base neutra, preto para ações, cor da marca nos detalhes
+   (rosa ZapFlow por padrão; a conta pode trocar em Configurações > Marca — ver lib/brand-kit.ts).
    Tema: claro por padrão, escuro pelo sistema ou pela classe .dark no <html>
    (a classe .light força claro mesmo com o sistema escuro).
    ============================================================ */
@@ -20,6 +21,7 @@
   --accent: #d1236f;
   --accent-fg: #b3175b;
   --accent-soft: #fce7f0;
+  --on-accent: #ffffff;
   --ok: #0e7a4f;
   --ok-soft: #e3f5ec;
   --warn: #9a5b00;
@@ -98,6 +100,7 @@
   --color-accent: var(--accent);
   --color-accent-fg: var(--accent-fg);
   --color-accent-soft: var(--accent-soft);
+  --color-on-accent: var(--on-accent);
   --color-ok: var(--ok);
   --color-ok-soft: var(--ok-soft);
   --color-warn: var(--warn);

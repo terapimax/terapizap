@@ -3,11 +3,12 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Clock, Copy, Globe, ImageUp, Loader2, RefreshCw, Trash2, TriangleAlert } from "lucide-react";
+import { Check, CheckCircle2, Clock, Copy, Globe, ImageUp, Loader2, Palette, RefreshCw, Trash2, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
-import { BRAND_KEY, BrandIcon, BrandLogo, useBrandRow } from "@/components/brand";
+import { BRAND_KEY, BrandIcon, BrandLogo, MarkTile, useBrandRow } from "@/components/brand";
 import { DEFAULT_BRAND_NAME, cleanDomain, resolveBrand, type BrandRow } from "@/lib/brand";
+import { ACCENT_PRESETS, DEFAULT_ACCENT, DEFAULT_MARK, MARKS, accentCss, accentPalette, cleanAccent, cleanMark, type MarkId } from "@/lib/brand-kit";
 import { Button } from "@/components/ui/shared";
 import { cn } from "@/lib/utils";
 
@@ -82,7 +83,7 @@ export function BrandingSettings() {
   // o formulário recomeça do que está salvo sempre que a marca salva muda
   return (
     <div className="flex flex-col gap-6">
-      <BrandingForm key={[row?.name, row?.logo_url, row?.icon_url].join("|")} row={row} />
+      <BrandingForm key={[row?.name, row?.logo_url, row?.icon_url, row?.mark, row?.accent].join("|")} row={row} />
       <DomainSettings />
     </div>
   );
@@ -94,12 +95,16 @@ function BrandingForm({ row }: { row: BrandRow | null }) {
   const [name, setName] = useState(row?.name ?? "");
   const [logo, setLogo] = useState<string | null>(row?.logo_url ?? null);
   const [icon, setIcon] = useState<string | null>(row?.icon_url ?? null);
+  const [mark, setMark] = useState<MarkId>(cleanMark(row?.mark));
+  const [accent, setAccent] = useState<string | null>(cleanAccent(row?.accent));
   const [uploading, setUploading] = useState<Kind | null>(null);
   // arquivos enviados nesta visita e ainda não salvos (para limpar se a pessoa trocar de ideia)
   const fresh = useRef<Set<string>>(new Set());
 
-  const draft = resolveBrand({ name, logo_url: logo, icon_url: icon });
-  const dirty = name.trim() !== (row?.name ?? "") || logo !== (row?.logo_url ?? null) || icon !== (row?.icon_url ?? null);
+  const draft = resolveBrand({ name, logo_url: logo, icon_url: icon, mark, accent });
+  const accentDirty = accent !== cleanAccent(row?.accent);
+  const dirty = name.trim() !== (row?.name ?? "") || logo !== (row?.logo_url ?? null) || icon !== (row?.icon_url ?? null)
+    || mark !== cleanMark(row?.mark) || accentDirty;
   const needsIcon = !!logo && !icon;
 
   const pick = async (kind: Kind, file: File) => {
@@ -136,7 +141,7 @@ function BrandingForm({ row }: { row: BrandRow | null }) {
       if (!user) throw new Error("Sessão expirada. Entre de novo.");
       const clean = name.replace(/\s+/g, " ").trim().slice(0, 40);
       const { error } = await supabase.from("branding").upsert(
-        { user_id: user.id, name: clean || null, logo_url: logo, icon_url: icon, updated_at: new Date().toISOString() },
+        { user_id: user.id, name: clean || null, logo_url: logo, icon_url: icon, mark: mark === DEFAULT_MARK ? null : mark, accent, updated_at: new Date().toISOString() },
         { onConflict: "user_id" }
       );
       if (error) throw new Error(/branding/i.test(error.message) && /exist|schema cache|not find/i.test(error.message) ? "Rode o supabase/setup.sql de novo no Supabase para ativar a marca própria." : error.message);
@@ -154,7 +159,7 @@ function BrandingForm({ row }: { row: BrandRow | null }) {
     onError: (e) => toast.error((e as Error).message || "Não foi possível salvar."),
   });
 
-  const reset = () => { setName(""); setLogo(null); setIcon(null); };
+  const reset = () => { setName(""); setLogo(null); setIcon(null); setMark(DEFAULT_MARK); setAccent(null); };
 
   return (
     <>
@@ -175,6 +180,11 @@ function BrandingForm({ row }: { row: BrandRow | null }) {
           Envie também o ícone quadrado: é ele que aparece quando o menu está recolhido e no botão da extensão.
         </p>
       )}
+
+      <MarkPicker value={mark} name={draft.name} hasImage={!!icon} onChange={setMark} />
+      <AccentPicker value={accent} onChange={setAccent} />
+      {/* enquanto escolhe, o painel inteiro já mostra a cor nova (some ao sair sem salvar) */}
+      {accentDirty && <style data-brand-preview dangerouslySetInnerHTML={{ __html: accentCss(accent ?? DEFAULT_ACCENT) }} />}
 
       {/* prévia: o menu aberto e o recolhido, lado a lado */}
       <div className="flex flex-col gap-2">
@@ -199,10 +209,89 @@ function BrandingForm({ row }: { row: BrandRow | null }) {
         <Button onClick={() => save.mutate()} disabled={!dirty || needsIcon || save.isPending || !!uploading}>
           {save.isPending && <Loader2 className="w-4 h-4 animate-spin" />} Salvar marca
         </Button>
-        {(name || logo || icon) && <Button variant="ghost" onClick={reset}>Voltar ao padrão</Button>}
+        {(name || logo || icon || accent || mark !== DEFAULT_MARK) && <Button variant="ghost" onClick={reset}>Voltar ao padrão</Button>}
         {dirty && !needsIcon && <span className="text-xs text-muted">Alterações ainda não salvas.</span>}
       </div>
     </>
+  );
+}
+
+// ── Símbolo e cor ────────────────────────────────────────
+
+const MARK_IDS = [...(Object.keys(MARKS) as (keyof typeof MARKS)[]), "letter"] as MarkId[];
+
+function MarkPicker({ value, name, hasImage, onChange }: { value: MarkId; name: string; hasImage: boolean; onChange: (m: MarkId) => void }) {
+  return (
+    <fieldset className="flex flex-col gap-2 min-w-0">
+      <legend className="text-sm font-semibold">Símbolo</legend>
+      <p className="text-xs text-muted">
+        {hasImage
+          ? "Como você enviou um ícone quadrado, ele aparece no lugar do símbolo. O símbolo continua na aba lateral da extensão no WhatsApp."
+          : "Aparece no quadradinho da marca: menu, login, aba do navegador e extensão."}
+      </p>
+      <div role="radiogroup" aria-label="Símbolo da marca" className="flex flex-wrap gap-1">
+        {MARK_IDS.map((id) => {
+          const on = value === id;
+          const label = id === "letter" ? "Inicial do nome" : MARKS[id as keyof typeof MARKS].label;
+          return (
+            <button key={id} type="button" role="radio" aria-checked={on} aria-label={label} title={label} onClick={() => onChange(id)}
+              className={cn("p-1 rounded-xl border-2 cursor-pointer transition-colors", on ? "border-fg" : "border-transparent hover:border-line")}>
+              <MarkTile brand={{ mark: id, name }} size={34} />
+            </button>
+          );
+        })}
+      </div>
+    </fieldset>
+  );
+}
+
+function AccentPicker({ value, onChange }: { value: string | null; onChange: (hex: string | null) => void }) {
+  const current = value ?? DEFAULT_ACCENT;
+  const preset = ACCENT_PRESETS.some((p) => p.hex === current);
+  // texto digitado no campo do código (null = mostra a cor atual)
+  const [typing, setTyping] = useState<string | null>(null);
+  const pick = (h: string) => onChange(h === DEFAULT_ACCENT ? null : h);
+  const light = accentPalette(current).light.on !== "#ffffff";
+  return (
+    <fieldset className="flex flex-col gap-2 min-w-0">
+      <legend className="text-sm font-semibold flex items-center gap-2"><Palette className="w-4 h-4" aria-hidden="true" /> Cor da marca</legend>
+      <p className="text-xs text-muted">
+        Substitui o rosa nos botões de destaque, contadores, gráficos, links e no quadradinho da marca, no painel e na extensão.
+        Os tons do tema escuro e dos textos se ajustam sozinhos para continuar legíveis.
+      </p>
+      <div role="radiogroup" aria-label="Cor da marca" className="flex flex-wrap items-center gap-2">
+        {ACCENT_PRESETS.map((p) => {
+          const on = current === p.hex;
+          return (
+            <button key={p.hex} type="button" role="radio" aria-checked={on} aria-label={p.label} title={p.label} onClick={() => pick(p.hex)}
+              className={cn("w-8 h-8 rounded-full grid place-items-center cursor-pointer ring-offset-2 ring-offset-bg transition-shadow shadow-[inset_0_0_0_1px_rgba(128,128,128,0.4)]", on ? "ring-2 ring-fg" : "hover:ring-2 hover:ring-line")}
+              style={{ background: p.hex, color: accentPalette(p.hex).light.on }}>
+              {on && <Check className="w-4 h-4" aria-hidden="true" />}
+            </button>
+          );
+        })}
+        <label title="Escolher outra cor"
+          className={cn("relative w-8 h-8 rounded-full grid place-items-center cursor-pointer ring-offset-2 ring-offset-bg overflow-hidden", !preset ? "ring-2 ring-fg" : "hover:ring-2 hover:ring-line")}
+          style={{ background: !preset ? current : "conic-gradient(#ef4444, #eab308, #22c55e, #06b6d4, #3b82f6, #a855f7, #ef4444)", color: accentPalette(current).light.on }}>
+          {!preset && <Check className="w-4 h-4" aria-hidden="true" />}
+          <span className="sr-only">Outra cor</span>
+          <input type="color" value={current} onChange={(e) => pick(e.target.value)} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+        </label>
+        <label htmlFor="brand-accent" className="sr-only">Código da cor (hexadecimal)</label>
+        <input id="brand-accent" value={typing ?? current} maxLength={7} spellCheck={false} autoComplete="off"
+          onChange={(e) => { setTyping(e.target.value); const c = cleanAccent(e.target.value); if (c) pick(c); }}
+          onBlur={() => setTyping(null)}
+          className={cn(inputCls, "w-[104px] h-8 font-mono text-[13px] uppercase")} />
+      </div>
+      {/* amostra: os lugares onde a cor aparece */}
+      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-line p-3" aria-hidden="true">
+        <span className="h-8 px-3 rounded-[10px] bg-accent text-on-accent text-sm font-semibold inline-flex items-center">Botão de destaque</span>
+        <span className="min-w-5 h-5 px-1.5 rounded-full bg-accent text-on-accent text-[11px] font-semibold grid place-items-center tabular-nums">3</span>
+        <span className="text-sm font-semibold text-accent-fg">Link em destaque</span>
+        <span className="px-2 py-0.5 rounded-full bg-accent-soft text-accent-fg text-xs font-semibold">Etiqueta</span>
+      </div>
+      {light && <p className="text-xs text-muted">Cor clara: o texto sobre ela fica escuro para continuar legível.</p>}
+    </fieldset>
   );
 }
 

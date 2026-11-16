@@ -22,7 +22,7 @@
   const settings = { panelUrl: '', hideBar: false, barFav: false, barFunnels: true, stopOnReply: true, keywords: true, capture: true, captureSkip: false, labelSync: true, history: false, theme: 'auto' };
   const $ = (id) => document.getElementById(id);
   // Marca da conta (white label): a mesma escolhida no painel, em Configurações > Marca
-  let brand = { name: '', logo_url: '', icon_url: '', custom_domain: '' };
+  let brand = { name: '', logo_url: '', icon_url: '', mark: '', accent: '', custom_domain: '' };
   const brandName = () => brand.name || 'ZapFlow';
 
   // ===== INÍCIO =====
@@ -251,9 +251,15 @@
   }
   async function fetchBrand() {
     try {
-      const { data, error } = await sb.from('branding').select('name, logo_url, icon_url, custom_domain').maybeSingle();
+      let res = await sb.from('branding').select('name, logo_url, icon_url, mark, accent, custom_domain').maybeSingle();
+      // banco sem as colunas novas (setup.sql não rodado de novo): lê as antigas para não perder a marca
+      if (res.error && /mark|accent|column/i.test(res.error.message || '')) res = await sb.from('branding').select('name, logo_url, icon_url, custom_domain').maybeSingle();
+      const { data, error } = res;
       if (error) return; // banco na versão antiga (sem a tabela): fica a marca que já estava
-      const next = { name: (data && data.name) || '', logo_url: (data && data.logo_url) || '', icon_url: (data && data.icon_url) || '', custom_domain: (data && data.custom_domain) || '' };
+      const next = {
+        name: (data && data.name) || '', logo_url: (data && data.logo_url) || '', icon_url: (data && data.icon_url) || '',
+        mark: (data && data.mark) || '', accent: (data && data.accent) || '', custom_domain: (data && data.custom_domain) || '',
+      };
       if (JSON.stringify(next) === JSON.stringify(brand)) return;
       brand = next;
       try { chrome.storage.local.set({ zf_brand: brand }); } catch (e) { /* sem storage */ }
@@ -274,16 +280,24 @@
   }
   function applyBrand() {
     brandVersion++;
-    const S = window._zfSVG;
     const name = brandName();
-    const custom = !!brand.name && brand.name !== 'ZapFlow';
+    const K = window._zfBrandKit;
+    const mark = K.cleanMark(brand.mark);
+    const letter = mark === 'letter';
     document.querySelectorAll('[data-zf-brand-name]').forEach((el) => { el.textContent = name; });
-    // quadradinho: o ícone da conta; sem ícone, a inicial do nome (ou o raio, na marca padrão)
+    // cor da marca no lugar do rosa (vazio = rosa padrão do sidebar.css)
+    const accent = K.cleanAccent(brand.accent);
+    let st = document.getElementById('zf-brand-accent');
+    if (accent) {
+      if (!st) { st = document.createElement('style'); st.id = 'zf-brand-accent'; (document.head || document.documentElement).appendChild(st); }
+      st.textContent = K.accentCss(accent);
+    } else if (st) st.remove();
+    // quadradinho: o ícone enviado pela conta; sem ele, o símbolo escolhido (raio por padrão) ou a inicial
     const makeMark = () => {
       const m = document.createElement('span');
-      m.className = 'zf-mark' + (custom ? ' zf-mark-letter' : '');
-      if (custom) m.textContent = name.trim().charAt(0).toUpperCase();
-      else m.innerHTML = S.bolt;
+      m.className = 'zf-mark' + (letter ? ' zf-mark-letter' : '');
+      if (letter) m.textContent = name.trim().charAt(0).toUpperCase();
+      else m.innerHTML = K.markSvg(mark, 15);
       if (brand.icon_url) loadBrandImg(brand.icon_url, '', (img) => { m.className = 'zf-mark zf-mark-img'; m.replaceChildren(img); });
       return m;
     };
@@ -301,8 +315,9 @@
     });
     const tb = $('zf-toggle-btn');
     if (tb) {
-      tb.innerHTML = S.bolt.replace('width="15" height="15"', 'width="18" height="18"');
-      if (brand.icon_url) loadBrandImg(brand.icon_url, '', (img) => tb.replaceChildren(img));
+      // a aba lateral fica sempre com o símbolo vetorial (imagem pequena demais vira borrão ali)
+      if (letter) { const b = document.createElement('b'); b.className = 'zf-tb-letter'; b.textContent = name.trim().charAt(0).toUpperCase(); tb.replaceChildren(b); }
+      else tb.innerHTML = K.markSvg(mark, 18);
       tb.setAttribute('aria-label', (tb.classList.contains('zf-sidebar-open') ? 'Fechar ' : 'Abrir ') + name);
     }
   }

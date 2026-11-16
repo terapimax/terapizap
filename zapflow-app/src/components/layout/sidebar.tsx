@@ -50,7 +50,7 @@ export function Sidebar() {
         </span>
         <span className={cn("truncate", collapsed && "md:hidden")}>{item.label}</span>
         {!!badges[item.href] && (
-          <span className={cn("ml-auto min-w-5 h-5 px-1.5 rounded-full bg-accent text-white text-[11px] font-semibold grid place-items-center tabular-nums", collapsed && "md:hidden")}
+          <span className={cn("ml-auto min-w-5 h-5 px-1.5 rounded-full bg-accent text-on-accent text-[11px] font-semibold grid place-items-center tabular-nums", collapsed && "md:hidden")}
             aria-label={`${badges[item.href]} pendentes`}>
             {badges[item.href]}
           </span>

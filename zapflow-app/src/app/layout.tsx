@@ -3,7 +3,7 @@ import { Inter, Inter_Tight } from "next/font/google";
 import { Providers } from "@/components/providers";
 import { BrandProvider } from "@/components/brand";
 import { hostBrand } from "@/lib/brand-server";
-import { resolveBrand } from "@/lib/brand";
+import { brandFavicon, resolveBrand } from "@/lib/brand";
 import "./globals.css";
 
 const inter = Inter({
@@ -27,7 +27,7 @@ export async function generateMetadata(): Promise<Metadata> {
     description:
       "Gerencie leads, envie mensagens, áudios e mídias no WhatsApp Web com automação inteligente. CRM Kanban e funis de vendas.",
     keywords: ["WhatsApp", "automação", "CRM", "Kanban", "leads", "funil de vendas"],
-    ...(brand.iconUrl ? { icons: { icon: brand.iconUrl } } : {}),
+    ...(brandFavicon(brand) ? { icons: { icon: brandFavicon(brand)! } } : {}),
   };
 }
 

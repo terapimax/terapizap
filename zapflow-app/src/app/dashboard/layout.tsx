@@ -6,13 +6,13 @@ import { DashboardShell } from "@/components/layout/dashboard-shell";
 import { CommandPalette } from "@/components/layout/command-palette";
 import { BrandHead, BrandProvider } from "@/components/brand";
 import { hostBrand, ownBrand } from "@/lib/brand-server";
-import { resolveBrand } from "@/lib/brand";
+import { brandFavicon, resolveBrand } from "@/lib/brand";
 import type { Metadata } from "next";
 
 // Dentro do painel vale a marca da conta logada (Configurações > Marca).
 export async function generateMetadata(): Promise<Metadata> {
   const brand = resolveBrand((await ownBrand()) ?? (await hostBrand()));
-  return { title: brand.name, ...(brand.iconUrl ? { icons: { icon: brand.iconUrl } } : {}) };
+  return { title: brand.name, ...(brandFavicon(brand) ? { icons: { icon: brandFavicon(brand)! } } : {}) };
 }
 
 export default async function DashboardLayout({

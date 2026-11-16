@@ -3,7 +3,8 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
-import { resolveBrand, type Brand, type BrandRow } from "@/lib/brand";
+import { brandFavicon, resolveBrand, selectOwnBrand, type Brand, type BrandRow } from "@/lib/brand";
+import { MARKS, accentCss } from "@/lib/brand-kit";
 import { cn } from "@/lib/utils";
 
 const supabase = createClient();
@@ -14,15 +15,23 @@ const BrandContext = createContext<{ row: BrandRow | null; own: boolean }>({ row
 /** O servidor já manda a marca certa (do domínio ou da conta), então nada pisca ao carregar. */
 export function BrandProvider({ row, own = false, children }: { row: BrandRow | null; own?: boolean; children: React.ReactNode }) {
   const value = useMemo(() => ({ row, own }), [row, own]);
-  return <BrandContext.Provider value={value}>{children}</BrandContext.Provider>;
+  return <BrandContext.Provider value={value}><BrandStyle />{children}</BrandContext.Provider>;
+}
+
+/**
+ * Troca o rosa padrão pela cor da marca em todas as telas. Vai no HTML que o servidor manda,
+ * então a cor certa já aparece na primeira pintura (sem piscar rosa).
+ */
+function BrandStyle() {
+  const { accent } = useBrand();
+  if (!accent) return null;
+  return <style data-brand-accent dangerouslySetInnerHTML={{ __html: accentCss(accent) }} />;
 }
 
 export const BRAND_KEY = ["branding"];
 
 export async function fetchOwnBrand(): Promise<BrandRow | null> {
-  const { data, error } = await supabase.from("branding").select("name, logo_url, icon_url, custom_domain").maybeSingle();
-  if (error) return null; // banco na versão antiga: marca padrão
-  return (data as BrandRow | null) ?? null;
+  return selectOwnBrand(supabase);
 }
 
 /** A linha crua da conta (para a tela de Configurações). */
@@ -38,16 +47,15 @@ export function useBrand(): Brand {
   return useMemo(() => resolveBrand(row), [row]);
 }
 
-/** Raio padrão num quadrado rosa — ou, com nome próprio e sem ícone, a inicial do nome. */
-function DefaultMark({ brand, size }: { brand: Brand; size: number }) {
+/** Ícone vetorial escolhido (raio, coração, estrela…) ou a inicial do nome, num quadrado na cor da marca. */
+export function MarkTile({ brand, size }: { brand: Pick<Brand, "mark" | "name">; size: number }) {
   return (
-    <span className="rounded-lg bg-accent text-white grid place-items-center shrink-0 font-display font-bold" style={{ width: size, height: size, fontSize: size * 0.5 }} aria-hidden="true">
-      {brand.custom ? (
+    <span className="rounded-lg bg-accent text-on-accent grid place-items-center shrink-0 font-display font-bold" style={{ width: size, height: size, fontSize: size * 0.5 }} aria-hidden="true">
+      {brand.mark === "letter" ? (
         brand.name.trim().charAt(0).toUpperCase()
       ) : (
-        <svg width={size * 0.53} height={size * 0.53} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M13 2 4 14h7l-1 8 9-12h-7z" />
-        </svg>
+        <svg width={size * 0.53} height={size * 0.53} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={brand.mark === "bolt" ? 2.4 : 2.2}
+          strokeLinecap="round" strokeLinejoin="round" dangerouslySetInnerHTML={{ __html: MARKS[brand.mark].svg }} />
       )}
     </span>
   );
@@ -65,7 +73,7 @@ export function BrandIcon({ size = 30, brand: given, className }: { size?: numbe
         className={cn("rounded-lg object-contain shrink-0", className)} style={{ width: size, height: size }} />
     );
   }
-  return <DefaultMark brand={brand} size={size} />;
+  return <MarkTile brand={brand} size={size} />;
 }
 
 /**
@@ -107,17 +115,18 @@ export function BrandLogo({ collapsed = false, size = 30, height, textClassName,
 /** Mantém o nome da aba e o ícone do navegador iguais à marca, inclusive logo depois de salvar. */
 export function BrandHead() {
   const brand = useBrand();
+  const favicon = brandFavicon(brand);
   useEffect(() => {
     document.title = brand.name;
-    if (!brand.iconUrl) return;
     let link = document.querySelector<HTMLLinkElement>('link[rel="icon"][data-brand]');
+    if (!favicon) { link?.remove(); return; }
     if (!link) {
       link = document.createElement("link");
       link.rel = "icon";
       link.dataset.brand = "1";
       document.head.appendChild(link);
     }
-    link.href = brand.iconUrl;
-  }, [brand.name, brand.iconUrl]);
+    link.href = favicon;
+  }, [brand.name, favicon]);
   return null;
 }

@@ -116,7 +116,7 @@ export function TaskCalendar({ tasks, isLoading, openNew, openTask }: {
                       !im && !isSel && "text-muted/60"
                     )}
                   >
-                    <span className={cn("text-sm tabular-nums w-7 h-7 grid place-items-center rounded-full", isToday && !isSel && "bg-accent text-white font-semibold", isSel && "font-bold")}>{date.getDate()}</span>
+                    <span className={cn("text-sm tabular-nums w-7 h-7 grid place-items-center rounded-full", isToday && !isSel && "bg-accent text-on-accent font-semibold", isSel && "font-bold")}>{date.getDate()}</span>
                     {list.length > 0 && (
                       <span className="flex items-center gap-0.5" aria-hidden="true">
                         {list.slice(0, 3).map((t) => (

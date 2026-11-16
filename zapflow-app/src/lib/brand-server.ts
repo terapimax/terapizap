@@ -1,7 +1,7 @@
 import { cache } from "react";
 import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
-import type { BrandRow } from "@/lib/brand";
+import { selectOwnBrand, type BrandRow } from "@/lib/brand";
 
 /**
  * Marca de quem é dono do endereço que está sendo acessado (domínio próprio).
@@ -34,10 +34,7 @@ export const hostBrand = cache(async (): Promise<BrandRow | null> => {
 /** Marca da conta logada (a linha dela em `branding`); null = ainda não personalizou. */
 export const ownBrand = cache(async (): Promise<BrandRow | null> => {
   try {
-    const supabase = await createClient();
-    const { data, error } = await supabase.from("branding").select("name, logo_url, icon_url, custom_domain").maybeSingle();
-    if (error) return null;
-    return (data as BrandRow | null) ?? null;
+    return await selectOwnBrand(await createClient());
   } catch {
     return null;
   }
