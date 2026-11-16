@@ -12,6 +12,8 @@ import { blockedLeadIds, invalidateLeads, useAddToBoard, useBulkTag, useCreateLe
 import { useAllColumns, useBoards } from "@/hooks/use-kanban";
 import { useBulkOwner, useOwners } from "@/hooks/use-owners";
 import { OwnerLabel } from "@/components/features/owners";
+import { CampaignPicker } from "@/components/features/catalog";
+import { useCampaigns } from "@/hooks/use-catalog";
 import { useOpenFromQuery } from "@/hooks/use-open-from-query";
 import { FIELD_LABEL, ORIGINS, deaccent, formatPhone, initials, phoneKey, tagsOf } from "@/lib/leads";
 import { downloadText, exportCsv, parseImport, runImport, type ImportReport, type ParsedImport } from "@/lib/leads-import";
@@ -62,15 +64,19 @@ function NewLeadSheet({ open, onClose, leads, boards, columns, onOpenLead }: {
   const empty = { name: "", phone: "", email: "", origin: "", campaign: "", notes: "", status: "warm" as LeadTemp };
   const [form, setForm] = useState(empty);
   const [tagIds, setTagIds] = useState<number[]>([]);
+  const [campaignId, setCampaignId] = useState<number | null>(null);
+  const { data: campaigns } = useCampaigns();
   const [board, setBoard] = useState<{ boardId: number; columnId: number } | null>(null);
   const key = phoneKey(form.phone);
   const dup = key ? leads.find((l) => l.phone_key === key) : undefined;
 
-  const close = () => { setForm(empty); setTagIds([]); setBoard(null); onClose(); };
+  const close = () => { setForm(empty); setTagIds([]); setBoard(null); setCampaignId(null); onClose(); };
   const submit = async () => {
     if (!form.name.trim()) return toast.error("Informe o nome do lead.");
     if (dup) return toast.error("Já existe um lead com este telefone.");
-    await create.mutateAsync({ lead: form, tagIds, card: board ? { board_id: board.boardId, column_id: board.columnId } : null });
+    // com cadastro de campanhas grava a escolhida; banco antigo, o texto
+    const lead = campaigns ? { ...form, campaign_id: campaignId } : form;
+    await create.mutateAsync({ lead, tagIds, card: board ? { board_id: board.boardId, column_id: board.columnId } : null });
     close();
   };
 
@@ -112,7 +118,7 @@ function NewLeadSheet({ open, onClose, leads, boards, columns, onOpenLead }: {
           </div>
           <div className="flex flex-col gap-1.5">
             <label htmlFor="n-campaign" className="text-xs font-medium text-muted">Campanha</label>
-            <input id="n-campaign" className={inputCls} value={form.campaign} onChange={(e) => setForm({ ...form, campaign: e.target.value })} placeholder="Ex.: Black Friday" />
+            <CampaignPicker id="n-campaign" value={campaignId} text={form.campaign} onChange={setCampaignId} onTextChange={(campaign) => setForm({ ...form, campaign })} />
           </div>
         </div>
         <TempPicker value={form.status} onChange={(status) => setForm({ ...form, status })} />
@@ -274,6 +280,8 @@ export default function LeadsPage() {
   const bulkOwner = useBulkOwner();
   const ownerById = useMemo(() => new Map(owners.map((o) => [o.id, o])), [owners]);
   const [ownerFilter, setOwnerFilter] = useState<number | "" | "none">("");
+  const { data: campaigns } = useCampaigns();
+  const [campaignFilter, setCampaignFilter] = useState<number | "" | "none">("");
 
   const [query, setQuery] = useState("");
   const [temp, setTemp] = useState<"" | LeadTemp>("");
@@ -307,12 +315,13 @@ export default function LeadsPage() {
       (tagFilter === "" || (tagFilter === "none" ? l.lead_tags.length === 0 : l.lead_tags.some((t) => t.tag_id === tagFilter))) &&
       (kanban === "" || (kanban === "none" ? l.kanban_cards.length === 0 : l.kanban_cards.some((c) => c.board_id === kanban))) &&
       (!origin || l.origin === origin) &&
-      (ownerFilter === "" || (ownerFilter === "none" ? !l.owner_id : l.owner_id === ownerFilter))
+      (ownerFilter === "" || (ownerFilter === "none" ? !l.owner_id : l.owner_id === ownerFilter)) &&
+      (campaignFilter === "" || (campaignFilter === "none" ? !l.campaign_id : l.campaign_id === campaignFilter))
     );
-  }, [leads, query, temp, tagFilter, kanban, origin, ownerFilter]);
+  }, [leads, query, temp, tagFilter, kanban, origin, ownerFilter, campaignFilter]);
 
   const shown = filtered.slice(0, limit);
-  const filtering = !!(query.trim() || temp || tagFilter !== "" || kanban !== "" || origin || ownerFilter !== "");
+  const filtering = !!(query.trim() || temp || tagFilter !== "" || kanban !== "" || origin || ownerFilter !== "" || campaignFilter !== "");
   const selIds = [...selected].filter((id) => leads.some((l) => l.id === id));
   const blocked = useMemo(() => blockedLeadIds(leads, tags), [leads, tags]);
   const bulkAllowed = selIds.filter((id) => !blocked.has(id));
@@ -324,7 +333,7 @@ export default function LeadsPage() {
     if (allShownSelected) shown.forEach((l) => n.delete(l.id)); else filtered.forEach((l) => n.add(l.id));
     return n;
   });
-  const clearFilters = () => { setQuery(""); setTemp(""); setTagFilter(""); setKanban(""); setOrigin(""); setOwnerFilter(""); };
+  const clearFilters = () => { setQuery(""); setTemp(""); setTagFilter(""); setKanban(""); setOrigin(""); setOwnerFilter(""); setCampaignFilter(""); };
 
   const doExport = () => {
     const list = selIds.length ? leads.filter((l) => selected.has(l.id)) : filtered;
@@ -363,6 +372,13 @@ export default function LeadsPage() {
           <select aria-label="Origem" className={selectCls} value={origin} onChange={(e) => setOrigin(e.target.value)}>
             <option value="">Todas as origens</option>
             {origins.map((o) => <option key={o} value={o}>{o}</option>)}
+          </select>
+        )}
+        {!!campaigns?.length && (
+          <select aria-label="Campanha" className={selectCls} value={campaignFilter} onChange={(e) => setCampaignFilter(e.target.value === "" ? "" : e.target.value === "none" ? "none" : Number(e.target.value))}>
+            <option value="">Todas as campanhas</option>
+            <option value="none">Sem campanha</option>
+            {[...campaigns].sort((a, b) => a.name.localeCompare(b.name, "pt-BR")).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         )}
         {owners.length > 0 && (

@@ -104,7 +104,10 @@ export interface Lead {
   avatar: string | null;
   last_message: string | null;
   origin: string | null;
+  /** nome da campanha (o banco mantém igual ao cadastro; vale como texto para planilhas e extensão) */
   campaign: string | null;
+  /** campanha cadastrada (banco antigo não tem a coluna) */
+  campaign_id?: number | null;
   status: LeadTemp;
   notes: string | null;
   /** conversa do WhatsApp (…@c.us ou …@lid); a extensão reconhece o lead por ela quando o número está escondido */
@@ -179,6 +182,55 @@ export interface KanbanCard {
   position: number;
   value: number;
   product: string | null;
+  created_at: string;
+}
+
+export type CatalogKind = "product" | "service";
+/** fixed = preço fechado; from = "a partir de"; quote = sob consulta */
+export type PriceMode = "fixed" | "from" | "quote";
+
+/** Produto ou serviço do catálogo. */
+export interface CatalogItem {
+  id: number;
+  user_id: string;
+  kind: CatalogKind;
+  name: string;
+  description: string | null;
+  category: string | null;
+  price: number;
+  price_mode: PriceMode;
+  /** serviços: duração do atendimento, em minutos */
+  duration_min: number | null;
+  is_active: boolean;
+  created_at: string;
+}
+
+/** Campanha de onde o lead veio. */
+export interface Campaign {
+  id: number;
+  user_id: string;
+  name: string;
+  channel: string | null;
+  starts_on: string | null;
+  ends_on: string | null;
+  notes: string | null;
+  is_active: boolean;
+  created_at: string;
+  /** itens que a campanha oferece */
+  campaign_items?: { item_id: number }[];
+}
+
+/** Produto ou serviço dentro de um card (nome e preço copiados na hora). */
+export interface CardItem {
+  id: number;
+  user_id: string;
+  card_id: number;
+  /** null = o item foi apagado do catálogo (o negócio continua) */
+  item_id: number | null;
+  name: string;
+  quantity: number;
+  unit_price: number;
+  position: number;
   created_at: string;
 }
 

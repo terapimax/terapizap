@@ -935,24 +935,208 @@
     CHECK (custom_domain IS NULL OR custom_domain ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$');
   -- um domínio só pode ser de uma conta
   CREATE UNIQUE INDEX IF NOT EXISTS uq_branding_domain ON public.branding(custom_domain) WHERE custom_domain IS NOT NULL;
+  -- símbolo vetorial do quadradinho (bolt, heart, star… ou letter = inicial; vazio = raio)
+  -- e cor da marca no lugar do rosa (#rrggbb; vazio = rosa padrão)
+  ALTER TABLE public.branding ADD COLUMN IF NOT EXISTS mark TEXT;
+  ALTER TABLE public.branding ADD COLUMN IF NOT EXISTS accent TEXT;
+  ALTER TABLE public.branding DROP CONSTRAINT IF EXISTS branding_mark_format;
+  ALTER TABLE public.branding ADD CONSTRAINT branding_mark_format CHECK (mark IS NULL OR mark ~ '^[a-z]{1,20}$');
+  ALTER TABLE public.branding DROP CONSTRAINT IF EXISTS branding_accent_format;
+  ALTER TABLE public.branding ADD CONSTRAINT branding_accent_format CHECK (accent IS NULL OR accent ~ '^#[0-9a-f]{6}$');
 
   -- A tela de login (ainda sem ninguém logado) pergunta "de quem é este endereço?" e recebe só
-  -- o nome e os logotipos da conta dona do domínio. Nada mais sai daqui.
-  CREATE OR REPLACE FUNCTION public.zf_brand_for_host(p_host TEXT)
-  RETURNS TABLE (name TEXT, logo_url TEXT, icon_url TEXT)
+  -- o nome, os logotipos, o símbolo e a cor da conta dona do domínio. Nada mais sai daqui.
+  -- (DROP antes: as colunas devolvidas mudaram, e o CREATE OR REPLACE não troca o formato.)
+  DROP FUNCTION IF EXISTS public.zf_brand_for_host(TEXT);
+  CREATE FUNCTION public.zf_brand_for_host(p_host TEXT)
+  RETURNS TABLE (name TEXT, logo_url TEXT, icon_url TEXT, mark TEXT, accent TEXT)
   LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
-    SELECT b.name, b.logo_url, b.icon_url FROM branding b
+    SELECT b.name, b.logo_url, b.icon_url, b.mark, b.accent FROM branding b
     WHERE b.custom_domain = lower(split_part(coalesce(p_host, ''), ':', 1))
     LIMIT 1
   $$;
   REVOKE ALL ON FUNCTION public.zf_brand_for_host(TEXT) FROM PUBLIC;
   GRANT EXECUTE ON FUNCTION public.zf_brand_for_host(TEXT) TO anon, authenticated;
 
+  -- 6l. PRODUTOS, SERVIÇOS E CAMPANHAS ----------------------------
+  -- Catálogo: o que você vende (produto) ou faz (serviço). O card do Kanban escolhe itens daqui,
+  -- com quantidade e preço negociado (o preço fica guardado no card: mudar o catálogo depois não
+  -- muda negócios antigos). Campanha: de onde o lead veio (ex.: "Black Friday", "Anúncio Instagram").
+  CREATE TABLE IF NOT EXISTS public.catalog_items (
+    id BIGSERIAL PRIMARY KEY,
+    user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL DEFAULT 'product' CHECK (kind IN ('product', 'service')),
+    name TEXT NOT NULL CHECK (btrim(name) <> ''),
+    description TEXT,
+    category TEXT,
+    price NUMERIC NOT NULL DEFAULT 0 CHECK (price >= 0),
+    -- fixed = preço fechado; from = "a partir de"; quote = sob consulta (entra no card com valor 0)
+    price_mode TEXT NOT NULL DEFAULT 'fixed' CHECK (price_mode IN ('fixed', 'from', 'quote')),
+    duration_min INT CHECK (duration_min IS NULL OR duration_min > 0),  -- serviços: duração do atendimento
+    is_active BOOLEAN NOT NULL DEFAULT true,                           -- arquivado = some dos seletores
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_catalog_name ON public.catalog_items(user_id, lower(btrim(name)));
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_catalog_id_user ON public.catalog_items(id, user_id);
+
+  CREATE TABLE IF NOT EXISTS public.campaigns (
+    id BIGSERIAL PRIMARY KEY,
+    user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL CHECK (btrim(name) <> ''),
+    channel TEXT,          -- Instagram, Google, Indicação... (mesma lista da origem do lead)
+    starts_on DATE,
+    ends_on DATE,
+    notes TEXT,
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT campaigns_period CHECK (starts_on IS NULL OR ends_on IS NULL OR ends_on >= starts_on)
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_campaigns_name ON public.campaigns(user_id, lower(btrim(name)));
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_campaigns_id_user ON public.campaigns(id, user_id);
+
+  -- Itens que a campanha oferece (aparecem primeiro no card de quem veio por ela).
+  CREATE TABLE IF NOT EXISTS public.campaign_items (
+    id BIGSERIAL PRIMARY KEY,
+    user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
+    campaign_id BIGINT NOT NULL,
+    item_id BIGINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (campaign_id, item_id),
+    FOREIGN KEY (campaign_id, user_id) REFERENCES public.campaigns(id, user_id) ON DELETE CASCADE,
+    FOREIGN KEY (item_id, user_id) REFERENCES public.catalog_items(id, user_id) ON DELETE CASCADE
+  );
+
+  -- Itens de cada card. Nome e preço são copiados na hora: apagar o item do catálogo não apaga o negócio.
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_cards_id_user ON public.kanban_cards(id, user_id);
+  CREATE TABLE IF NOT EXISTS public.card_items (
+    id BIGSERIAL PRIMARY KEY,
+    user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
+    card_id BIGINT NOT NULL,
+    item_id BIGINT,
+    name TEXT NOT NULL CHECK (btrim(name) <> ''),
+    quantity NUMERIC NOT NULL DEFAULT 1 CHECK (quantity > 0),
+    unit_price NUMERIC NOT NULL DEFAULT 0 CHECK (unit_price >= 0),
+    position INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    FOREIGN KEY (card_id, user_id) REFERENCES public.kanban_cards(id, user_id) ON DELETE CASCADE,
+    FOREIGN KEY (item_id, user_id) REFERENCES public.catalog_items(id, user_id) ON DELETE SET NULL (item_id)
+  );
+
+  -- Campanha do lead. O texto antigo (leads.campaign) continua e é mantido igual ao nome da campanha,
+  -- para a extensão, a importação de planilha e backups antigos continuarem funcionando.
+  ALTER TABLE public.leads ADD COLUMN IF NOT EXISTS campaign_id BIGINT;
+  DO $$
+  BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'leads_campaign_fk') THEN
+      ALTER TABLE public.leads ADD CONSTRAINT leads_campaign_fk FOREIGN KEY (campaign_id, user_id)
+        REFERENCES public.campaigns(id, user_id) ON DELETE SET NULL (campaign_id);
+    END IF;
+  END $$;
+
+  -- Escolher a campanha (campaign_id) preenche o texto; escrever o texto (planilha, extensão, backup)
+  -- liga à campanha com o mesmo nome, ou cria uma nova. Maiúsculas e espaços não criam repetidas.
+  CREATE OR REPLACE FUNCTION public.zf_lead_campaign() RETURNS trigger
+  LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
+  DECLARE v_id BIGINT; v_name TEXT; v_txt TEXT;
+  BEGIN
+    IF (TG_OP = 'INSERT' AND NEW.campaign_id IS NOT NULL)
+       OR (TG_OP = 'UPDATE' AND NEW.campaign_id IS DISTINCT FROM OLD.campaign_id) THEN
+      IF NEW.campaign_id IS NULL THEN
+        NEW.campaign := NULL;
+      ELSE
+        SELECT name INTO v_name FROM campaigns WHERE id = NEW.campaign_id AND user_id = NEW.user_id;
+        NEW.campaign := v_name;
+      END IF;
+      RETURN NEW;
+    END IF;
+    IF TG_OP = 'UPDATE' AND NEW.campaign IS NOT DISTINCT FROM OLD.campaign THEN RETURN NEW; END IF;
+    v_txt := nullif(btrim(regexp_replace(coalesce(NEW.campaign, ''), '\s+', ' ', 'g')), '');
+    IF v_txt IS NULL THEN
+      NEW.campaign := NULL;
+      NEW.campaign_id := NULL;
+      RETURN NEW;
+    END IF;
+    SELECT id, name INTO v_id, v_name FROM campaigns WHERE user_id = NEW.user_id AND lower(btrim(name)) = lower(v_txt);
+    IF v_id IS NULL THEN
+      INSERT INTO campaigns (user_id, name) VALUES (NEW.user_id, v_txt) ON CONFLICT DO NOTHING RETURNING id, name INTO v_id, v_name;
+      IF v_id IS NULL THEN
+        SELECT id, name INTO v_id, v_name FROM campaigns WHERE user_id = NEW.user_id AND lower(btrim(name)) = lower(v_txt);
+      END IF;
+    END IF;
+    NEW.campaign_id := v_id;
+    NEW.campaign := coalesce(v_name, v_txt);
+    RETURN NEW;
+  END $$;
+  DROP TRIGGER IF EXISTS zf_lead_campaign ON public.leads;
+  CREATE TRIGGER zf_lead_campaign BEFORE INSERT OR UPDATE OF campaign, campaign_id ON public.leads
+    FOR EACH ROW EXECUTE FUNCTION public.zf_lead_campaign();
+
+  -- Renomear a campanha atualiza o texto nos leads dela.
+  CREATE OR REPLACE FUNCTION public.zf_campaign_renamed() RETURNS trigger
+  LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
+  BEGIN
+    IF NEW.name IS DISTINCT FROM OLD.name THEN
+      UPDATE leads SET campaign = NEW.name WHERE campaign_id = NEW.id AND campaign IS DISTINCT FROM NEW.name;
+    END IF;
+    RETURN NULL;
+  END $$;
+  DROP TRIGGER IF EXISTS zf_campaign_renamed ON public.campaigns;
+  CREATE TRIGGER zf_campaign_renamed AFTER UPDATE OF name ON public.campaigns
+    FOR EACH ROW EXECUTE FUNCTION public.zf_campaign_renamed();
+
+  -- O texto "produto" do card (mostrado no Kanban e lido pela extensão) é o resumo dos itens dele.
+  CREATE OR REPLACE FUNCTION public.zf_card_items_sync() RETURNS trigger
+  LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
+  DECLARE v_card BIGINT; v_txt TEXT;
+  BEGIN
+    FOR v_card IN
+      SELECT DISTINCT x FROM unnest(ARRAY[
+        CASE WHEN TG_OP <> 'INSERT' THEN OLD.card_id END,
+        CASE WHEN TG_OP <> 'DELETE' THEN NEW.card_id END]) AS x
+      WHERE x IS NOT NULL
+    LOOP
+      SELECT string_agg(CASE WHEN i.quantity <> 1 THEN trim_scale(i.quantity)::text || '× ' ELSE '' END || i.name, ', ' ORDER BY i.position, i.id)
+        INTO v_txt FROM card_items i WHERE i.card_id = v_card;
+      UPDATE kanban_cards SET product = v_txt WHERE id = v_card AND product IS DISTINCT FROM v_txt;
+    END LOOP;
+    RETURN NULL;
+  END $$;
+  DROP TRIGGER IF EXISTS zf_card_items_sync ON public.card_items;
+  CREATE TRIGGER zf_card_items_sync AFTER INSERT OR UPDATE OR DELETE ON public.card_items
+    FOR EACH ROW EXECUTE FUNCTION public.zf_card_items_sync();
+
+  -- Migração (pode rodar de novo): o texto livre que já existia vira cadastro.
+  -- Produto do card -> item do catálogo + item do card (com o valor que o card tinha).
+  INSERT INTO public.catalog_items (user_id, kind, name)
+  SELECT DISTINCT ON (c.user_id, lower(btrim(c.product))) c.user_id, 'product', btrim(c.product)
+  FROM public.kanban_cards c
+  WHERE nullif(btrim(c.product), '') IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM public.card_items i WHERE i.card_id = c.id)
+  ORDER BY c.user_id, lower(btrim(c.product)), c.id
+  ON CONFLICT DO NOTHING;
+  INSERT INTO public.card_items (user_id, card_id, item_id, name, quantity, unit_price)
+  SELECT c.user_id, c.id, ci.id, ci.name, 1, greatest(coalesce(c.value, 0), 0)
+  FROM public.kanban_cards c
+  JOIN public.catalog_items ci ON ci.user_id = c.user_id AND lower(btrim(ci.name)) = lower(btrim(c.product))
+  WHERE nullif(btrim(c.product), '') IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM public.card_items i WHERE i.card_id = c.id);
+  -- Campanha do lead (texto) -> campanha cadastrada.
+  INSERT INTO public.campaigns (user_id, name)
+  SELECT DISTINCT ON (l.user_id, lower(btrim(l.campaign))) l.user_id, btrim(l.campaign)
+  FROM public.leads l
+  WHERE nullif(btrim(l.campaign), '') IS NOT NULL AND l.campaign_id IS NULL
+  ORDER BY l.user_id, lower(btrim(l.campaign)), l.id
+  ON CONFLICT DO NOTHING;
+  UPDATE public.leads l SET campaign_id = c.id
+  FROM public.campaigns c
+  WHERE l.campaign_id IS NULL AND nullif(btrim(l.campaign), '') IS NOT NULL
+    AND c.user_id = l.user_id AND lower(btrim(c.name)) = lower(btrim(l.campaign));
+
   -- 7. SEGURANÇA: cada usuário só vê e altera os próprios dados (RLS)
   DO $$
   DECLARE t TEXT;
   BEGIN
-    FOREACH t IN ARRAY ARRAY['messages','media_library','funnels','funnel_items','kanban_boards','kanban_columns','leads','tags','lead_tags','kanban_cards','lead_messages','triggers','trigger_fires','kanban_card_moves','owners','branding','appointments','tasks']
+    FOREACH t IN ARRAY ARRAY['messages','media_library','funnels','funnel_items','kanban_boards','kanban_columns','leads','tags','lead_tags','kanban_cards','lead_messages','triggers','trigger_fires','kanban_card_moves','owners','branding','catalog_items','campaigns','campaign_items','card_items','appointments','tasks']
     LOOP
       EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
       EXECUTE format('DROP POLICY IF EXISTS "own_rows" ON public.%I', t);
@@ -1013,6 +1197,10 @@
   CREATE INDEX IF NOT EXISTS idx_card_moves_board ON public.kanban_card_moves(board_id, at);
   CREATE INDEX IF NOT EXISTS idx_card_moves_card ON public.kanban_card_moves(card_id);
   CREATE INDEX IF NOT EXISTS idx_leads_owner ON public.leads(owner_id);
+  CREATE INDEX IF NOT EXISTS idx_leads_campaign ON public.leads(campaign_id);
+  CREATE INDEX IF NOT EXISTS idx_card_items_card ON public.card_items(card_id, position);
+  CREATE INDEX IF NOT EXISTS idx_card_items_item ON public.card_items(item_id);
+  CREATE INDEX IF NOT EXISTS idx_campaign_items_item ON public.campaign_items(item_id);
   CREATE INDEX IF NOT EXISTS idx_appointments_user_date ON public.appointments(user_id, date);
   CREATE INDEX IF NOT EXISTS idx_tasks_user_due ON public.tasks(user_id, status, due_at);
   CREATE INDEX IF NOT EXISTS idx_tasks_lead ON public.tasks(lead_id);
@@ -1028,4 +1216,4 @@
   FROM public.appointments a
   WHERE NOT EXISTS (SELECT 1 FROM public.tasks t WHERE t.options->>'from_appointment' = a.id::text);
 
-  -- Pronto. Confira em Table Editor: devem aparecer 18 tabelas.
+  -- Pronto. Confira em Table Editor: devem aparecer 22 tabelas.

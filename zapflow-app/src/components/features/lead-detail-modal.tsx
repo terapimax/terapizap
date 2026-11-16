@@ -11,11 +11,14 @@ import { useTasks } from "@/hooks/use-tasks";
 import { useAddToBoard, useDeleteLeads, useLead, useTags, useUpdateLead } from "@/hooks/use-leads";
 import { useAllColumns, useBoards, useRemoveCard } from "@/hooks/use-kanban";
 import { useOwners } from "@/hooks/use-owners";
+import { useCampaigns, useCardItems, useCatalog } from "@/hooks/use-catalog";
+import { CampaignPicker, CardItemsEditor } from "@/components/features/catalog";
+import { draftFromSaved, itemsTotal, sameDraft, type DraftCardItem } from "@/lib/catalog";
 import { isOpen } from "@/lib/tasks";
 import { ORIGINS, formatPhone, initials, waLink } from "@/lib/leads";
 import { cn } from "@/lib/utils";
 import { Button, Chip } from "@/components/ui/shared";
-import type { LeadFull, LeadTemp } from "@/types";
+import type { CardItem, LeadFull, LeadTemp } from "@/types";
 import { toast } from "sonner";
 
 export const TEMP: Record<LeadTemp, { label: string; tone: "hot" | "warn" | "cold"; icon: typeof Flame }> = {
@@ -115,7 +118,7 @@ function LeadSheet({ leadId, onClose, initialTab = "dados" }: LeadDetailModalPro
   );
 }
 
-type CardEdit = { column_id: number; value: number; product: string };
+type CardEdit = { column_id: number; value: number; product: string; items?: DraftCardItem[] };
 
 function LeadForm({ lead, onClose, initialTab }: { lead: LeadFull; onClose: () => void; initialTab: Tab }) {
   const [tab, setTab] = useState<Tab>(initialTab);
@@ -127,10 +130,18 @@ function LeadForm({ lead, onClose, initialTab }: { lead: LeadFull; onClose: () =
     status: (lead.status || "warm") as LeadTemp,
     origin: lead.origin || "",
     campaign: lead.campaign || "",
+    campaign_id: lead.campaign_id ?? null,
     notes: lead.notes || "",
     owner_id: lead.owner_id ?? null,
   });
   const { data: owners = [] } = useOwners();
+  // banco sem o catálogo/campanhas (setup.sql antigo) = campos de texto como antes
+  const { data: campaigns } = useCampaigns();
+  const { data: catalog } = useCatalog();
+  const campaignItemIds = useMemo(
+    () => new Set((campaigns ?? []).find((c) => c.id === form.campaign_id)?.campaign_items?.map((x) => x.item_id) ?? []),
+    [campaigns, form.campaign_id]
+  );
   const [tagIds, setTagIds] = useState<number[]>(() => lead.lead_tags.map((t) => t.tag_id));
   const [cardEdits, setCardEdits] = useState<Map<number, CardEdit>>(new Map());
 
@@ -150,11 +161,15 @@ function LeadForm({ lead, onClose, initialTab }: { lead: LeadFull; onClose: () =
   const savedLead = { id: lead.id, name: lead.name, phone: lead.phone };
 
   const cards = lead.kanban_cards;
+  const { data: savedItems } = useCardItems(cards.map((c) => c.id));
+  const itemsReady = !!catalog && (cards.length === 0 || !!savedItems);
+  const savedOf = (cardId: number): CardItem[] => (savedItems ?? []).filter((i) => i.card_id === cardId);
   const { data: allTags = [] } = useTags();
   // etiqueta de ignorar (salva no lead): ele não entra no Kanban
   const blocking = allTags.find((t) => t.is_blocking && lead.lead_tags.some((x) => x.tag_id === t.id));
   const cardView = (c: LeadFull["kanban_cards"][number]): CardEdit =>
     cardEdits.get(c.id) ?? { column_id: c.column_id, value: Number(c.value) || 0, product: c.product ?? "" };
+  const itemsOf = (c: LeadFull["kanban_cards"][number]) => cardView(c).items ?? savedOf(c.id).map(draftFromSaved);
   const setCard = (id: number, patch: Partial<CardEdit>) => {
     const c = cards.find((x) => x.id === id);
     if (!c) return;
@@ -179,15 +194,24 @@ function LeadForm({ lead, onClose, initialTab }: { lead: LeadFull; onClose: () =
     const changed = cards.flatMap((c) => {
       const e = cardEdits.get(c.id);
       if (!e) return [];
-      const patch: { id: number; column_id?: number; value?: number; product?: string | null } = { id: c.id };
+      const patch: { id: number; column_id?: number; value?: number; product?: string | null; items?: { before: CardItem[]; after: DraftCardItem[] } } = { id: c.id };
       if (e.column_id !== c.column_id) patch.column_id = e.column_id;
-      if (e.value !== (Number(c.value) || 0)) patch.value = e.value;
-      if (e.product.trim() !== (c.product ?? "")) patch.product = e.product.trim() || null;
+      if (e.value !== (Number(c.value) || 0)) patch.value = Number.isFinite(e.value) && e.value > 0 ? e.value : 0;
+      // com catálogo, o texto do produto é o resumo dos itens (o banco escreve)
+      if (itemsReady) {
+        if (e.items && !sameDraft(savedOf(c.id), e.items)) patch.items = { before: savedOf(c.id), after: e.items };
+      } else if (e.product.trim() !== (c.product ?? "")) patch.product = e.product.trim() || null;
       return Object.keys(patch).length > 1 ? [patch] : [];
     });
-    update.mutate(
+    const leadData = {
+      ...form,
       // sem responsáveis cadastrados (ou banco na versão antiga) o campo nem é enviado
-      { id: lead.id, lead: owners.length ? form : { ...form, owner_id: undefined }, tagIds, cards: changed },
+      owner_id: owners.length ? form.owner_id : undefined,
+      // com cadastro de campanhas, grava a escolhida (o banco preenche o nome); sem, o texto
+      campaign_id: campaigns ? form.campaign_id : undefined,
+    };
+    update.mutate(
+      { id: lead.id, lead: leadData, tagIds, cards: changed },
       { onSuccess: () => { toast.success("Lead salvo"); setCardEdits(new Map()); onClose(); } }
     );
   };
@@ -223,7 +247,7 @@ function LeadForm({ lead, onClose, initialTab }: { lead: LeadFull; onClose: () =
           <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
             className={cn("py-3 text-sm border-b-2 -mb-px cursor-pointer whitespace-nowrap", tab === id ? "border-fg text-fg font-semibold" : "border-transparent text-muted font-medium hover:text-fg")}>
             {label}
-            {id === "tarefas" && openTasks.length > 0 && <span className="ml-1.5 px-1.5 rounded-full bg-accent text-white text-[11px] font-semibold tabular-nums">{openTasks.length}</span>}
+            {id === "tarefas" && openTasks.length > 0 && <span className="ml-1.5 px-1.5 rounded-full bg-accent text-on-accent text-[11px] font-semibold tabular-nums">{openTasks.length}</span>}
             {id === "kanban" && cards.length > 0 && <span className="ml-1.5 px-1.5 rounded-full bg-surface text-muted text-[11px] font-semibold tabular-nums">{cards.length}</span>}
           </button>
         ))}
@@ -251,7 +275,9 @@ function LeadForm({ lead, onClose, initialTab }: { lead: LeadFull; onClose: () =
                 </select>
               </Field>
               <Field label="Campanha" htmlFor="lead-campaign">
-                <input id="lead-campaign" className={inputCls} value={form.campaign} placeholder="Ex.: Black Friday" onChange={(e) => setForm({ ...form, campaign: e.target.value })} />
+                <CampaignPicker id="lead-campaign" value={form.campaign_id} text={form.campaign}
+                  onChange={(campaign_id) => setForm({ ...form, campaign_id })}
+                  onTextChange={(campaign) => setForm({ ...form, campaign })} />
               </Field>
               {owners.length > 0 && (
                 <Field label="Responsável" htmlFor="lead-owner" className="sm:col-span-2">
@@ -300,9 +326,23 @@ function LeadForm({ lead, onClose, initialTab }: { lead: LeadFull; onClose: () =
                       <Field label="Valor (R$)" htmlFor={`card-val-${c.id}`}>
                         <input id={`card-val-${c.id}`} type="number" min="0" step="0.01" className={cn(inputCls, "tabular-nums")} value={v.value} onChange={(e) => setCard(c.id, { value: Number(e.target.value) })} />
                       </Field>
-                      <Field label="Produto ou interesse" htmlFor={`card-prod-${c.id}`} className="sm:col-span-2">
-                        <input id={`card-prod-${c.id}`} className={inputCls} value={v.product} placeholder="O que o lead procura?" onChange={(e) => setCard(c.id, { product: e.target.value })} />
-                      </Field>
+                      {itemsReady ? (
+                        <div className="sm:col-span-2 flex flex-col gap-1.5">
+                          <span className="text-xs font-medium text-muted">Produtos e serviços</span>
+                          <CardItemsEditor idPrefix={`card-${c.id}`} value={itemsOf(c)} campaignItemIds={campaignItemIds}
+                            // mudar os itens recalcula o valor (dá para ajustar o valor depois, à mão)
+                            onChange={(items, total) => setCard(c.id, { items, value: total })} />
+                          {itemsOf(c).length > 0 && v.value !== itemsTotal(itemsOf(c)) && (
+                            <p className="text-xs text-muted">O valor do card (R$ {v.value.toLocaleString("pt-BR")}) está diferente da soma dos itens. Vale o valor do card.</p>
+                          )}
+                        </div>
+                      ) : catalog === undefined || (cards.length > 0 && savedItems === undefined) ? (
+                        <span className="skeleton h-10 sm:col-span-2" />
+                      ) : (
+                        <Field label="Produto ou interesse" htmlFor={`card-prod-${c.id}`} className="sm:col-span-2">
+                          <input id={`card-prod-${c.id}`} className={inputCls} value={v.product} placeholder="O que o lead procura?" onChange={(e) => setCard(c.id, { product: e.target.value })} />
+                        </Field>
+                      )}
                     </div>
                   </section>
                 );

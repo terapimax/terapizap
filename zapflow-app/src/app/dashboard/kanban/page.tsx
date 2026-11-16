@@ -34,6 +34,9 @@ import { LeadDetailModal, TEMP, TempPicker, inputCls } from "@/components/featur
 import { TagList, TagPicker } from "@/components/features/tags";
 import { useOwners } from "@/hooks/use-owners";
 import { OwnerDot } from "@/components/features/owners";
+import { CampaignPicker, CardItemsEditor } from "@/components/features/catalog";
+import { useCampaigns, useCatalog } from "@/hooks/use-catalog";
+import type { DraftCardItem } from "@/lib/catalog";
 import { Button, Chip, EmptyState, SearchInput } from "@/components/ui/shared";
 import type { ColumnOutcome, KanbanCardWithLead, KanbanColumnWithCards, LeadTemp, Owner, Tag, Task } from "@/types";
 import { useTasks } from "@/hooks/use-tasks";
@@ -42,7 +45,7 @@ import { brl, deaccent, formatPhone, initials, phoneKey, tagsOf } from "@/lib/le
 import { TaskIcon } from "@/components/features/task-sheets";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { Columns3, Plus, Trash2, Loader2, AlertCircle, UserPlus, Users, Check, Inbox, Trophy, Pencil } from "lucide-react";
+import { Columns3, Plus, Trash2, Loader2, AlertCircle, UserPlus, Users, Check, Inbox, Trophy, Pencil, Package, Megaphone } from "lucide-react";
 
 /** Próxima tarefa em aberto de cada lead (a lista vem ordenada por horário). */
 type NextTasks = Map<number, { next: Task; count: number }>;
@@ -144,7 +147,14 @@ function CardBody({ card, tags, next }: { card: KanbanCardWithLead; tags: Tag[];
         </div>
         {owner && <OwnerDot owner={owner} />}
       </div>
-      {(card.product || lead.last_message) && <p className="text-[13px] text-muted line-clamp-2">{card.product || lead.last_message}</p>}
+      {card.product ? (
+        <p className="text-[13px] text-fg line-clamp-2 flex gap-1.5" title="Produtos e serviços"><Package className="w-3.5 h-3.5 mt-[3px] shrink-0 text-muted" aria-hidden="true" /><span>{card.product}</span></p>
+      ) : lead.last_message ? (
+        <p className="text-[13px] text-muted line-clamp-2">{lead.last_message}</p>
+      ) : null}
+      {lead.campaign && (
+        <p className="text-xs text-muted flex items-center gap-1.5 min-w-0" title="Campanha"><Megaphone className="w-3.5 h-3.5 shrink-0" aria-hidden="true" /><span className="truncate">{lead.campaign}</span></p>
+      )}
       <TagList tags={tagsOf(lead, tags)} />
       {next && (
         <p className={cn("flex items-center gap-1.5 text-xs font-medium tabular-nums", late ? "text-warn" : "text-muted")} title={next.next.title}>
@@ -403,8 +413,21 @@ function AddToBoardSheet({ open, onClose, boardId, columns, columnId, setColumnI
   const [picked, setPicked] = useState<number[]>([]);
   const [form, setForm] = useState({ name: "", phone: "", status: "warm" as LeadTemp, value: 0, product: "" });
   const [tagIds, setTagIds] = useState<number[]>([]);
+  // com catálogo: itens escolhidos (o valor acompanha a soma); banco antigo: texto livre
+  const { data: catalog } = useCatalog();
+  const { data: campaigns } = useCampaigns();
+  const [items, setItems] = useState<DraftCardItem[]>([]);
+  const [campaignId, setCampaignId] = useState<number | null>(null);
+  const [campaignText, setCampaignText] = useState("");
+  const campaignItemIds = useMemo(
+    () => new Set((campaigns ?? []).find((c) => c.id === campaignId)?.campaign_items?.map((x) => x.item_id) ?? []),
+    [campaigns, campaignId]
+  );
 
-  const reset = () => { setQ(""); setPicked([]); setForm({ name: "", phone: "", status: "warm", value: 0, product: "" }); setTagIds([]); };
+  const reset = () => {
+    setQ(""); setPicked([]); setForm({ name: "", phone: "", status: "warm", value: 0, product: "" }); setTagIds([]);
+    setItems([]); setCampaignId(null); setCampaignText("");
+  };
   const close = () => { reset(); onClose(); };
 
   const { data: allTags = [] } = useTags();
@@ -429,9 +452,14 @@ function AddToBoardSheet({ open, onClose, boardId, columns, columnId, setColumnI
       if (!form.name.trim()) return toast.error("Informe o nome do lead.");
       if (dup) return toast.error("Já existe um lead com este telefone. Use o lead existente.");
       await createLead.mutateAsync({
-        lead: { name: form.name, phone: form.phone, status: form.status, email: null, origin: null, campaign: null, notes: null },
+        lead: {
+          name: form.name, phone: form.phone, status: form.status, email: null, origin: null, notes: null,
+          campaign: campaigns ? null : campaignText, ...(campaigns ? { campaign_id: campaignId } : {}),
+        },
         tagIds,
-        card: { board_id: boardId, column_id: columnId, value: form.value, product: form.product.trim() || null },
+        card: catalog
+          ? { board_id: boardId, column_id: columnId, value: form.value, items }
+          : { board_id: boardId, column_id: columnId, value: form.value, product: form.product.trim() || null },
       });
     }
     close();
@@ -520,9 +548,21 @@ function AddToBoardSheet({ open, onClose, boardId, columns, columnId, setColumnI
               </div>
             )}
             <div className="flex flex-col gap-1.5">
-              <label htmlFor="nl-product" className="text-xs font-medium text-muted">Produto ou interesse</label>
-              <input id="nl-product" value={form.product} onChange={(e) => setForm({ ...form, product: e.target.value })} placeholder="O que o lead procura?" className={inputCls} />
+              <label htmlFor="nl-campaign" className="text-xs font-medium text-muted">Campanha</label>
+              <CampaignPicker id="nl-campaign" value={campaignId} text={campaignText} onChange={setCampaignId} onTextChange={setCampaignText} />
             </div>
+            {catalog ? (
+              <div className="flex flex-col gap-1.5">
+                <span className="text-xs font-medium text-muted">Produtos e serviços</span>
+                <CardItemsEditor idPrefix="nl" value={items} campaignItemIds={campaignItemIds}
+                  onChange={(next, total) => { setItems(next); setForm((f) => ({ ...f, value: total })); }} />
+              </div>
+            ) : (
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="nl-product" className="text-xs font-medium text-muted">Produto ou interesse</label>
+                <input id="nl-product" value={form.product} onChange={(e) => setForm({ ...form, product: e.target.value })} placeholder="O que o lead procura?" className={inputCls} />
+              </div>
+            )}
             <TempPicker value={form.status} onChange={(status) => setForm({ ...form, status })} />
             <div className="flex flex-col gap-1.5">
               <span className="text-xs font-medium text-muted">Etiquetas</span>

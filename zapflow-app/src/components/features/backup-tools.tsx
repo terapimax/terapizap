@@ -40,7 +40,7 @@ function useLeaveGuard(active: boolean) {
 
 const REPORT_LABELS: Record<TableName, string> = {
   messages: "Mensagens", media_library: "Áudios, mídias e documentos", funnels: "Funis", funnel_items: "Passos de funil",
-  kanban_boards: "Quadros", kanban_columns: "Etapas", tags: "Etiquetas", owners: "Responsáveis", leads: "Leads", lead_tags: "Etiquetas nos leads", kanban_cards: "Cards do Kanban", triggers: "Gatilhos", appointments: "Agenda antiga", tasks: "Tarefas",
+  kanban_boards: "Quadros", kanban_columns: "Etapas", tags: "Etiquetas", owners: "Responsáveis", catalog_items: "Produtos e serviços", campaigns: "Campanhas", campaign_items: "Itens das campanhas", card_items: "Itens dos cards", leads: "Leads", lead_tags: "Etiquetas nos leads", kanban_cards: "Cards do Kanban", triggers: "Gatilhos", appointments: "Agenda antiga", tasks: "Tarefas",
 };
 
 export function BackupTools() {

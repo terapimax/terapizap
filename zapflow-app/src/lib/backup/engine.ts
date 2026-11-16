@@ -19,12 +19,15 @@ export function storagePath(url?: string | null) {
   return url?.includes(`/${BUCKET}/`) ? decodeURIComponent(url.split(`/${BUCKET}/`)[1].split("?")[0]) : null;
 }
 
+/** Tabelas que bancos antigos ainda não têm (backup segue sem elas). */
+const OPTIONAL = new Set<TableName>(["owners", "catalog_items", "campaigns", "campaign_items", "card_items"]);
+
 async function fetchAll(db: SupabaseClient, table: TableName): Promise<Row[]> {
   const out: Row[] = [];
   const page = 1000;
   for (let from = 0; ; from += page) {
     const { data, error } = await db.from(table).select("*").order("id", { ascending: true }).range(from, from + page - 1);
-    if (error && table === "owners") return out; // banco na versão antiga, sem responsáveis
+    if (error && OPTIONAL.has(table)) return out; // banco na versão antiga, sem essa tabela
     if (error) throw new Error(`Não foi possível ler ${table}: ${error.message}`);
     out.push(...((data ?? []) as Row[]));
     if (!data || data.length < page) return out;
@@ -195,7 +198,8 @@ export const REPLACE_GROUPS: { label: string; tables: TableName[] }[] = [
   { label: "mídias", tables: ["media_library"] },
   { label: "funis", tables: ["funnels", "funnel_items"] },
   { label: "gatilhos", tables: ["triggers"] },
-  { label: "leads, Kanban, etiquetas e responsáveis", tables: ["leads", "lead_tags", "kanban_cards", "kanban_columns", "kanban_boards", "tags", "owners"] },
+  { label: "leads, Kanban, etiquetas e responsáveis", tables: ["leads", "lead_tags", "kanban_cards", "card_items", "kanban_columns", "kanban_boards", "tags", "owners"] },
+  { label: "produtos, serviços e campanhas", tables: ["catalog_items", "campaigns", "campaign_items"] },
   { label: "tarefas", tables: ["tasks", "appointments"] },
 ];
 
@@ -216,6 +220,8 @@ export function summarize(s: BackupSource) {
     { label: "Leads", n: s.tables.leads.length },
     { label: "Etiquetas", n: s.tables.tags.length },
     { label: "Responsáveis", n: s.tables.owners.length },
+    { label: "Produtos e serviços", n: s.tables.catalog_items.length },
+    { label: "Campanhas", n: s.tables.campaigns.length },
     { label: "Quadros do Kanban", n: s.tables.kanban_boards.length },
     { label: "Cards no Kanban", n: s.tables.kanban_cards.length },
     { label: "Tarefas", n: s.tables.tasks.length },
@@ -250,21 +256,26 @@ const KEYS: Record<TableName, ((r: Row) => string) | null> = {
   kanban_columns: (r) => `${r.board_id}|${norm(r.title)}`,
   tags: (r) => norm(r.name),
   owners: (r) => norm(r.name),
+  // o banco não aceita dois com o mesmo nome (sem diferenciar maiúsculas e espaços)
+  catalog_items: (r) => norm(String(r.name ?? "").replace(/\s+/g, " ")),
+  campaigns: (r) => norm(String(r.name ?? "").replace(/\s+/g, " ")),
+  campaign_items: (r) => `${r.campaign_id}|${r.item_id}`,
   // mesmo telefone = mesmo lead (o banco não aceita repetido); sem telefone, pelo nome
   leads: (r) => phoneKey(r.phone as string) ?? (r.wa_id ? `wa:${r.wa_id}` : `${norm(r.name)}|${digits(r.phone)}`),
   lead_tags: (r) => `${r.lead_id}|${r.tag_id}`,
   kanban_cards: (r) => `${r.lead_id}|${r.board_id}`,
+  card_items: (r) => `${r.card_id}|${norm(r.name)}`,
   triggers: (r) => `${norm(r.title)}|${r.event}|${r.action}`,
   appointments: (r) => `${norm(r.title)}|${r.date}|${r.time}|${norm(r.contact)}`,
   tasks: (r) => `${norm(r.title)}|${ms(r.due_at)}|${digits(r.phone)}`,
 };
 
 /** Tabelas em que o banco não aceita repetido (telefone, nome da etiqueta, lead+quadro…). */
-const UNIQUE = new Set<TableName>(["tags", "owners", "leads", "lead_tags", "kanban_cards"]);
+const UNIQUE = new Set<TableName>(["tags", "owners", "catalog_items", "campaigns", "campaign_items", "leads", "lead_tags", "kanban_cards"]);
 
 const LABEL: Record<TableName, string> = {
   messages: "mensagem", media_library: "arquivo", funnels: "funil", funnel_items: "passo de funil",
-  kanban_boards: "quadro", kanban_columns: "etapa", tags: "etiqueta", owners: "responsável", leads: "lead", lead_tags: "etiqueta de lead", kanban_cards: "card do Kanban", triggers: "gatilho", appointments: "compromisso", tasks: "tarefa",
+  kanban_boards: "quadro", kanban_columns: "etapa", tags: "etiqueta", owners: "responsável", catalog_items: "produto ou serviço", campaigns: "campanha", campaign_items: "item de campanha", card_items: "item do card", leads: "lead", lead_tags: "etiqueta de lead", kanban_cards: "card do Kanban", triggers: "gatilho", appointments: "compromisso", tasks: "tarefa",
 };
 
 function pick(table: TableName, r: Row, uid: string) {
@@ -411,6 +422,14 @@ export async function restoreBackup(db: SupabaseClient, src: BackupSource, mode:
     }), "title", "Gravando etapas");
     await insertRows("tags", split("tags", T.tags, (r) => pick("tags", r, uid)), "name", "Gravando etiquetas");
     await insertRows("owners", split("owners", T.owners, (r) => pick("owners", r, uid)), "name", "Gravando responsáveis");
+    // catálogo e campanhas antes dos leads: o banco liga o lead à campanha pelo nome
+    await insertRows("catalog_items", split("catalog_items", T.catalog_items, (r) => pick("catalog_items", r, uid)), "name", "Gravando produtos e serviços");
+    await insertRows("campaigns", split("campaigns", T.campaigns, (r) => pick("campaigns", r, uid)), "name", "Gravando campanhas");
+    await insertRows("campaign_items", split("campaign_items", T.campaign_items, (r) => {
+      const campaign = maps.campaigns.get(Number(r.campaign_id));
+      const item = maps.catalog_items.get(Number(r.item_id));
+      return campaign == null || item == null ? null : { ...pick("campaign_items", r, uid), campaign_id: campaign, item_id: item };
+    }), "campaign_id", "Gravando itens das campanhas");
     await insertRows("leads", split("leads", T.leads, (r) => {
       const row = pick("leads", r, uid);
       // responsável: troca pelo id novo (backup antigo, sem responsáveis, nem manda o campo)
@@ -431,6 +450,13 @@ export async function restoreBackup(db: SupabaseClient, src: BackupSource, mode:
       if (lead == null || board == null || col == null) { orphanCards++; return null; }
       return { ...pick("kanban_cards", r, uid), lead_id: lead, board_id: board, column_id: col };
     }), "lead_id", "Gravando o Kanban");
+    await insertRows("card_items", split("card_items", T.card_items, (r) => {
+      const card = maps.kanban_cards.get(Number(r.card_id));
+      if (card == null) return null;
+      // item apagado do catálogo (ou fora do backup) continua no card, só sem ligação
+      const item = r.item_id == null ? null : maps.catalog_items.get(Number(r.item_id)) ?? null;
+      return { ...pick("card_items", r, uid), card_id: card, item_id: item };
+    }), "name", "Gravando produtos e serviços dos cards");
     if (orphanCards) problem(`${orphanCards} card(s) do Kanban ficaram de fora porque o quadro ou a etapa deles não está no backup. Os leads foram restaurados.`);
 
     // 5. Gatilhos (os ids dentro da configuração apontam para os itens novos)
@@ -488,7 +514,7 @@ export async function restoreBackup(db: SupabaseClient, src: BackupSource, mode:
       ].filter((p): p is string => !!p && !keep.has(p) && !newUrls.has(p));
       // só apaga o que o arquivo traz (ver REPLACE_GROUPS)
       const scope = replaceScope(T).tables;
-      const order = (["tasks", "triggers", "funnel_items", "funnels", "kanban_cards", "lead_tags", "leads", "owners", "tags", "kanban_columns", "kanban_boards", "appointments", "media_library", "messages"] as TableName[]).filter((t) => scope.has(t));
+      const order = (["tasks", "triggers", "funnel_items", "funnels", "card_items", "kanban_cards", "lead_tags", "leads", "owners", "tags", "kanban_columns", "kanban_boards", "campaign_items", "campaigns", "catalog_items", "appointments", "media_library", "messages"] as TableName[]).filter((t) => scope.has(t));
       for (let i = 0; i < order.length; i++) {
         onProgress?.({ label: "Apagando os dados antigos", done: i, total: order.length });
         const ids = before[order[i]].map((r) => r.id).filter((id) => !reusedIds[order[i]].has(id));

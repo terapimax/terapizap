@@ -12,6 +12,7 @@ import {
   ListChecks,
   Columns3,
   BarChart3,
+  Package,
 } from "lucide-react";
 
 export interface NavItem {
@@ -36,6 +37,7 @@ export const MAIN_NAV: NavItem[] = [
   { href: "/dashboard/kanban", label: "Kanban", icon: Columns3, description: "Seus leads por etapa do funil de vendas" },
   { href: "/dashboard/relatorios", label: "Relatórios", icon: BarChart3, description: "Conversão, tempo em cada etapa, origem dos leads e gatilhos" },
   { href: "/dashboard/tarefas", label: "Tarefas", icon: ListChecks, description: "Envios agendados e lembretes, em lista ou calendário" },
+  { href: "/dashboard/catalogo", label: "Catálogo", icon: Package, description: "Produtos, serviços e campanhas para escolher no card do lead" },
   {
     href: "/dashboard/mensagens",
     label: "Biblioteca",

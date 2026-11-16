@@ -2,8 +2,9 @@
 
 import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
-import type { LeadFull, LeadMessage, Tag } from "@/types";
+import type { CardItem, LeadFull, LeadMessage, Tag } from "@/types";
 import { cleanLeadInput, leadErrorMessage, type LeadInput } from "@/lib/leads";
+import { diffCardItems, type DraftCardItem } from "@/lib/catalog";
 import { removeLeadTaskFiles } from "@/hooks/use-tasks";
 import { toast } from "sonner";
 
@@ -69,7 +70,24 @@ async function setLeadTags(leadId: number, tagIds: number[], userId: string) {
   }
 }
 
-export interface NewCardInput { board_id: number; column_id: number; value?: number; product?: string | null }
+/** Grava os itens (produtos e serviços) de um card para ficarem iguais a `after`. */
+async function saveCardItems(cardId: number, before: CardItem[], after: DraftCardItem[], userId: string) {
+  const { remove, update, insert } = diffCardItems(before, after);
+  if (remove.length) {
+    const r = await supabase.from("card_items").delete().in("id", remove);
+    if (r.error) throw r.error;
+  }
+  for (const u of update) {
+    const r = await supabase.from("card_items").update(u.patch).eq("id", u.id);
+    if (r.error) throw r.error;
+  }
+  if (insert.length) {
+    const r = await supabase.from("card_items").insert(insert.map((i) => ({ ...i, card_id: cardId, user_id: userId })));
+    if (r.error) throw r.error;
+  }
+}
+
+export interface NewCardInput { board_id: number; column_id: number; value?: number; product?: string | null; items?: DraftCardItem[] }
 
 /** Próxima posição livre no fim da etapa. */
 async function nextPosition(columnId: number) {
@@ -87,13 +105,15 @@ export function useCreateLead() {
       const id = (data as { id: number }).id;
       if (tagIds.length) await setLeadTags(id, tagIds, user_id);
       if (card) {
+        const { items, ...row } = card;
         const position = await nextPosition(card.column_id);
-        const r = await supabase.from("kanban_cards").insert({ ...card, value: card.value || 0, lead_id: id, position, user_id });
+        const r = await supabase.from("kanban_cards").insert({ ...row, value: card.value || 0, lead_id: id, position, user_id }).select("id").single();
         if (r.error) throw r.error;
+        if (items?.length) await saveCardItems((r.data as { id: number }).id, [], items, user_id);
       }
       return id;
     },
-    onSuccess: () => { invalidateLeads(qc); toast.success("Lead adicionado"); },
+    onSuccess: () => { invalidateLeads(qc); qc.invalidateQueries({ queryKey: ["catalog"] }); toast.success("Lead adicionado"); },
     onError: (e) => toast.error(leadErrorMessage(e)),
   });
 }
@@ -105,21 +125,24 @@ export function useUpdateLead() {
       id: number;
       lead: Partial<LeadInput>;
       tagIds?: number[];
-      /** mudanças nos cards deste lead (etapa, valor, produto) */
-      cards?: { id: number; column_id?: number; value?: number; product?: string | null }[];
+      /** mudanças nos cards deste lead (etapa, valor, produto, itens do catálogo) */
+      cards?: { id: number; column_id?: number; value?: number; product?: string | null; items?: { before: CardItem[]; after: DraftCardItem[] } }[];
     }) => {
       const user_id = await uid();
       const { error } = await supabase.from("leads").update(cleanLeadInput(lead)).eq("id", id);
       if (error) throw error;
       if (tagIds) await setLeadTags(id, tagIds, user_id);
-      for (const { id: cardId, ...c } of cards ?? []) {
+      for (const { id: cardId, items, ...c } of cards ?? []) {
         const patch: Record<string, unknown> = { ...c };
         if (c.column_id != null) patch.position = await nextPosition(c.column_id);
-        const r = await supabase.from("kanban_cards").update(patch).eq("id", cardId);
-        if (r.error) throw r.error;
+        if (Object.keys(patch).length) {
+          const r = await supabase.from("kanban_cards").update(patch).eq("id", cardId);
+          if (r.error) throw r.error;
+        }
+        if (items) await saveCardItems(cardId, items.before, items.after, user_id);
       }
     },
-    onSuccess: () => invalidateLeads(qc),
+    onSuccess: () => { invalidateLeads(qc); qc.invalidateQueries({ queryKey: ["catalog"] }); },
     onError: (e) => toast.error(leadErrorMessage(e)),
   });
 }
