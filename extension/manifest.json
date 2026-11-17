@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ZapFlow - WhatsApp Automation",
-  "version": "3.15.4",
+  "version": "3.17.1",
   "description": "Injete mensagens, áudios, mídias e documentos nas conversas do WhatsApp Web — sincronizado com o painel ZapFlow",
   "permissions": [
     "activeTab",
@@ -9,7 +9,10 @@
   ],
   "host_permissions": [
     "https://*.whatsapp.net/*",
-    "https://*.fbcdn.net/*"
+    "https://*.fbcdn.net/*",
+    "https://api.anthropic.com/*",
+    "https://api.openai.com/*",
+    "https://api.groq.com/*"
   ],
   "icons": {
     "16": "icons/icon16.png",
@@ -37,8 +40,10 @@
         "config.js",
         "supabase.min.js",
         "brand-kit.js",
+        "zf_ai.js",
         "content-ui.js",
-        "content.js"
+        "content.js",
+        "agent.js"
       ],
       "css": [
         "sidebar.css"

@@ -176,6 +176,14 @@
   // silent: atualização automática (ao voltar para o WhatsApp). Só redesenha se algo mudou
   // e, se falhar, mantém a lista que já está na tela.
   let lastLoadAt = 0, dataSignature = '', loading = false;
+  // O Chrome mostra objetos de erro como "[object Object]" na página de erros da extensão.
+  // Transforma o erro do Supabase em texto legível (mensagem, código e detalhes).
+  const errText = (e) => {
+    if (!e) return '';
+    if (typeof e === 'string') return e;
+    const parts = [e.message, e.code && `(código ${e.code})`, e.details, e.hint].filter(Boolean);
+    return parts.length ? parts.join(' ') : JSON.stringify(e);
+  };
   async function loadAllData({ silent = false } = {}) {
     if (loading) return;
     loading = true;
@@ -190,11 +198,11 @@
         sb.from('triggers').select('*').eq('event', 'keyword').eq('is_active', true).order('created_at'),
       ]);
       // gatilhos com problema também não derrubam nada
-      if (trig.error) console.warn('ZapFlow: falha ao carregar gatilhos', trig.error);
+      if (trig.error) console.warn('ZapFlow: falha ao carregar gatilhos: ' + errText(trig.error));
       else triggersData = trig.data || [];
       if (msgs.error || media.error) throw msgs.error || media.error;
       // funis com problema não derrubam a lista de itens
-      if (funnels.error) console.warn('ZapFlow: falha ao carregar funis', funnels.error);
+      if (funnels.error) console.warn('ZapFlow: falha ao carregar funis: ' + errText(funnels.error));
       lastLoadAt = Date.now();
       fetchBrand();
       watchNewTasks();
@@ -217,7 +225,7 @@
       if (flist) flist.scrollTop = fscroll;
       renderQuickBar();
     } catch (e) {
-      console.error('❌ ZapFlow: falha ao carregar itens', e);
+      console.error('❌ ZapFlow: falha ao carregar itens: ' + errText(e));
       if (silent && loaded) return;
       loaded = true;
       const list = $('zf-items-list');
@@ -1420,6 +1428,8 @@
     tagInput.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); addTag(); } };
     const notes = $('zf-lead-notes');
     notes.onblur = () => { saveNotes(notes.value); if (leadDirty) setTimeout(renderLead, 0); };
+    // o Agente (agent.js) pendura o cartão dele no topo da aba
+    if (window.ZF_AGENT && window.ZF_AGENT.onLeadRender) { try { window.ZF_AGENT.onLeadRender(box); } catch (e) { console.warn('ZapFlow agente:', e); } }
   }
 
   async function leadAction(fn, okMsg) {
@@ -1464,23 +1474,41 @@
     }, 'Colocado em ' + stageLabel(col));
   }
 
+  // Põe a etiqueta num lead qualquer (o da conversa aberta ou, para o agente, outro). chatId = conversa do lead.
+  async function applyTagTo(lead, name, chatId) {
+    const norm = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+    let tag = crm.tags.find((t) => norm(t.name) === norm(name));
+    const uid = await userId();
+    if (!tag) {
+      const { data, error } = await sb.from('tags').insert({ name: name.trim().replace(/\s+/g, ' '), color: TAG_COLORS[(crm.tags.length + 1) % TAG_COLORS.length], user_id: uid }).select('id,name,color').single();
+      if (error) throw error;
+      tag = data;
+      crm.tags = [...crm.tags, tag].sort((a, b) => a.name.localeCompare(b.name));
+    }
+    const { error } = await sb.from('lead_tags').upsert({ lead_id: lead.id, tag_id: tag.id, user_id: uid }, { onConflict: 'lead_id,tag_id', ignoreDuplicates: true });
+    if (error) throw error;
+    await mirrorLabel(tag, true, chatId);
+  }
+
   function tagLead(name) {
     const lead = leadState.lead;
     if (!lead) return;
-    const norm = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
-    return leadAction(async () => {
-      let tag = crm.tags.find((t) => norm(t.name) === norm(name));
-      const uid = await userId();
-      if (!tag) {
-        const { data, error } = await sb.from('tags').insert({ name: name.trim().replace(/\s+/g, ' '), color: TAG_COLORS[(crm.tags.length + 1) % TAG_COLORS.length], user_id: uid }).select('id,name,color').single();
-        if (error) throw error;
-        tag = data;
-        crm.tags = [...crm.tags, tag].sort((a, b) => a.name.localeCompare(b.name));
-      }
-      const { error } = await sb.from('lead_tags').upsert({ lead_id: lead.id, tag_id: tag.id, user_id: uid }, { onConflict: 'lead_id,tag_id', ignoreDuplicates: true });
+    return leadAction(() => applyTagTo(lead, name, leadChat && leadChat.chatId));
+  }
+
+  // Põe o lead numa etapa (move o card do quadro dela, ou cria o card). Não depende da conversa aberta.
+  async function setLeadStage(lead, columnId) {
+    const col = crm.columns.find((c) => c.id === columnId);
+    if (!col) throw new Error('Etapa não existe mais.');
+    const card = (lead.kanban_cards || []).find((c) => c.board_id === col.board_id);
+    if (card) {
+      if (card.column_id === columnId) return;
+      const { error } = await sb.from('kanban_cards').update({ column_id: columnId, position: await nextPos(columnId) }).eq('id', card.id);
       if (error) throw error;
-      await mirrorLabel(tag, true);
-    });
+    } else {
+      const { error } = await sb.from('kanban_cards').insert({ lead_id: lead.id, board_id: col.board_id, column_id: col.id, position: await nextPos(col.id), user_id: await userId() });
+      if (error) throw error;
+    }
   }
 
   function untagLead(tagId) {
@@ -1561,8 +1589,13 @@
     } catch (e) { /* sem foto: ficam as iniciais */ }
   }
 
+  // Depois de recarregar/atualizar a extensão, o script que ficou na aba do WhatsApp perde a ligação com ela
+  // ("Extension context invalidated"). Ele não consegue mais nada: só para, sem barulho e sem anotar falha.
+  const extDead = () => { try { return !(chrome.runtime && chrome.runtime.id); } catch (e) { return true; } };
+
   function fetchAvatarBlob(url) {
     return new Promise((resolve, reject) => {
+      if (extDead()) return reject(new Error('Extension context invalidated'));
       try {
         chrome.runtime.sendMessage({ type: 'ZAPFLOW_FETCH_AVATAR', url }, (r) => {
           if (chrome.runtime.lastError || !r || !r.success) return reject(new Error((r && r.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'sem resposta'));
@@ -1605,7 +1638,9 @@
         if (!r.url) { avatarMiss[missKey] = Date.now() + 14 * 86400000; saveAvatarMiss(); return 'miss'; }
         let blob;
         try { blob = await fetchAvatarBlob(r.url); }
-        catch (e) { console.warn('ZapFlow: não foi possível baixar a foto', e && e.message); avatarMiss[missKey] = Date.now() + 86400000; saveAvatarMiss(); return 'fail'; }
+        catch (e) {
+          if (extDead() || /context invalidated/i.test((e && e.message) || '')) return 'skip';
+          console.warn('ZapFlow: não foi possível baixar a foto', e && e.message); avatarMiss[missKey] = Date.now() + 86400000; saveAvatarMiss(); return 'fail'; }
         const path = `${uid}/avatars/${lead.id}-${Math.random().toString(36).slice(2, 10)}.jpg`;
         const up = await sb.storage.from(AVATAR_BUCKET).upload(path, blob, { contentType: 'image/jpeg', upsert: false });
         if (up.error) throw up.error;
@@ -1621,6 +1656,7 @@
         return 'ok';
       } finally { avatarBusy.delete(lead.id); }
     } catch (e) {
+      if (extDead()) return 'skip';
       console.warn('ZapFlow: foto de perfil falhou', e && e.message);
       return 'fail';
     }
@@ -1646,6 +1682,7 @@
       .sort((a, b) => String(b.last_contact_at || '').localeCompare(String(a.last_contact_at || '')) || b.id - a.id);
   }
   async function avatarTick() {
+    if (extDead()) return; // script órfão (extensão recarregada): para o ciclo
     let wait = 60000;
     try {
       if (sb && loaded && settings.avatars !== false && !document.hidden) {
@@ -1980,10 +2017,11 @@
   }
 
   // Espelha no WhatsApp a etiqueta posta/tirada pela aba Lead (só se ela estiver ligada e a conversa aberta for do lead)
-  async function mirrorLabel(tag, add) {
-    if (settings.labelSync === false || !tag || !tag.wa_label_id || !leadChat || leadChat.isGroup) return;
+  async function mirrorLabel(tag, add, chatId) {
+    const target = chatId || (leadChat && !leadChat.isGroup ? leadChat.chatId : null);
+    if (settings.labelSync === false || !tag || !tag.wa_label_id || !target) return;
     try {
-      const r = await engineRequest('ZF_ENGINE_SET_LABEL', { chatId: leadChat.chatId, labelId: tag.wa_label_id, add }, 15000);
+      const r = await engineRequest('ZF_ENGINE_SET_LABEL', { chatId: target, labelId: tag.wa_label_id, add }, 15000);
       if (!r.ok && !/Business/.test(r.error || '')) showToast('A etiqueta mudou aqui, mas não no WhatsApp: ' + r.error);
     } catch (e) { /* motor ocupado: fica só no ZapFlow */ }
   }
@@ -2942,6 +2980,39 @@
   function escapeHtml(str) { if (!str) return ''; const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
   function formatFileSize(b) { if (!b) return ''; if (b < 1024) return b + ' B'; if (b < 1048576) return Math.round(b/1024) + ' KB'; return (b/1048576).toFixed(1).replace('.', ',') + ' MB'; }
   function formatDuration(sec) { const s = Math.max(0, Math.round(sec)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+
+  // ===== PONTE PARA O AGENTE (agent.js) =====
+  // O agente vive em outro arquivo e usa só o que está aqui: leitura do estado e as mesmas ações da aba Lead
+  // e da fila de envio (então tudo que ele faz passa pelo "digitando/gravando" e pelas regras de sempre).
+  window.ZF_BRIDGE = {
+    sb: () => sb,
+    isLoaded: () => loaded,
+    leadChat: () => leadChat,
+    leadState: () => leadState,
+    crm: () => crm,
+    settings: () => settings,
+    data: () => ({ messages: messagesData, media: mediaData, funnels: funnelsData }),
+    items: () => buildItemsList(),
+    funnelById: (id) => funnelsData.find((f) => f.id === id) || null,
+    userId,
+    engineRequest,
+    enqueueSend,
+    startFunnelRun,
+    reloadLead: (opts) => loadLead(opts),
+    leadUpdate,
+    moveCard,
+    addLeadCard,
+    tagLead,
+    applyTagTo,
+    setLeadStage,
+    triggerReplyAt: (chatId) => lastAutoReply.get(chatId) || 0,
+    stageLabel,
+    blockingLabelOf,
+    showToast,
+    escapeHtml,
+    fillTemplate,
+    initialsOf,
+  };
 
   init();
 })();

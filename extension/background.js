@@ -65,5 +65,43 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return true;
     }
 
+    if (msg.type === 'ZAPFLOW_AI_FETCH') {
+        // Chamadas à IA (Claude, OpenAI, Groq) com a chave do próprio dono. A página do WhatsApp não pode
+        // fazer isso (CORS), então o segundo plano faz. Só aceita os 3 serviços, só HTTPS e só estes cabeçalhos.
+        const ALLOWED = { 'api.anthropic.com': /^\/v1\//, 'api.openai.com': /^\/v1\//, 'api.groq.com': /^\/openai\/v1\// };
+        const HEADERS = ['content-type', 'x-api-key', 'anthropic-version', 'anthropic-dangerous-direct-browser-access', 'authorization'];
+        let u = null;
+        try { u = new URL(msg.url); } catch (e) { /* endereço inválido */ }
+        if (!u || u.protocol !== 'https:' || !ALLOWED[u.hostname] || !ALLOWED[u.hostname].test(u.pathname)) {
+            sendResponse({ ok: false, status: 0, error: 'Endereço não permitido.' });
+            return;
+        }
+        const headers = {};
+        for (const k of Object.keys(msg.headers || {})) if (HEADERS.includes(k.toLowerCase())) headers[k] = String(msg.headers[k]);
+        let body;
+        if (Array.isArray(msg.form)) {
+            // transcrição: o arquivo vem em base64 e vira arquivo de verdade aqui
+            body = new FormData();
+            for (const [k, v] of msg.form) {
+                if (v && typeof v === 'object' && v.base64 != null) {
+                    const bin = atob(v.base64);
+                    const bytes = new Uint8Array(bin.length);
+                    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+                    body.append(k, new Blob([bytes], { type: v.type || 'application/octet-stream' }), v.name || 'audio.ogg');
+                } else body.append(k, String(v));
+            }
+        } else if (typeof msg.body === 'string') body = msg.body;
+        const ctl = new AbortController();
+        const timer = setTimeout(() => ctl.abort(), 240000);
+        fetch(u.href, { method: msg.method === 'GET' ? 'GET' : 'POST', headers, body: msg.method === 'GET' ? undefined : body, credentials: 'omit', signal: ctl.signal })
+            .then(async (res) => {
+                const text = await res.text();
+                sendResponse({ ok: res.ok, status: res.status, retryAfter: res.headers.get('retry-after') || null, body: text });
+            })
+            .catch((err) => sendResponse({ ok: false, status: 0, error: (err && err.message) || 'Falha de rede.' }))
+            .finally(() => clearTimeout(timer));
+        return true;
+    }
+
     sendResponse({ ok: true });
 });

@@ -13,6 +13,7 @@ import {
   Columns3,
   BarChart3,
   Package,
+  Bot,
 } from "lucide-react";
 
 export interface NavItem {
@@ -47,6 +48,7 @@ export const MAIN_NAV: NavItem[] = [
   },
   { href: "/dashboard/funis", label: "Funis", icon: Filter, description: "Sequências com digitando e gravando automáticos" },
   { href: "/dashboard/gatilhos", label: "Gatilhos", icon: Zap, description: "Automações disparadas por eventos" },
+  { href: "/dashboard/agente", label: "Agente", icon: Bot, description: "Seu vendedor de IA: conecte, treine, teste e acompanhe" },
 ];
 
 export const SETTINGS_NAV: NavItem = {

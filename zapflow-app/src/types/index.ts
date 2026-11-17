@@ -15,6 +15,10 @@ export interface Message {
   content: string | null;
   is_favorite: boolean;
   created_at: string;
+  /** o que a IA entendeu (colunas novas: bancos antigos não têm) */
+  ai_when_to_use?: string | null;
+  ai_tags?: string[] | null;
+  ai_at?: string | null;
 }
 
 export interface MediaItem {
@@ -29,6 +33,15 @@ export interface MediaItem {
   is_favorite: boolean;
   is_view_once: boolean;
   created_at: string;
+  /** transcrição (áudio/vídeo) ou texto lido do arquivo (imagem/documento) */
+  ai_transcript?: string | null;
+  ai_summary?: string | null;
+  ai_when_to_use?: string | null;
+  ai_tags?: string[] | null;
+  /** null = ainda não lido pela IA */
+  ai_status?: "done" | "error" | "skipped" | null;
+  ai_error?: string | null;
+  ai_at?: string | null;
 }
 
 export interface Funnel {
@@ -334,3 +347,114 @@ export type NavPage =
   | "gatilhos"
   | "configuracoes";
 
+
+/* ============================ AGENTE DE IA ============================ */
+
+export type AiProvider = "anthropic" | "openai";
+export type AiSttProvider = "openai" | "groq";
+/** off = desligado · copilot = sugere e você aprova · auto = responde sozinho, dentro das travas de AutoConfig */
+export type AgentMode = "off" | "copilot" | "auto";
+
+/** Travas do piloto automático (guardadas em ai_settings.profile.auto; a regra mora em zf-ai.js: normalizeAuto). */
+export interface AutoConfig {
+  hours: { enabled: boolean; days: number[]; start: string; end: string };
+  outside: "suggest" | "silent";
+  delay_min_s: number;
+  delay_max_s: number;
+  max_per_hour: number;
+  max_per_lead_day: number;
+  pause_owner_min: number;
+  handoff_hours: number;
+  handoff_words: string[];
+  skip_stage_ids: number[];
+  skip_tag_ids: number[];
+  allow_classify: boolean;
+  allow_tasks: boolean;
+  max_sends: number;
+}
+
+/** Treino do agente (guardado em ai_settings.profile). Tudo opcional. */
+export interface AgentProfile {
+  business_name?: string;
+  business_about?: string;
+  persona_name?: string;
+  role?: string;
+  goal?: string;
+  tone?: "amigavel" | "profissional" | "descontraido" | "consultivo";
+  tone_notes?: string;
+  emoji?: "nenhum" | "pouco" | "livre";
+  rules?: string;
+  forbidden?: string;
+  qualification?: string;
+  handoff?: string;
+  hours_text?: string;
+  /** Travas do automático. Quem grava é a aba Automático; o Treino só preserva. */
+  auto?: Partial<AutoConfig>;
+}
+
+export interface AiSettings {
+  user_id: string;
+  provider: AiProvider;
+  model_chat: string | null;
+  model_fast: string | null;
+  anthropic_key: string | null;
+  openai_key: string | null;
+  stt_provider: AiSttProvider;
+  stt_model: string | null;
+  stt_key: string | null;
+  mode: AgentMode;
+  profile: AgentProfile;
+  updated_at: string;
+}
+
+/** Registro do que o agente fez. */
+export interface AgentRun {
+  id: number;
+  user_id: string;
+  lead_id: number | null;
+  source: "simulator" | "copilot" | "auto" | "library" | "manager";
+  provider: string | null;
+  model: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  duration_ms: number | null;
+  summary: string | null;
+  actions: unknown[];
+  error: string | null;
+  feedback: -1 | 1 | null;
+  created_at: string;
+}
+
+/** Sugestão de item novo para a biblioteca (vem sozinha do registro do agente). */
+export interface AgentSuggestion {
+  id: number;
+  user_id: string;
+  kind: string;
+  title: string;
+  content: string | null;
+  reason: string | null;
+  lead_id: number | null;
+  times: number;
+  status: "pending" | "accepted" | "dismissed";
+  created_at: string;
+  updated_at: string;
+}
+
+/** Resumo do dia montado pelo gerente. */
+export interface Briefing {
+  titulo: string;
+  resumo: string;
+  prioridades: { lead_id: number; nome: string; motivo: string; acao: string }[];
+  alertas: string[];
+  oportunidades: string[];
+  recomendacoes: { texto: string; tipo: "biblioteca" | "funil" | "processo" | "treino" }[];
+}
+
+export interface AgentReport {
+  id: number;
+  user_id: string;
+  kind: "briefing";
+  content: { briefing: Briefing; totais?: Record<string, number>; model?: string };
+  created_at: string;
+}

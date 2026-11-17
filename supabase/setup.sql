@@ -1132,11 +1132,171 @@
   WHERE l.campaign_id IS NULL AND nullif(btrim(l.campaign), '') IS NOT NULL
     AND c.user_id = l.user_id AND lower(btrim(c.name)) = lower(btrim(l.campaign));
 
+  -- 6m. AGENTE DE IA -----------------------------------------------
+  -- Cada conta usa a PRÓPRIA chave (Claude da Anthropic ou OpenAI). O painel e a extensão falam
+  -- direto com o fornecedor, sem passar por servidor nosso. As chaves ficam só nesta linha, que só
+  -- o dono da conta enxerga (RLS). Uma linha por conta.
+  CREATE TABLE IF NOT EXISTS public.ai_settings (
+    user_id UUID PRIMARY KEY DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL DEFAULT 'anthropic' CHECK (provider IN ('anthropic', 'openai')),
+    model_chat TEXT,        -- modelo que conversa com o lead e decide (vazio = padrão do fornecedor)
+    model_fast TEXT,        -- modelo barato para classificar e resumir a biblioteca
+    anthropic_key TEXT,
+    openai_key TEXT,
+    -- Transcrição de áudio (o Claude não ouve áudio). Padrão: OpenAI, reaproveitando a chave dela.
+    stt_provider TEXT NOT NULL DEFAULT 'openai' CHECK (stt_provider IN ('openai', 'groq')),
+    stt_model TEXT,
+    stt_key TEXT,           -- só se a transcrição usar outra chave (ex.: Groq)
+    -- off = desligado | copilot = sugere e você aprova | auto = responde sozinho (ainda não liberado)
+    mode TEXT NOT NULL DEFAULT 'off' CHECK (mode IN ('off', 'copilot', 'auto')),
+    -- treino do agente: empresa, tom, regras, assuntos proibidos, horário, perguntas de qualificação
+    profile JSONB NOT NULL DEFAULT '{}',
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+
+  -- O que o agente aprendeu de cada item da biblioteca (transcrição, resumo e "quando usar").
+  -- Texto vem da própria mensagem; áudio e vídeo viram transcrição; imagem e PDF viram descrição.
+  ALTER TABLE public.media_library ADD COLUMN IF NOT EXISTS ai_transcript TEXT;
+  ALTER TABLE public.media_library ADD COLUMN IF NOT EXISTS ai_summary TEXT;
+  ALTER TABLE public.media_library ADD COLUMN IF NOT EXISTS ai_when_to_use TEXT;
+  ALTER TABLE public.media_library ADD COLUMN IF NOT EXISTS ai_tags TEXT[];
+  ALTER TABLE public.media_library ADD COLUMN IF NOT EXISTS ai_status TEXT;   -- NULL = ainda não lido
+  ALTER TABLE public.media_library ADD COLUMN IF NOT EXISTS ai_error TEXT;
+  ALTER TABLE public.media_library ADD COLUMN IF NOT EXISTS ai_at TIMESTAMPTZ;
+  ALTER TABLE public.media_library DROP CONSTRAINT IF EXISTS media_ai_status_check;
+  ALTER TABLE public.media_library ADD CONSTRAINT media_ai_status_check CHECK (ai_status IS NULL OR ai_status IN ('done', 'error', 'skipped'));
+  ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS ai_when_to_use TEXT;
+  ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS ai_tags TEXT[];
+  ALTER TABLE public.messages ADD COLUMN IF NOT EXISTS ai_at TIMESTAMPTZ;
+
+  -- Registro do que o agente fez (simulador, copiloto e leitura da biblioteca): o que decidiu,
+  -- quais ferramentas usou e quantos tokens gastou. Guarda só os 500 mais recentes por conta.
+  CREATE TABLE IF NOT EXISTS public.agent_runs (
+    id BIGSERIAL PRIMARY KEY,
+    user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
+    lead_id BIGINT REFERENCES public.leads(id) ON DELETE SET NULL,
+    source TEXT NOT NULL CHECK (source IN ('simulator', 'copilot', 'auto', 'library')),
+    provider TEXT,
+    model TEXT,
+    input_tokens INT NOT NULL DEFAULT 0,
+    output_tokens INT NOT NULL DEFAULT 0,
+    cache_read_tokens INT NOT NULL DEFAULT 0,
+    duration_ms INT,
+    summary TEXT,
+    actions JSONB NOT NULL DEFAULT '[]',
+    error TEXT,
+    feedback SMALLINT CHECK (feedback IS NULL OR feedback IN (-1, 1)),   -- 👎 / 👍
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE OR REPLACE FUNCTION public.zf_prune_agent_runs() RETURNS trigger
+  LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
+  BEGIN
+    DELETE FROM agent_runs
+    WHERE user_id = NEW.user_id
+      AND id <= (SELECT id FROM agent_runs WHERE user_id = NEW.user_id ORDER BY id DESC OFFSET 500 LIMIT 1);
+    RETURN NULL;
+  END $$;
+  DROP TRIGGER IF EXISTS zf_prune_agent_runs ON public.agent_runs;
+  CREATE TRIGGER zf_prune_agent_runs AFTER INSERT ON public.agent_runs
+    FOR EACH ROW EXECUTE FUNCTION public.zf_prune_agent_runs();
+
+  -- Piloto automático -------------------------------------------------
+  -- Pausa do agente em UM lead (você assumiu, ou ele chamou você): até esta hora o automático não responde.
+  ALTER TABLE public.leads ADD COLUMN IF NOT EXISTS ai_paused_until TIMESTAMPTZ;
+
+  -- Reserva atômica antes de responder sozinho: se duas abas do WhatsApp (ou dois computadores) tentarem
+  -- responder o mesmo lead ao mesmo tempo, só uma recebe o número do registro; a outra recebe NULL e desiste.
+  -- Devolve o id do registro (source 'auto') que a extensão preenche depois; NULL = já tem resposta em curso.
+  CREATE OR REPLACE FUNCTION public.zf_agent_claim(p_lead BIGINT, p_secs INT DEFAULT 90) RETURNS BIGINT
+  LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
+  DECLARE
+    v_uid UUID := auth.uid();
+    v_id BIGINT;
+  BEGIN
+    IF v_uid IS NULL THEN RAISE EXCEPTION 'Entre na sua conta.'; END IF;
+    PERFORM pg_advisory_xact_lock(hashtext('zf_agent:' || v_uid::text || ':' || p_lead::text));
+    IF NOT EXISTS (SELECT 1 FROM leads WHERE id = p_lead AND user_id = v_uid) THEN RETURN NULL; END IF;
+    IF EXISTS (
+      SELECT 1 FROM agent_runs
+      WHERE user_id = v_uid AND lead_id = p_lead AND source = 'auto'
+        AND created_at > now() - make_interval(secs => greatest(p_secs, 1))
+    ) THEN RETURN NULL; END IF;
+    INSERT INTO agent_runs (user_id, lead_id, source, summary) VALUES (v_uid, p_lead, 'auto', 'reservado')
+    RETURNING id INTO v_id;
+    RETURN v_id;
+  END $$;
+
+  -- Gerente (Fase 4) ---------------------------------------------------
+  -- O registro também guarda o que o gerente gerou (resumo do dia, mensagens de retomada, funil).
+  ALTER TABLE public.agent_runs DROP CONSTRAINT IF EXISTS agent_runs_source_check;
+  ALTER TABLE public.agent_runs ADD CONSTRAINT agent_runs_source_check
+    CHECK (source IN ('simulator', 'copilot', 'auto', 'library', 'manager'));
+
+  -- Sugestões de itens novos para a biblioteca: quando o agente percebe uma pergunta que a biblioteca
+  -- não cobre, ele sugere (ferramenta sugerir_item_biblioteca). A sugestão cai aqui sozinha, a partir do
+  -- registro (agent_runs). A mesma sugestão repetida não duplica: soma em "times".
+  CREATE TABLE IF NOT EXISTS public.agent_suggestions (
+    id BIGSERIAL PRIMARY KEY,
+    user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL DEFAULT 'texto',      -- texto | audio | imagem | video | documento
+    title TEXT NOT NULL CHECK (btrim(title) <> ''),
+    content TEXT,                            -- texto pronto ou roteiro do que gravar
+    reason TEXT,
+    lead_id BIGINT REFERENCES public.leads(id) ON DELETE SET NULL,
+    times INT NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'dismissed')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_suggestions_pending ON public.agent_suggestions(user_id, lower(btrim(title))) WHERE status = 'pending';
+
+  CREATE OR REPLACE FUNCTION public.zf_collect_suggestions() RETURNS trigger
+  LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
+  DECLARE a JSONB;
+  BEGIN
+    IF TG_OP = 'UPDATE' AND NEW.actions IS NOT DISTINCT FROM OLD.actions THEN RETURN NULL; END IF;
+    IF NEW.source = 'library' OR jsonb_typeof(NEW.actions) IS DISTINCT FROM 'array' THEN RETURN NULL; END IF;
+    FOR a IN SELECT * FROM jsonb_array_elements(NEW.actions) LOOP
+      CONTINUE WHEN a->>'type' IS DISTINCT FROM 'suggest_item' OR nullif(btrim(coalesce(a->>'title', '')), '') IS NULL;
+      INSERT INTO agent_suggestions (user_id, kind, title, content, reason, lead_id)
+      VALUES (NEW.user_id, coalesce(nullif(a->>'kind', ''), 'texto'), left(btrim(a->>'title'), 100),
+              left(nullif(a->>'content', ''), 1200), left(nullif(a->>'reason', ''), 240), NEW.lead_id)
+      ON CONFLICT (user_id, lower(btrim(title))) WHERE status = 'pending'
+      DO UPDATE SET times = agent_suggestions.times + 1, updated_at = now(),
+        content = coalesce(EXCLUDED.content, agent_suggestions.content),
+        lead_id = coalesce(EXCLUDED.lead_id, agent_suggestions.lead_id);
+    END LOOP;
+    RETURN NULL;
+  END $$;
+  DROP TRIGGER IF EXISTS zf_collect_suggestions ON public.agent_runs;
+  CREATE TRIGGER zf_collect_suggestions AFTER INSERT OR UPDATE OF actions ON public.agent_runs
+    FOR EACH ROW EXECUTE FUNCTION public.zf_collect_suggestions();
+
+  -- Resumos do dia gerados pelo gerente (os 30 mais recentes por conta).
+  CREATE TABLE IF NOT EXISTS public.agent_reports (
+    id BIGSERIAL PRIMARY KEY,
+    user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL DEFAULT 'briefing' CHECK (kind IN ('briefing')),
+    content JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE OR REPLACE FUNCTION public.zf_prune_agent_reports() RETURNS trigger
+  LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
+  BEGIN
+    DELETE FROM agent_reports
+    WHERE user_id = NEW.user_id
+      AND id <= (SELECT id FROM agent_reports WHERE user_id = NEW.user_id ORDER BY id DESC OFFSET 30 LIMIT 1);
+    RETURN NULL;
+  END $$;
+  DROP TRIGGER IF EXISTS zf_prune_agent_reports ON public.agent_reports;
+  CREATE TRIGGER zf_prune_agent_reports AFTER INSERT ON public.agent_reports
+    FOR EACH ROW EXECUTE FUNCTION public.zf_prune_agent_reports();
+
   -- 7. SEGURANÇA: cada usuário só vê e altera os próprios dados (RLS)
   DO $$
   DECLARE t TEXT;
   BEGIN
-    FOREACH t IN ARRAY ARRAY['messages','media_library','funnels','funnel_items','kanban_boards','kanban_columns','leads','tags','lead_tags','kanban_cards','lead_messages','triggers','trigger_fires','kanban_card_moves','owners','branding','catalog_items','campaigns','campaign_items','card_items','appointments','tasks']
+    FOREACH t IN ARRAY ARRAY['messages','media_library','funnels','funnel_items','kanban_boards','kanban_columns','leads','tags','lead_tags','kanban_cards','lead_messages','triggers','trigger_fires','kanban_card_moves','owners','branding','catalog_items','campaigns','campaign_items','card_items','appointments','tasks','ai_settings','agent_runs','agent_suggestions','agent_reports']
     LOOP
       EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
       EXECUTE format('DROP POLICY IF EXISTS "own_rows" ON public.%I', t);
@@ -1204,6 +1364,10 @@
   CREATE INDEX IF NOT EXISTS idx_appointments_user_date ON public.appointments(user_id, date);
   CREATE INDEX IF NOT EXISTS idx_tasks_user_due ON public.tasks(user_id, status, due_at);
   CREATE INDEX IF NOT EXISTS idx_tasks_lead ON public.tasks(lead_id);
+  CREATE INDEX IF NOT EXISTS idx_agent_runs_user ON public.agent_runs(user_id, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_agent_runs_lead ON public.agent_runs(lead_id);
+  CREATE INDEX IF NOT EXISTS idx_agent_suggestions_user ON public.agent_suggestions(user_id, status, updated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_agent_reports_user ON public.agent_reports(user_id, id DESC);
 
   -- 10. AGENDA -> TAREFAS: copia compromissos antigos como lembretes (uma vez só) --
   INSERT INTO public.tasks (user_id, kind, title, due_at, contact, phone, notes, color, status, finished_at, options)
@@ -1216,4 +1380,7 @@
   FROM public.appointments a
   WHERE NOT EXISTS (SELECT 1 FROM public.tasks t WHERE t.options->>'from_appointment' = a.id::text);
 
-  -- Pronto. Confira em Table Editor: devem aparecer 22 tabelas.
+  -- Pronto. Confira em Table Editor: devem aparecer 26 tabelas.
+
+  -- 11. Pede ao Supabase (PostgREST) para reconhecer as tabelas novas na hora.
+  NOTIFY pgrst, 'reload schema';

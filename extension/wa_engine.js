@@ -20,6 +20,7 @@
 //   → ZF_ENGINE_SET_LABEL { chatId, labelId, add } ← ZF_ENGINE_RESULT { ok, error? }  (só WhatsApp Business)
 //   ← ZF_ENGINE_LABEL_CHANGE { chat: contato, change: 'add'|'remove', labels }  (sem requestId: você etiquetou no WhatsApp)
 //   → ZF_ENGINE_CHAT_HISTORY { chatId, count } ← ZF_ENGINE_RESULT { ok, messages: [msg] }  (mensagens recentes da conversa)
+//   → ZF_ENGINE_DOWNLOAD_MEDIA { msgId, maxBytes? } ← ZF_ENGINE_RESULT { ok, dataUrl, mimetype, size }  (mídia recebida, para transcrever áudio)
 //   ← ZF_ENGINE_OUTGOING { chat: contato, msg }  (sem requestId: mensagem enviada por você ou pelo ZapFlow)
 // msg = { id, from_me, by_zapflow, kind: text|audio|image|video|document|sticker|location|contact, body (texto ou legenda), t (ms) }
 // contato também traz labels: ids das etiquetas do WhatsApp Business da conversa
@@ -40,6 +41,23 @@
     const cancelled = new Set();
     let busy = false;
     let sendingChat = null; // conversa em que o ZapFlow está enviando agora (marca as mensagens como "pelo ZapFlow")
+
+    // Ids das mensagens que o ZapFlow enviou (guardados no navegador, sobrevivem a recarregar a página).
+    // Servem para o histórico dizer o que foi o ZapFlow/agente e o que foi você digitando na mão.
+    const SENT_KEY = 'zf_sent_ids';
+    let sentIds = null;
+    function zfSent() {
+        if (sentIds) return sentIds;
+        try { sentIds = new Set(JSON.parse(localStorage.getItem(SENT_KEY) || '[]')); } catch (e) { sentIds = new Set(); }
+        return sentIds;
+    }
+    function rememberSent(id) {
+        if (!id) return;
+        const s = zfSent();
+        s.add(String(id));
+        while (s.size > 600) s.delete(s.values().next().value);
+        try { localStorage.setItem(SENT_KEY, JSON.stringify([...s])); } catch (e) { /* sem armazenamento: vale só até recarregar */ }
+    }
 
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -102,7 +120,10 @@
         const chat = WPP.chat.get(chatId);
         const loaded = chat && chat.msgs ? (chat.msgs.getModelsArray ? chat.msgs.getModelsArray() : (chat.msgs.models || [])) : [];
         const byId = new Map();
-        for (const m of list.concat(loaded)) { const o = msgOut(m); if (o) byId.set(o.id, o); }
+        for (const m of list.concat(loaded)) {
+            const o = msgOut(m);
+            if (o) { o.by_zapflow = o.from_me && zfSent().has(o.id); byId.set(o.id, o); }
+        }
         return [...byId.values()].sort((a, b) => a.t - b.t).slice(-count);
     }
 
@@ -212,6 +233,7 @@
             }
 
             const ack = checkAck(result);
+            rememberSent(result && result.id && (result.id._serialized || result.id));
             reply(requestId, { ok: true, id: result.id, ack });
         } catch (e) {
             if (e instanceof Cancelled) return reply(requestId, { ok: false, cancelled: true, error: e.message });
@@ -308,6 +330,34 @@
                 }
                 break;
             }
+            case 'ZF_ENGINE_DOWNLOAD_MEDIA': {
+                // Baixa (já decifrada) a mídia de uma mensagem recebida, para o agente transcrever áudios.
+                if (!(await waitReady(5000))) return reply(msg.requestId, { ok: false, notReady: true, error: 'Motor do WhatsApp não carregou.' });
+                try {
+                    const got = await Promise.race([
+                        WPP.chat.downloadMedia(String(msg.msgId)),
+                        new Promise((_, rej) => setTimeout(() => rej(new Error('O download da mídia demorou demais.')), 45000)),
+                    ]);
+                    if (!got) throw new Error('Não foi possível baixar a mídia.');
+                    const max = Number(msg.maxBytes) || 24 * 1024 * 1024;
+                    if (typeof got === 'string') {
+                        if (!got.startsWith('data:')) throw new Error('Formato de mídia inesperado.');
+                        if (got.length * 0.75 > max) return reply(msg.requestId, { ok: false, tooLarge: true, error: 'Arquivo grande demais.' });
+                        return reply(msg.requestId, { ok: true, dataUrl: got, mimetype: got.slice(5, got.indexOf(';')) || null });
+                    }
+                    if (got.size > max) return reply(msg.requestId, { ok: false, tooLarge: true, error: 'Arquivo grande demais.' });
+                    const dataUrl = await new Promise((res, rej) => {
+                        const fr = new FileReader();
+                        fr.onload = () => res(fr.result);
+                        fr.onerror = () => rej(new Error('Não foi possível ler a mídia.'));
+                        fr.readAsDataURL(got);
+                    });
+                    reply(msg.requestId, { ok: true, dataUrl, mimetype: got.type || null, size: got.size });
+                } catch (e) {
+                    reply(msg.requestId, { ok: false, error: (e && e.message) || 'Não foi possível baixar a mídia.' });
+                }
+                break;
+            }
             case 'ZF_ENGINE_LABELS': {
                 if (!(await waitReady(5000))) return reply(msg.requestId, { ok: false, notReady: true, error: 'Motor do WhatsApp não carregou.' });
                 reply(msg.requestId, { ok: true, labels: await allLabels(), isBusiness: isBusiness() });
@@ -350,7 +400,8 @@
                     if (m.id.fromMe) {
                         const out = msgOut(m);
                         if (!out) return;
-                        out.by_zapflow = sendingChat === chatId;
+                        out.by_zapflow = sendingChat === chatId || zfSent().has(out.id);
+                        if (out.by_zapflow) rememberSent(out.id);
                         contactInfo(chatId).catch(() => null).then((info) => {
                             if (info) window.postMessage({ type: 'ZF_ENGINE_OUTGOING', chat: info, msg: out }, '*');
                         });
