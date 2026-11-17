@@ -46,7 +46,7 @@ import { brl, deaccent, formatPhone, phoneKey, tagsOf } from "@/lib/leads";
 import { TaskIcon } from "@/components/features/task-sheets";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { Columns3, Plus, Trash2, Loader2, AlertCircle, UserPlus, Users, Check, Inbox, Trophy, Pencil, Package, Megaphone } from "lucide-react";
+import { Columns3, Plus, Trash2, Loader2, AlertCircle, UserPlus, Users, Check, Inbox, Trophy, Package, Megaphone } from "lucide-react";
 
 /** Próxima tarefa em aberto de cada lead (a lista vem ordenada por horário). */
 type NextTasks = Map<number, { next: Task; count: number }>;
@@ -309,10 +309,9 @@ function StageTitle({ title, onRename }: { title: string; onRename: (title: stri
         onClick={() => setDraft(title)}
         title="Clique para renomear a etapa"
         aria-label={`${title}. Clique para renomear a etapa`}
-        className="group/title text-left break-words [overflow-wrap:anywhere] cursor-text rounded-md -mx-1.5 px-1.5 hover:bg-card transition-colors"
+        className="block max-w-full text-left break-words [overflow-wrap:anywhere] cursor-text rounded-md -mx-1.5 px-1.5 hover:bg-card transition-colors"
       >
         {title}
-        <Pencil className="inline-block w-3 h-3 ml-1.5 -mt-0.5 text-muted opacity-0 group-hover/title:opacity-100 transition-opacity" aria-hidden="true" />
       </button>
     </h3>
   );
@@ -338,21 +337,24 @@ function StageColumn({ column, items, tags, dragDisabled, onAdd, onDeleteColumn,
 
   return (
     <section aria-label={column.title} className="w-[296px] shrink-0 flex flex-col max-h-full bg-surface rounded-2xl">
-      <header className="px-4 pt-3.5 pb-2 group flex flex-col gap-1.5">
-        {/* linha 1: o nome inteiro (quebra em duas linhas se precisar); clique para renomear */}
-        <div className="flex items-start gap-2">
-          <span className="w-2 h-2 rounded-full shrink-0 mt-[7px]" style={{ backgroundColor: column.color }} aria-hidden="true" />
+      <header className="relative px-4 pt-3.5 pb-2 group">
+        {/* uma linha só: nome · quantidade de leads · valor. As ações aparecem por cima ao passar o mouse. */}
+        <div className="flex items-center gap-2 min-h-7">
+          <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: column.color }} aria-hidden="true" />
           <StageTitle title={column.title} onRename={(t) => onRename(column, t)} />
-        </div>
-        {/* linha 2: números e ações da etapa */}
-        <div className="flex items-center gap-2 min-h-7 pl-4">
-          <span className="text-xs text-muted tabular-nums whitespace-nowrap">{items.length} {items.length === 1 ? "lead" : "leads"} · {brl(total)}</span>
           {isInbox && (
-            <span title="Os novos leads do WhatsApp entram aqui" className="inline-flex items-center gap-1 h-5 px-1.5 rounded-full bg-accent-soft text-accent-fg text-[11px] font-semibold">
-              <Inbox className="w-3 h-3" aria-hidden="true" /> Entrada
+            <span title="Etapa de entrada: os novos leads do WhatsApp caem aqui" aria-label="Etapa de entrada" className="shrink-0 grid place-items-center h-5 w-5 rounded-full bg-accent-soft text-accent-fg">
+              <Inbox className="w-3 h-3" aria-hidden="true" />
             </span>
           )}
-          <span className="ml-auto flex items-center">
+          {column.outcome && (
+            <Trophy className={cn("w-3.5 h-3.5 shrink-0", column.outcome === "won" ? "text-ok" : "text-hot")} aria-label={column.outcome === "won" ? "Etapa de ganho" : "Etapa de perdidos"} />
+          )}
+          <span className="ml-auto shrink-0 flex items-center gap-1.5 tabular-nums whitespace-nowrap" title={`${items.length} ${items.length === 1 ? "lead" : "leads"} · ${brl(total)}`}>
+            <span className="h-5 min-w-5 px-1.5 grid place-items-center rounded-full bg-card text-xs font-semibold text-fg">{items.length}</span>
+            <span className="text-sm font-bold text-fg">{brl(total)}</span>
+          </span>
+          <span className="absolute right-3 top-3 flex items-center rounded-lg bg-surface shadow-[-12px_0_10px_-2px_var(--color-surface)] opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto transition-opacity">
             <OutcomeMenu column={column} onPick={(o) => onSetOutcome(column, o)} />
             {!isInbox && (
               <button
