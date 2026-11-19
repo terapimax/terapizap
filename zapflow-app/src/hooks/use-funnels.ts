@@ -19,7 +19,7 @@ export function useFunnels() {
       return (data || []).map((f: Record<string, unknown>) => ({
         ...f,
         items: ((f.funnel_items as FunnelItem[]) || []).sort(
-          (a: FunnelItem, b: FunnelItem) => a.position - b.position
+          (a: FunnelItem, b: FunnelItem) => (a.position - b.position) || (a.id - b.id)
         ),
       })) as Funnel[];
     },
@@ -91,5 +91,34 @@ export function useDeleteFunnelItem() {
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["funnels"] }); },
     onError: (e) => toast.error(`Erro: ${e.message}`),
+  });
+}
+
+export function useUpdateFunnelDelay() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, funnel_id, ...delay }: Pick<FunnelItem, "id" | "funnel_id" | "delay_minutes" | "delay_seconds">) => {
+      const { error } = await supabase.from("funnel_items").update(delay)
+        .eq("id", id).eq("funnel_id", funnel_id).select("id").single();
+      if (error) throw error;
+    },
+    onSuccess: () => toast.success("Intervalo salvo."),
+    onError: (e) => toast.error(`Erro ao salvar o intervalo. ${e.message}`),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["funnels"] }),
+  });
+}
+
+export function useReorderFunnelSteps() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ funnelId, expectedIds, steps }: { funnelId: number; expectedIds: number[]; steps: FunnelItem[] }) => {
+      const { error } = await supabase.rpc("zf_reorder_funnel_steps", {
+        p_funnel_id: funnelId, p_expected_ids: expectedIds, p_order_ids: steps.map(step => step.id),
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => toast.success("Ordem salva."),
+    onError: (e) => toast.error(`Erro ao salvar a ordem. ${e.message}`),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["funnels"] }),
   });
 }

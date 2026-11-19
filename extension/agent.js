@@ -309,7 +309,7 @@
     let queued = 0;
     for (const x of picked.filter(isSend)) {
       try {
-        enqueueAction(x, chat);
+        await enqueueAction(x, chat);
         queued++; okIds.add(x.id);
         if (x.type === 'send_item') { const s = sentRefs.get(chat.chatId) || new Set(); s.add(x.ref); sentRefs.set(chat.chatId, s); }
       } catch (err) { errors.push((err && err.message) || 'erro ao enviar'); }
@@ -589,7 +589,7 @@
 
   const REF_TYPE = { msg: 'msg', aud: 'audio', img: 'media', vid: 'media', doc: 'doc' };
 
-  function enqueueAction(a, chat) {
+  async function enqueueAction(a, chat) {
     const b = B();
     if (a.type === 'send_text') {
       b.enqueueSend({ id: 0, type: 'msg', title: 'Mensagem do agente', content: a.text }, chat);
@@ -600,7 +600,7 @@
     if (prefix === 'fun') {
       const f = b.funnelById(id);
       if (!f) throw new Error('O funil “' + a.title + '” não existe mais.');
-      if (!b.startFunnelRun(f, chat, { stopOnReply: !!b.settings().stopOnReply })) throw new Error('O funil “' + a.title + '” não tem passos.');
+      if (!(await b.startFunnelRun(f, chat, { stopOnReply: !!b.settings().stopOnReply }))) throw new Error('O funil “' + a.title + '” não tem passos.');
       return;
     }
     const type = REF_TYPE[prefix];
@@ -626,7 +626,7 @@
     let queued = 0;
     for (const a of picked.filter(isSend)) {
       try {
-        enqueueAction(a, chat);
+        await enqueueAction(a, chat);
         queued++;
         if (a.type === 'send_item') { const s = sentRefs.get(chatId) || new Set(); s.add(a.ref); sentRefs.set(chatId, s); }
       } catch (err) { errors.push((err && err.message) || 'erro ao enviar'); }

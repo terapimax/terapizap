@@ -990,11 +990,10 @@
         }
       }
       if (t.content_type === 'funnel') {
-        const funnel = funnelsData.find((f) => f.id === Number(t.funnel_id));
-        if (!funnel) throw new Error('O funil foi apagado ou ainda não carregou.');
+        if (!t.funnel_id) throw new Error('A tarefa não tem um funil associado.');
         const task = { id: t.id, attempt, options: opts };
-        if (!startFunnelRun(funnel, { chatId, name: name || 'Contato' }, { stopOnReply: settings.stopOnReply, task })) throw new Error('O funil não tem passos para enviar.');
-        showToast(`⚡ Funil “${funnel.title}” iniciado para ${name || 'o contato'}`);
+        if (!(await startFunnelRun({ id: t.funnel_id }, { chatId, name: name || 'Contato' }, { stopOnReply: settings.stopOnReply, task }))) throw new Error('O funil não tem passos para enviar.');
+        showToast(`⚡ Funil agendado iniciado para ${name || 'o contato'}`);
         return;
       }
       const payload = await buildPayload(taskItem(t), name);
@@ -1208,8 +1207,9 @@
       lastAutoReply.set(m.chatId, now);
       await sleep(2000 + Math.random() * 3000);
       const chat = { chatId: m.chatId, name: m.name };
-      if (target.funnel) startFunnelRun(target.funnel, chat, { stopOnReply: settings.stopOnReply });
-      else enqueueSend(target.item, chat);
+      if (target.funnel) {
+        if (!(await startFunnelRun(target.funnel, chat, { stopOnReply: settings.stopOnReply }))) return;
+      } else enqueueSend(target.item, chat);
       showToast(`⚡ Gatilho “${t.title}” respondendo ${m.name}`);
       return; // um gatilho por mensagem
     }
@@ -2121,6 +2121,7 @@
   let activeChat = null;              // conversa aberta, para o botão "Disparar para …"
   const stopReplyChoice = new Map();  // escolha feita no detalhe de cada funil (padrão = Ajustes)
   const runs = [];
+  let funnelStarts = new Map();
   let runSeq = 0;
   let dockCollapsed = false;
   let dockTicker = null;
@@ -2147,7 +2148,7 @@
   // Duração aproximada: esperas + digitando/gravando de cada passo
   function estimateMs(steps) {
     return steps.reduce((t, s) => {
-      if (!s.item) return t + s.delayMs;
+      if (!s.item) return t;
       const presence = s.type === 'msg' ? Math.min(Math.max((s.item.content || '').length * 55, 1500), 9000)
         : s.type === 'audio' ? Math.min(Math.max((durationCache.get(s.item.url) || 6) * 1000, 2000), 15000) : 3000;
       return t + s.delayMs + presence + 1000;
@@ -2155,11 +2156,9 @@
   }
 
   function fmtLong(ms) {
-    const s = Math.max(0, Math.round(ms / 1000));
-    if (s < 60) return s + ' s';
-    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
-    if (h) return h + ' h' + (m ? ' ' + m + ' min' : '');
-    return m + ' min' + (r && m < 10 ? ' ' + r + ' s' : '');
+    const total = Math.max(0, Math.ceil(ms / 1000));
+    const hours = Math.floor(total / 3600), minutes = Math.floor(total / 60) % 60, seconds = total % 60;
+    return [hours && hours + ' h', minutes && minutes + ' min', seconds && seconds + ' s'].filter(Boolean).join(' ') || '0 s';
   }
 
   // ----- Aba Funis -----
@@ -2278,11 +2277,27 @@
       showToast(chat.notReady ? 'O motor de envio ainda não está pronto. Recarregue o WhatsApp Web (F5).' : (chat.error || 'Abra uma conversa primeiro.'));
       return;
     }
-    startFunnelRun(funnel, chat, opts);
+    try { await startFunnelRun(funnel, chat, opts); }
+    catch (error) { showToast(error.message); }
   }
 
   // Também usado pelos gatilhos, que disparam em conversas que não estão abertas na tela.
   function startFunnelRun(funnel, chat, opts) {
+    // Dois cliques na mesma conversa mantêm a ordem mesmo que a rede demore.
+    const starts = funnelStarts;
+    const prior = starts.get(chat.chatId) || Promise.resolve();
+    const next = prior.catch(() => {}).then(async () => {
+      const { data, error } = await sb.from('funnels').select('id, title, funnel_items(*)').eq('id', funnel.id).maybeSingle();
+      if (starts !== funnelStarts) throw new Error('Disparo interrompido porque a conta mudou.');
+      if (error) throw new Error('Não foi possível carregar os passos salvos. ' + errText(error));
+      if (!data) throw new Error('O funil foi excluído ou não está disponível nesta conta.');
+      return beginFunnelRun(data, chat, opts);
+    });
+    starts.set(chat.chatId, next);
+    return next.finally(() => { if (starts.get(chat.chatId) === next) starts.delete(chat.chatId); });
+  }
+
+  function beginFunnelRun(funnel, chat, opts) {
     const steps = funnelSteps(funnel, itemIndex()).map((s) => Object.assign(s, { state: s.item ? 'pending' : 'skipped' }));
     if (opts?.task && steps.some((s) => !s.item)) throw new Error('Um item deste funil foi removido da biblioteca.');
     if (!steps.some((s) => s.item)) { showToast('Este funil não tem passos para enviar.'); return false; }
@@ -2307,21 +2322,31 @@
     if (r && r.replied) throw new RunStop('replied');
   }
 
-  // Espera que respeita pausa (o relógio congela) e confere respostas do contato
+  function remainingWait(run) {
+    return run.waitUntil == null ? (run.waitLeft || 0) : Math.max(0, run.waitUntil - performance.now());
+  }
+
+  // O prazo usa o relógio monotônico da aba. O mesmo prazo alimenta a central e o envio.
   async function waitFor(run, ms, phase) {
     run.phase = phase;
     run.waitTotal = ms;
     run.waitLeft = ms;
+    run.waitUntil = run.paused ? null : performance.now() + ms;
     renderDock();
-    let last = Date.now(), lastCheck = Date.now();
-    while (run.waitLeft > 0) {
+    let lastCheck = performance.now();
+    for (;;) {
       checkStop(run);
-      const now = Date.now();
-      if (!run.paused) run.waitLeft -= now - last;
-      last = now;
-      if (phase !== 'ignition' && !run.paused && now - lastCheck >= REPLY_CHECK_MS) { lastCheck = now; await checkReply(run); }
-      await sleep(Math.min(250, Math.max(20, run.waitLeft)));
+      const remaining = remainingWait(run);
+      if (remaining <= 0) break;
+      if (run.stopOnReply && phase !== 'ignition' && !run.paused && performance.now() - lastCheck >= REPLY_CHECK_MS) {
+        await checkReply(run);
+        lastCheck = performance.now();
+        continue;
+      }
+      await sleep(run.paused ? 250 : Math.min(250, remaining));
     }
+    run.waitUntil = null;
+    run.waitLeft = 0;
   }
 
   async function holdWhilePaused(run) {
@@ -2444,13 +2469,23 @@
     if (run.requestId) engineRequest('ZF_ENGINE_CANCEL', { targetId: run.requestId }, 5000).catch(() => {});
   }
 
-  function stopAllRuns() { runs.forEach((r) => { if (LIVE.has(r.state)) requestStop(r); }); }
+  function stopAllRuns() {
+    funnelStarts = new Map();
+    runs.forEach((r) => { if (LIVE.has(r.state)) requestStop(r); });
+  }
 
   async function runAction(uid, act) {
     if (act === 'collapse') { dockCollapsed = !dockCollapsed; renderDock(); return; }
     const run = runs.find((r) => r.uid === uid);
     if (!run) return;
-    if (act === 'pause' && LIVE.has(run.state)) { run.paused = !run.paused; renderDock(); }
+    if (act === 'pause' && LIVE.has(run.state)) {
+      if (run.phase === 'waiting' || run.phase === 'ignition') {
+        run.waitLeft = remainingWait(run);
+        run.waitUntil = run.paused ? performance.now() + run.waitLeft : null;
+      }
+      run.paused = !run.paused;
+      renderDock();
+    }
     else if (act === 'stop' && LIVE.has(run.state)) { requestStop(run); renderDock(); }
     else if (act === 'close') dismissRun(uid);
     else if (act === 'retry' && run.state === 'error') {
@@ -2503,14 +2538,14 @@
     }
     if (run.stopRequested) return 'Parando…';
     if (run.paused) {
-      if (run.phase === 'waiting' || run.phase === 'ignition') return `Pausado · faltam ${fmtSecs(run.waitLeft)}`;
+      if (run.phase === 'waiting' || run.phase === 'ignition') return `Pausado · faltam ${fmtLong(remainingWait(run))}`;
       if (run.phase === 'hold') return 'Pausado';
       return 'Pausa assim que este envio terminar';
     }
     switch (run.phase) {
-      case 'ignition': return `Ligando o motor… ${Math.max(1, Math.ceil(run.waitLeft / 1000))}`;
+      case 'ignition': return `Ligando o motor… ${Math.max(1, Math.ceil(remainingWait(run) / 1000))}`;
       case 'queued': return 'Na fila: outro funil está rodando nesta conversa';
-      case 'waiting': return `Próximo passo em ${fmtSecs(run.waitLeft)}`;
+      case 'waiting': return `Próximo passo em ${fmtLong(remainingWait(run))}`;
       case 'preparing': return 'Preparando o passo…';
       case 'downloading': return 'Baixando o arquivo…';
       case 'engine': return 'Aguardando a vez do motor…';
@@ -2524,7 +2559,7 @@
   // 0–100 no anel em volta do motor (espera ou digitando/gravando); null = sem anel
   function runRing(run) {
     if (!LIVE.has(run.state)) return run.state === 'done' ? 100 : null;
-    if ((run.phase === 'waiting' || run.phase === 'ignition') && run.waitTotal) return 100 - (Math.max(0, run.waitLeft) / run.waitTotal) * 100;
+    if ((run.phase === 'waiting' || run.phase === 'ignition') && run.waitTotal) return 100 - (remainingWait(run) / run.waitTotal) * 100;
     if ((run.phase === 'composing' || run.phase === 'recording') && run.presenceMs) {
       return Math.min(100, ((Date.now() - run.presenceStart) / run.presenceMs) * 100);
     }

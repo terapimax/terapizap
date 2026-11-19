@@ -1,15 +1,18 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { closestCenter, DndContext, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { Modal } from "@/components/ui/modal";
 import { Button, Chip, EmptyState, Panel, SearchInput } from "@/components/ui/shared";
-import { Plus, Trash2, Filter, MessageSquareText, Mic, Image as ImageIcon, FileText, Clock, Loader2, AlertCircle } from "lucide-react";
+import { Plus, Trash2, Filter, MessageSquareText, Mic, Image as ImageIcon, FileText, Clock, Loader2, AlertCircle, GripVertical, Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { useFunnels, useCreateFunnel, useDeleteFunnel, useUpdateFunnel, useAddFunnelItem, useDeleteFunnelItem } from "@/hooks/use-funnels";
+import { useFunnels, useCreateFunnel, useDeleteFunnel, useUpdateFunnel, useAddFunnelItem, useDeleteFunnelItem, useUpdateFunnelDelay, useReorderFunnelSteps } from "@/hooks/use-funnels";
 import { useMessages } from "@/hooks/use-messages";
 import { useAllMedia } from "@/hooks/use-media";
-import { LibraryPicker, MediaPreview, MediaThumb, itemMeta, itemTypeLabel, type LibraryItem } from "@/components/features/media-preview";
+import { LibraryPicker, MediaPreview, MediaThumb, isMedia, itemMeta, itemTypeLabel, type LibraryItem } from "@/components/features/media-preview";
 import type { FunnelItem } from "@/types";
 
 type StepType = FunnelItem["type"];
@@ -31,6 +34,62 @@ function delayLabel(min: number, sec: number) {
   return "Esperar " + [h && `${h} h`, m && `${m} min`, s && `${s} s`].filter(Boolean).join(" ");
 }
 
+function DelayFields({ step }: { step?: FunnelItem }) {
+  const total = Math.max(0, (step?.delay_minutes || 0) * 60 + (step?.delay_seconds || 0));
+  const fields = [
+    { name: "hours", label: "Horas", value: Math.floor(total / 3600) },
+    { name: "minutes", label: "Minutos", value: Math.floor(total / 60) % 60 },
+    { name: "seconds", label: "Segundos", value: total % 60, max: 59 },
+  ];
+  return (
+    <fieldset>
+      <legend className="text-sm font-semibold mb-2">Espera antes deste passo</legend>
+      <div className="grid grid-cols-3 gap-3">
+        {fields.map(field => (
+          <label key={field.name} className="min-w-0 text-xs text-muted">
+            {field.label}
+            <input name={field.name} type="number" min={0} max={field.max} step={1} defaultValue={field.value}
+              className={cn(inputCls, "mt-1 tabular-nums")} />
+          </label>
+        ))}
+      </div>
+      <p className="text-xs text-muted mt-2">Ao terminar a espera, a extensão começa a digitar ou gravar. Com tudo em zero, ela começa logo em seguida.</p>
+    </fieldset>
+  );
+}
+
+function readDelay(form: HTMLFormElement) {
+  const fields = new FormData(form);
+  const [hours, minutes, seconds] = ["hours", "minutes", "seconds"].map(name => Number(fields.get(name) || 0));
+  const totalMinutes = hours * 60 + minutes;
+  if (![hours, minutes, seconds].every(n => Number.isSafeInteger(n) && n >= 0) || seconds > 59 || totalMinutes > 2_147_483_647) {
+    toast.error("Confira o intervalo. Use números inteiros e segundos de 0 a 59.");
+    return null;
+  }
+  return { delay_minutes: totalMinutes, delay_seconds: seconds };
+}
+
+function SortableStep({ id, index, last, disabled, children }: {
+  id: number; index: number; last: boolean; disabled: boolean; children: ReactNode;
+}) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id, disabled });
+  return (
+    <li ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={cn("relative flex gap-2 sm:gap-4", isDragging && "z-10 bg-card rounded-xl shadow-elev")}>
+      <div className="flex flex-col items-center shrink-0">
+        <button type="button" ref={setActivatorNodeRef} {...attributes} {...listeners} disabled={disabled}
+          aria-label={`Mover passo ${index + 1}`} title="Arraste para mudar a ordem"
+          className="flex h-10 items-center gap-1 rounded-lg text-muted touch-none cursor-grab active:cursor-grabbing hover:bg-surface disabled:cursor-default">
+          <GripVertical className="w-4 h-4" aria-hidden="true" />
+          <span className="w-8 h-8 rounded-full bg-primary text-on-primary grid place-items-center text-[13px] font-semibold tabular-nums">{index + 1}</span>
+        </button>
+        {!last && <span className="flex-1 w-0.5 bg-line min-h-4" aria-hidden="true" />}
+      </div>
+      {children}
+    </li>
+  );
+}
+
 export default function FunisPage() {
   const { data: funnels = [], isLoading, isError } = useFunnels();
   const createFunnel = useCreateFunnel();
@@ -38,6 +97,12 @@ export default function FunisPage() {
   const updateFunnel = useUpdateFunnel();
   const addFunnelItem = useAddFunnelItem();
   const deleteFunnelItem = useDeleteFunnelItem();
+  const updateDelay = useUpdateFunnelDelay();
+  const reorder = useReorderFunnelSteps();
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
   const { data: messages = [] } = useMessages();
   const { data: allMedia = [] } = useAllMedia();
 
@@ -51,12 +116,11 @@ export default function FunisPage() {
   const [stepOpen, setStepOpen] = useState(false);
   const [stepType, setStepType] = useState<StepType>("message");
   const [stepItemId, setStepItemId] = useState<number | null>(null);
-  const [delayMinutes, setDelayMinutes] = useState(0);
-  const [delaySeconds, setDelaySeconds] = useState(0);
-  const [preview, setPreview] = useState<LibraryItem | null>(null);
+  const [editingStep, setEditingStep] = useState<FunnelItem | null>(null);
 
   const filtered = funnels.filter((f) => f.title.toLowerCase().includes(search.toLowerCase()));
   const selected = funnels.find((f) => f.id === selectedId) ?? (selectedId === null ? funnels[0] : undefined);
+  const steps = reorder.isPending && reorder.variables.funnelId === selected?.id ? reorder.variables.steps : selected?.items ?? [];
 
   const pools = useMemo<Record<StepType, LibraryItem[]>>(() => ({
     message: messages,
@@ -66,6 +130,24 @@ export default function FunisPage() {
   }), [messages, allMedia]);
 
   const stepItem = (item: FunnelItem) => pools[item.type].find((m) => m.id === item.item_id);
+  const preview = editingStep && stepItem(editingStep);
+
+  function moveStep({ active, over }: DragEndEvent) {
+    if (!selected || !over || active.id === over.id || reorder.isPending) return;
+    const ids = selected.items.map(step => step.id);
+    const from = ids.indexOf(Number(active.id)), to = ids.indexOf(Number(over.id));
+    if (from < 0 || to < 0) return;
+    reorder.mutate({ funnelId: selected.id, expectedIds: ids, steps: arrayMove(selected.items, from, to) });
+  }
+
+  function saveDelay(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editingStep || updateDelay.isPending) return;
+    const delay = readDelay(event.currentTarget);
+    if (delay) updateDelay.mutate({ id: editingStep.id, funnel_id: editingStep.funnel_id, ...delay }, {
+      onSuccess: () => setEditingStep(null),
+    });
+  }
 
   const handleCreate = () => {
     if (!title.trim()) return toast.error("Dê um nome ao funil.");
@@ -78,24 +160,25 @@ export default function FunisPage() {
     });
   };
 
-  const handleAddStep = () => {
+  const handleAddStep = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (addFunnelItem.isPending) return;
     if (!stepItemId || !selected) return toast.error("Escolha um item da biblioteca.");
+    const delay = readDelay(event.currentTarget);
+    if (!delay) return;
     addFunnelItem.mutate(
       {
         user_id: selected.user_id,
         funnel_id: selected.id,
         item_id: Number(stepItemId),
         type: stepType,
-        delay_minutes: delayMinutes,
-        delay_seconds: delaySeconds,
-        position: selected.items?.length || 0,
+        ...delay,
+        position: Math.min(2_147_483_647, (selected.items.at(-1)?.position ?? -1) + 1),
       },
       {
         onSuccess: () => {
           setStepOpen(false);
           setStepItemId(null);
-          setDelayMinutes(0);
-          setDelaySeconds(0);
         },
       }
     );
@@ -178,7 +261,7 @@ export default function FunisPage() {
                       <Trash2 className="w-4 h-4" />
                     </Button>
                   )}
-                  <Button onClick={() => setStepOpen(true)}><Plus className="w-4 h-4" /> Adicionar passo</Button>
+                  <Button disabled={reorder.isPending} onClick={() => setStepOpen(true)}><Plus className="w-4 h-4" /> Adicionar passo</Button>
                 </div>
               </div>
 
@@ -188,70 +271,73 @@ export default function FunisPage() {
                   <p className="text-sm text-muted mt-1">Comece com uma mensagem de boas-vindas e depois um áudio.</p>
                 </div>
               ) : (
-                <ol className="flex flex-col">
-                  {selected.items.map((item, i) => {
-                    const cfg = STEP[item.type];
-                    const lib = stepItem(item);
-                    const last = i === selected.items.length - 1;
-                    return (
-                      <li key={item.id} className="flex gap-4">
-                        <div className="flex flex-col items-center w-9 shrink-0">
-                          <span className="w-9 h-9 rounded-full bg-primary text-on-primary grid place-items-center text-[13px] font-semibold tabular-nums">{i + 1}</span>
-                          {!last && <span className="flex-1 w-0.5 bg-line min-h-4" aria-hidden="true" />}
-                        </div>
-                        <div className={cn("flex-1 min-w-0", !last && "pb-4")}>
-                          <p className="flex items-center gap-1.5 text-xs text-muted mb-1.5">
-                            <Clock className="w-3.5 h-3.5" aria-hidden="true" /> {delayLabel(item.delay_minutes, item.delay_seconds)}
-                          </p>
-                          <div className="group border border-line rounded-xl px-3 py-2.5 flex flex-wrap items-center gap-3">
-                            {lib ? (
-                              <button
-                                type="button"
-                                onClick={() => setPreview(lib)}
-                                aria-label={`Ver prévia de ${lib.title}`}
-                                className="flex-1 min-w-0 flex items-center gap-3 text-left rounded-[10px] -m-1 p-1 cursor-pointer hover:bg-surface transition-colors"
-                              >
-                                <MediaThumb item={lib} />
-                                <span className="flex-1 min-w-0">
-                                  <span className="block text-xs text-muted">{itemTypeLabel(lib)}</span>
-                                  <span className="block font-semibold truncate">{lib.title}</span>
-                                </span>
+                <DndContext key={selected.id} id={`passos-funil-${selected.id}`} sensors={sensors} collisionDetection={closestCenter} onDragEnd={moveStep}
+                  accessibility={{ screenReaderInstructions: { draggable: "Pressione espaço para pegar o passo, use as setas para mover e pressione espaço para soltar. Escape cancela." } }}>
+                  <SortableContext items={steps.map(step => step.id)} strategy={verticalListSortingStrategy}>
+                    <ol className="flex flex-col" aria-label="Passos do funil" aria-busy={reorder.isPending}>
+                      {steps.map((item, i) => {
+                        const cfg = STEP[item.type];
+                        const lib = stepItem(item);
+                        const last = i === steps.length - 1;
+                        return (
+                          <SortableStep key={item.id} id={item.id} index={i} last={last} disabled={steps.length < 2 || reorder.isPending || deleteFunnelItem.isPending}>
+                            <div className={cn("flex-1 min-w-0", !last && "pb-4")}>
+                              <button type="button" onClick={() => setEditingStep(item)} title="Editar intervalo" aria-label={`Editar intervalo do passo ${i + 1}`}
+                                className="flex items-center gap-1.5 text-xs text-muted mb-1.5 py-1 rounded cursor-pointer hover:text-fg focus-visible:text-fg">
+                                <Clock className="w-3.5 h-3.5" aria-hidden="true" /> {delayLabel(item.delay_minutes, item.delay_seconds)}
+                                <Pencil className="ml-1 w-3 h-3" aria-hidden="true" /> Editar
                               </button>
-                            ) : (
-                              <div className="flex-1 min-w-0 flex items-center gap-3">
-                                <MediaThumb item={null} />
-                                <span className="flex-1 min-w-0">
-                                  <span className="block text-xs text-muted">{cfg.label}</span>
-                                  <span className="block font-semibold truncate text-hot">Item removido da biblioteca</span>
-                                </span>
+                              <div className="group border border-line rounded-xl px-3 py-2.5 flex flex-wrap items-center gap-3">
+                                {lib ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingStep(item)}
+                                    aria-label={`Abrir passo ${i + 1}, ${lib.title}`}
+                                    className="flex-1 min-w-0 flex items-center gap-3 text-left rounded-[10px] -m-1 p-1 cursor-pointer hover:bg-surface transition-colors"
+                                  >
+                                    <MediaThumb item={lib} />
+                                    <span className="flex-1 min-w-0">
+                                      <span className="block text-xs text-muted">{itemTypeLabel(lib)}</span>
+                                      <span className="block font-semibold truncate">{lib.title}</span>
+                                    </span>
+                                  </button>
+                                ) : (
+                                  <div className="flex-1 min-w-0 flex items-center gap-3">
+                                    <MediaThumb item={null} />
+                                    <span className="flex-1 min-w-0">
+                                      <span className="block text-xs text-muted">{cfg.label}</span>
+                                      <span className="block font-semibold truncate text-hot">Item removido da biblioteca</span>
+                                    </span>
+                                  </div>
+                                )}
+                                <Chip tone="accent">{cfg.presence}</Chip>
+                                {stepToDelete === item.id ? (
+                                  <span className="flex gap-1.5">
+                                    <Button size="sm" variant="secondary" onClick={() => setStepToDelete(null)}>Manter</Button>
+                                    <Button size="sm" variant="danger" onClick={() => { deleteFunnelItem.mutate(item.id); setStepToDelete(null); }}>Excluir</Button>
+                                  </span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => setStepToDelete(item.id)}
+                                    aria-label={`Excluir passo ${i + 1}`}
+                                    className="h-8 w-8 grid place-items-center rounded-lg text-muted hover:text-hot hover:bg-hot-soft opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                )}
                               </div>
-                            )}
-                            <Chip tone="accent">{cfg.presence}</Chip>
-                            {stepToDelete === item.id ? (
-                              <span className="flex gap-1.5">
-                                <Button size="sm" variant="secondary" onClick={() => setStepToDelete(null)}>Manter</Button>
-                                <Button size="sm" variant="danger" onClick={() => { deleteFunnelItem.mutate(item.id); setStepToDelete(null); }}>Excluir</Button>
-                              </span>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => setStepToDelete(item.id)}
-                                aria-label={`Excluir passo ${i + 1}`}
-                                className="h-8 w-8 grid place-items-center rounded-lg text-muted hover:text-hot hover:bg-hot-soft opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ol>
+                            </div>
+                          </SortableStep>
+                        );
+                      })}
+                    </ol>
+                  </SortableContext>
+                </DndContext>
               )}
 
               <p className="text-xs text-muted border-t border-line pt-4">
-                O tempo de digitando e gravando é calculado pela extensão: proporcional ao tamanho do texto ou à duração do áudio, com variação a cada envio.
+                Arraste o passo pela alça ao lado do número. A espera acompanha o passo. As alterações valem para os próximos disparos.
               </p>
             </div>
           )}
@@ -270,13 +356,13 @@ export default function FunisPage() {
       </Modal>
 
       {/* Adicionar passo */}
-      <Modal open={stepOpen} onClose={() => setStepOpen(false)} title="Adicionar passo" description={selected ? `No funil ${selected.title}` : undefined}
+      <Modal open={stepOpen} onClose={() => { if (!addFunnelItem.isPending) setStepOpen(false); }} title="Adicionar passo" description={selected ? `No funil ${selected.title}` : undefined}
         footer={<>
-          <Button variant="secondary" onClick={() => setStepOpen(false)}>Cancelar</Button>
-          <Button onClick={handleAddStep} disabled={addFunnelItem.isPending || !stepItemId}>{addFunnelItem.isPending && <Loader2 className="w-4 h-4 animate-spin" />} Adicionar passo</Button>
+          <Button variant="secondary" disabled={addFunnelItem.isPending} onClick={() => setStepOpen(false)}>Cancelar</Button>
+          <Button type="submit" form="add-funnel-step" disabled={addFunnelItem.isPending || !stepItemId}>{addFunnelItem.isPending && <Loader2 className="w-4 h-4 animate-spin" />} Adicionar passo</Button>
         </>}
       >
-        <div className="flex flex-col gap-5">
+        <form id="add-funnel-step" onSubmit={handleAddStep} className="flex flex-col gap-5">
           <fieldset>
             <legend className="text-xs font-medium text-muted mb-1.5">Tipo</legend>
             <div className="grid grid-cols-2 gap-2">
@@ -304,28 +390,29 @@ export default function FunisPage() {
             empty="Nenhum item deste tipo na biblioteca. Adicione um em Biblioteca primeiro."
           />
 
-          <fieldset>
-            <legend className="text-xs font-medium text-muted mb-1.5">Espera antes deste passo</legend>
-            <div className="grid grid-cols-2 gap-3">
-              <label className="flex items-center gap-2">
-                <input type="number" min="0" value={delayMinutes} onChange={(e) => setDelayMinutes(Math.max(0, parseInt(e.target.value) || 0))} className={cn(inputCls, "tabular-nums")} aria-label="Minutos" />
-                <span className="text-sm text-muted">min</span>
-              </label>
-              <label className="flex items-center gap-2">
-                <input type="number" min="0" max="59" value={delaySeconds} onChange={(e) => setDelaySeconds(Math.min(59, Math.max(0, parseInt(e.target.value) || 0)))} className={cn(inputCls, "tabular-nums")} aria-label="Segundos" />
-                <span className="text-sm text-muted">s</span>
-              </label>
-            </div>
-            <p className="text-xs text-muted mt-2">{delayLabel(delayMinutes, delaySeconds)} e depois {stepType === "audio" ? "gravando" : "digitando"} antes de enviar.</p>
-          </fieldset>
-        </div>
+          <DelayFields />
+        </form>
       </Modal>
 
-      {/* Prévia de um passo */}
-      <Modal open={!!preview} onClose={() => setPreview(null)} title={preview?.title ?? ""} description={preview ? itemMeta(preview) : undefined}
-        footer={<Button variant="secondary" onClick={() => setPreview(null)}>Fechar</Button>}
+      <Modal open={!!editingStep} onClose={() => { if (!updateDelay.isPending) setEditingStep(null); }}
+        title="Editar passo" description={preview?.title || "Item removido da biblioteca"}
+        footer={<>
+          <Button variant="secondary" disabled={updateDelay.isPending} onClick={() => setEditingStep(null)}>Cancelar</Button>
+          <Button type="submit" form="edit-funnel-step" disabled={updateDelay.isPending}>
+            {updateDelay.isPending && <Loader2 className="w-4 h-4 animate-spin" />} Salvar intervalo
+          </Button>
+        </>}
       >
-        {preview && <MediaPreview key={preview.id + itemTypeLabel(preview)} item={preview} />}
+        {editingStep && <form key={editingStep.id} id="edit-funnel-step" onSubmit={saveDelay} className="flex flex-col gap-5">
+          <DelayFields step={editingStep} />
+          {preview && <div>
+            <div className="flex items-baseline gap-2 mb-2">
+              <h4 className="text-sm font-semibold">Prévia</h4>
+              {isMedia(preview) && <span className="text-xs text-muted">{itemMeta(preview)}</span>}
+            </div>
+            <MediaPreview item={preview} />
+          </div>}
+        </form>}
       </Modal>
     </div>
   );

@@ -11,6 +11,12 @@ Para atualizar uma instalação existente, siga a seção da versão abaixo.
    O instalador também migra dados de versões anteriores e reúne leads com telefone repetido.
 3. Em **Table Editor**, o esquema atual do ZapFlow tem **26 tabelas**.
 
+### Atualizar os funis da versão 3.18 para a 3.19
+
+1. No SQL Editor do projeto, execute `supabase/atualizar_funis_3_19.sql`. Ele instala a função que salva a nova ordem dos passos.
+2. Publique o painel pela branch `main`. Em **Funis**, clique no relógio ou no item para editar a espera. Arraste pela alça ao lado do número para mover o passo com seu intervalo.
+3. Aguarde a conclusão dos disparos que deseja manter em andamento. Em `chrome://extensions`, recarregue o ZapFlow, confira a versão **3.19.0** e atualize a aba do WhatsApp Web. Recarregar essa aba interrompe os funis que ainda estão rodando nela.
+
 ### Atualizar uma instalação existente para a versão 3.18
 
 1. No projeto Supabase desta instalação, abra **SQL Editor → New query**, cole o conteúdo de
