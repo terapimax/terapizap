@@ -2983,6 +2983,9 @@
   // ===== DOWNLOAD =====
   async function downloadAsDataUrl(fileUrl) {
     let dataUrl, mimeType;
+    // Aba aberta antes de a extensão ser recarregada: ela perdeu a ligação com a extensão e nada mais funciona
+    // direito aqui. Em vez de um erro técnico ("reading 'sendMessage'"), diz o que fazer.
+    if (extDead()) throw new Error('A extensão foi atualizada. Recarregue a página do WhatsApp Web (Ctrl + R) e tente de novo.');
     try {
       const res = await new Promise((resolve, reject) => {
         chrome.runtime.sendMessage({ type: 'ZAPFLOW_DOWNLOAD_FILE', url: fileUrl }, (r) => {
