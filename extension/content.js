@@ -1,12 +1,10 @@
-// ZapFlow v3.9 — Content Script (interface + envio via motor WA-JS em wa_engine.js)
+// ZapFlow — Content Script (interface + envio via motor WA-JS em wa_engine.js)
 (function () {
   'use strict';
   const SUPABASE_URL = window.SUPABASE_URL || '';
   const SUPABASE_KEY = window.SUPABASE_KEY || '';
   if (!SUPABASE_URL || !SUPABASE_KEY) console.warn('⚠️ ZapFlow: configuração do Supabase ausente (config.js)');
-  // Endereço do painel (config.js). Troque quando o painel estiver publicado.
-  // Endereço do painel: o que estiver nos Ajustes da extensão; sem nada lá, o do config.js
-  const DEFAULT_PANEL_URL = String(window.ZAPFLOW_PANEL_URL || 'http://localhost:3002').replace(/\/+$/, '');
+  const DEFAULT_PANEL_URL = String(window.ZAPFLOW_PANEL_URL || 'https://terapizap.vercel.app').replace(/\/+$/, '');
   const cleanPanelUrl = (v) => {
     let u = String(v || '').trim().replace(/\/+$/, '');
     if (!u) return '';
@@ -89,25 +87,26 @@
 
   // ===== STATUS DO MOTOR =====
   let engineReady = false;
+  const engineStartedAt = Date.now();
   async function pollEngine() {
     const pill = $('zf-engine');
-    const set = (state, text) => { if (pill) { pill.dataset.state = state; pill.lastElementChild.textContent = text; } };
-    for (let i = 0; i < 90; i++) {
-      try {
-        const r = await engineRequest('ZF_ENGINE_STATUS', {}, 3000);
-        if (r.ready) {
-          engineReady = true;
-          set('ready', 'Pronto');
-          updateFiringIndicators();
-          if ($('zf-engine-version')) $('zf-engine-version').textContent = `Motor de envio WA-JS ${r.version || ''}`.trim();
-          return;
-        }
-      } catch (e) { /* motor ainda não respondeu */ }
-      set('loading', 'Conectando…');
-      await new Promise((r) => setTimeout(r, 2000));
-    }
-    set('error', 'Indisponível');
-    if ($('zf-engine-version')) $('zf-engine-version').textContent = 'Motor de envio indisponível: recarregue o WhatsApp Web (F5).';
+    if (!pill?.isConnected) return;
+    let status;
+    try { status = await engineRequest('ZF_ENGINE_STATUS', {}, 3000); } catch { /* o motor pode estar iniciando */ }
+    engineReady = !!status?.ready && status.activeReady !== false;
+    const waiting = Date.now() - engineStartedAt < 15000;
+    const manual = !engineReady && !!findInputBox() && (!waiting || status?.ready);
+    const label = engineReady ? 'Pronto' : manual ? 'Modo manual' : waiting ? 'Conectando…' : 'Aguardando WhatsApp';
+    const detail = engineReady ? `Motor de envio WA-JS ${status.version || ''}`.trim()
+      : manual ? 'Escolha um item e confirme o envio na conversa.' + (status?.waitingFor ? ' Aguardando ' + status.waitingFor + '.' : ' A conexão automática continua sendo verificada.')
+      : status?.waitingFor ? 'Aguardando ' + status.waitingFor + '.'
+      : 'Abra o WhatsApp Web, entre na sua conta e aguarde a lista de conversas.';
+    pill.dataset.state = engineReady ? 'ready' : 'loading';
+    pill.lastElementChild.textContent = label;
+    pill.title = detail;
+    if ($('zf-engine-version')) $('zf-engine-version').textContent = detail;
+    if (engineReady) updateFiringIndicators();
+    setTimeout(pollEngine, engineReady ? 10000 : 2500);
   }
 
   // ===== LOGIN (Supabase) =====
@@ -949,17 +948,34 @@
     return { type, title: m.title, url: m.url, content: m.caption, mediaType: m.type };
   }
 
-  async function updateTask(id, patch, onlyIf) {
+  async function updateTask(id, patch, onlyIf, attempt, lastSeen) {
     let q = sb.from('tasks').update(patch).eq('id', id);
     if (onlyIf) q = q.eq('status', onlyIf);
+    if (attempt != null) q = q.eq('attempts', attempt);
+    if (lastSeen != null) q = q.eq('options->>claimed_at', String(lastSeen));
     const { data, error } = await q.select('id');
     if (error) throw error;
     return (data || []).length > 0;
   }
 
+  const pendingTaskResults = new Map();
+  async function publishTaskResult(id) {
+    const result = pendingTaskResults.get(id);
+    if (!result) return;
+    try {
+      await updateTask(id, result.patch, 'sending', result.attempt);
+      if (pendingTaskResults.get(id) === result) pendingTaskResults.delete(id);
+    } catch { /* a consulta periódica tenta publicar o mesmo resultado novamente */ }
+  }
+
+  function touchFunnelTask(task) {
+    return updateTask(task.id, { options: { ...task.options, claimed_at: Date.now() } }, 'sending', task.attempt);
+  }
+
   async function runScheduledTask(t, { force = false } = {}) {
     const opts = t.options || {};
-    const claimed = await updateTask(t.id, { status: 'sending', attempts: (t.attempts || 0) + 1, options: { ...opts, claimed_at: Date.now() } }, 'scheduled');
+    const attempt = (t.attempts || 0) + 1;
+    const claimed = await updateTask(t.id, { status: 'sending', attempts: attempt, options: { ...opts, claimed_at: Date.now() } }, 'scheduled', t.attempts);
     if (!claimed) return; // outra aba pegou
     const name = (t.lead && t.lead.name) || t.contact || '';
     try {
@@ -968,7 +984,7 @@
       if (!force && opts.cancel_on_reply !== false) {
         const r = await engineRequest('ZF_ENGINE_REPLIED', { chatId, since: Date.parse(t.created_at) || 0 }, 6000);
         if (r.ok && r.replied) {
-          await updateTask(t.id, { status: 'cancelled', error: 'O contato respondeu antes do horário.', finished_at: new Date().toISOString() });
+          await updateTask(t.id, { status: 'cancelled', error: 'O contato respondeu antes do horário.', finished_at: new Date().toISOString() }, 'sending', attempt);
           showToast(`↩️ Envio para ${name || 'o contato'} cancelado: ele respondeu antes.`);
           return;
         }
@@ -976,8 +992,8 @@
       if (t.content_type === 'funnel') {
         const funnel = funnelsData.find((f) => f.id === Number(t.funnel_id));
         if (!funnel) throw new Error('O funil foi apagado ou ainda não carregou.');
-        if (!startFunnelRun(funnel, { chatId, name: name || 'Contato' }, { stopOnReply: settings.stopOnReply })) throw new Error('O funil não tem passos para enviar.');
-        await updateTask(t.id, { status: 'sent', error: null, finished_at: new Date().toISOString() });
+        const task = { id: t.id, attempt, options: opts };
+        if (!startFunnelRun(funnel, { chatId, name: name || 'Contato' }, { stopOnReply: settings.stopOnReply, task })) throw new Error('O funil não tem passos para enviar.');
         showToast(`⚡ Funil “${funnel.title}” iniciado para ${name || 'o contato'}`);
         return;
       }
@@ -986,11 +1002,11 @@
       payload.createChat = !opts.chat_id; // tarefa criada no painel: o número pode nunca ter conversado antes
       const res = await withEngine(() => engineRequest('ZF_ENGINE_SEND', payload, (payload.presenceMs || 0) + 120000));
       if (!res.ok) throw new Error(res.error || 'Falha ao enviar');
-      await updateTask(t.id, { status: 'sent', error: null, finished_at: new Date().toISOString() });
+      await updateTask(t.id, { status: 'sent', error: null, finished_at: new Date().toISOString() }, 'sending', attempt);
       showToast(opts.from_trigger ? `⚡ ${t.title} — enviado para ${name || 'o contato'}` : `✅ Agendado enviado para ${name || 'o contato'}`);
     } catch (e) {
       console.error('❌ ZapFlow envio agendado:', e);
-      try { await updateTask(t.id, { status: 'failed', error: (e && e.message) || 'Falha ao enviar', finished_at: new Date().toISOString() }); } catch (e2) { /* sem rede */ }
+      try { await updateTask(t.id, { status: 'failed', error: (e && e.message) || 'Falha ao enviar', finished_at: new Date().toISOString() }, 'sending', attempt); } catch (e2) { /* sem rede */ }
       showToast(`❌ Envio agendado para ${name || 'o contato'} falhou: ${(e && e.message) || 'erro'}`);
     }
   }
@@ -1001,11 +1017,12 @@
     try {
       const { data: { session } } = await sb.auth.getSession();
       if (!session) return;
+      for (const id of pendingTaskResults.keys()) await publishTaskResult(id);
       const { data, error } = await sb.from('tasks').select(TASK_SELECT)
         .eq('kind', 'send').in('status', ['scheduled', 'sending'])
         .lte('due_at', new Date().toISOString()).order('due_at');
       if (error) {
-        if (/tasks|relation|schema cache/i.test(error.message || '')) tasksBroken = true; // tabela ainda não criada
+        if (error.code === '42P01' || error.code === 'PGRST205') tasksBroken = true;
         console.warn('ZapFlow: não foi possível consultar os envios agendados:', error.message);
         return;
       }
@@ -1015,9 +1032,12 @@
       for (const t of data || []) {
         const dueMs = Date.parse(t.due_at);
         if (t.status === 'sending') {
+          if (pendingTaskResults.has(t.id)) continue;
+          const local = runs.find((r) => r.task?.id === t.id && r.task.attempt === t.attempts && LIVE.has(r.state));
+          if (local) continue;
           // travada: o WhatsApp foi fechado no meio do envio
           const at = Number(t.options && t.options.claimed_at) || dueMs;
-          if (now - at > TASK_STUCK_MS) await updateTask(t.id, { status: 'failed', error: 'O envio foi interrompido (WhatsApp fechado no meio). Confira se a mensagem chegou.', finished_at: new Date().toISOString() }, 'sending').catch(() => {});
+          if (now - at > TASK_STUCK_MS) await updateTask(t.id, { status: 'failed', error: 'O envio foi interrompido (WhatsApp fechado no meio). Confira se a mensagem chegou.', finished_at: new Date().toISOString() }, 'sending', t.attempts, t.options?.claimed_at).catch(() => {});
           continue;
         }
         if (now - dueMs > TASK_GRACE_MS) { if (!overdueDismissed.has(t.id)) overdueList.push(t); continue; }
@@ -1232,12 +1252,12 @@
     if (!sb) return;
     const [b, c, t] = await Promise.all([
       sb.from('kanban_boards').select('id,title,created_at').order('created_at').order('id'),
-      sb.from('kanban_columns').select('id,board_id,title,color,position,is_inbox').order('position').order('id'),
+      sb.from('kanban_columns').select('*').order('position').order('id'),
       sb.from('tags').select('*').order('name'),
     ]);
     if (b.error || c.error || t.error) {
       crm.error = true;
-      console.warn('ZapFlow: falha ao carregar o Kanban/etiquetas', b.error || c.error || t.error);
+      console.warn('ZapFlow: falha ao carregar o Kanban/etiquetas: ' + errText(b.error || c.error || t.error));
     } else {
       crm = { boards: b.data || [], columns: c.data || [], tags: t.data || [], error: false };
     }
@@ -2264,10 +2284,11 @@
   // Também usado pelos gatilhos, que disparam em conversas que não estão abertas na tela.
   function startFunnelRun(funnel, chat, opts) {
     const steps = funnelSteps(funnel, itemIndex()).map((s) => Object.assign(s, { state: s.item ? 'pending' : 'skipped' }));
+    if (opts?.task && steps.some((s) => !s.item)) throw new Error('Um item deste funil foi removido da biblioteca.');
     if (!steps.some((s) => s.item)) { showToast('Este funil não tem passos para enviar.'); return false; }
     const run = {
       uid: ++runSeq, funnelId: funnel.id, title: funnel.title || 'Funil', chatId: chat.chatId, chatName: chat.name,
-      stopOnReply: !!(opts && opts.stopOnReply), steps, idx: 0, sent: 0,
+      stopOnReply: !!(opts && opts.stopOnReply), task: opts?.task, steps, idx: 0, sent: 0,
       state: 'ignition', phase: 'ignition', paused: false, startedAt: Date.now(), since: Date.now(),
     };
     runs.push(run);
@@ -2331,6 +2352,7 @@
     renderDock();
     const res = await withEngine(async () => {
       checkStop(run);
+      if (run.task && !(await touchFunnelTask(run.task))) throw new RunStop('stopped');
       await checkReply(run); // última conferida antes de começar a digitar
       return engineRequest('ZF_ENGINE_SEND', payload, (payload.presenceMs || 0) + 120000, {
         onId: (id) => { run.requestId = id; },
@@ -2347,6 +2369,14 @@
   }
 
   async function driveRun(run) {
+    // A reserva continua ativa durante pausas e esperas longas, inclusive quando a fila de tarefas está ocupada.
+    const task = run.task && { ...run.task };
+    const heartbeat = task && setInterval(async () => {
+      try {
+        const ours = await touchFunnelTask(task);
+        if (!ours && LIVE.has(run.state) && run.task.attempt === task.attempt) requestStop(run);
+      } catch { /* o próximo passo também confere a reserva antes de enviar */ }
+    }, 60000);
     try {
       if (run.state === 'ignition') await waitFor(run, IGNITION_MS, 'ignition');
       await waitTurn(run);
@@ -2376,6 +2406,8 @@
         console.error('❌ ZapFlow funil:', e);
         finishRun(run, 'error');
       }
+    } finally {
+      if (heartbeat) clearInterval(heartbeat);
     }
   }
 
@@ -2384,6 +2416,13 @@
     run.phase = state;
     run.paused = false;
     run.endedAt = Date.now();
+    if (run.task) {
+      const status = state === 'done' ? 'sent' : state === 'error' ? 'failed' : 'cancelled';
+      const reason = state === 'replied' ? 'O contato respondeu.' : run.error || 'Funil interrompido.';
+      const error = status === 'sent' ? null : `${reason} Passos enviados: ${run.sent} de ${run.steps.length}.`;
+      pendingTaskResults.set(run.task.id, { attempt: run.task.attempt, patch: { status, error, finished_at: new Date(run.endedAt).toISOString() } });
+      void publishTaskResult(run.task.id);
+    }
     renderDock();
     const ms = { done: 9000, stopped: 4000, replied: 15000 }[state];
     clearTimeout(run.dismissTimer);
@@ -2407,7 +2446,7 @@
 
   function stopAllRuns() { runs.forEach((r) => { if (LIVE.has(r.state)) requestStop(r); }); }
 
-  function runAction(uid, act) {
+  async function runAction(uid, act) {
     if (act === 'collapse') { dockCollapsed = !dockCollapsed; renderDock(); return; }
     const run = runs.find((r) => r.uid === uid);
     if (!run) return;
@@ -2415,6 +2454,16 @@
     else if (act === 'stop' && LIVE.has(run.state)) { requestStop(run); renderDock(); }
     else if (act === 'close') dismissRun(uid);
     else if (act === 'retry' && run.state === 'error') {
+      if (run.task) {
+        const task = run.task;
+        const attempt = task.attempt + 1;
+        try {
+          await publishTaskResult(task.id);
+          const claimed = await updateTask(task.id, { status: 'sending', attempts: attempt, error: null, finished_at: null, options: { ...task.options, claimed_at: Date.now() } }, 'failed', task.attempt);
+          if (!claimed) { showToast('A tarefa mudou. Confira o estado dela na agenda.'); return; }
+          task.attempt = attempt;
+        } catch { showToast('Não foi possível retomar. Confira sua conexão.'); return; }
+      }
       clearTimeout(run.dismissTimer);
       const st = run.steps[run.idx];
       if (st) { st.state = 'pending'; st.waited = true; }
@@ -2606,6 +2655,7 @@
   let lastFinishedTimer = null;
 
   async function sendItem(item) {
+    const composer = currentComposer();
     let chat;
     try {
       chat = await engineRequest('ZF_ENGINE_ACTIVE_CHAT', {}, 8000);
@@ -2614,10 +2664,15 @@
     }
     if (!chat.ok && chat.notReady) {
       // Motor indisponível: modo manual (cola no campo para o usuário conferir e enviar)
-      try { await sendManually(item); } catch (e) { showToast('❌ ' + e.message); }
+      try { await sendManually(item, composer); } catch (e) { showToast('❌ ' + e.message); }
       return;
     }
     if (!chat.ok) { flashError(item, chat.error); return; }
+    const current = currentComposer();
+    if (composer.input && (composer.input !== current.input || composer.title !== current.title)) {
+      showToast('A conversa mudou. Escolha o item novamente.');
+      return;
+    }
     enqueueSend(item, chat);
   }
 
@@ -2871,12 +2926,23 @@
     showFinished({ uid: ++_zfJobSeq, item, chatName: '—', state: 'error', error: message });
   }
 
-  async function sendManually(item) {
-    if (item.type === 'msg') { insertTextManually(item.content || ''); return; }
+  async function sendManually(item, composer) {
+    function checkedInput() {
+      const now = currentComposer();
+      if (!composer.input || !now.input) throw new Error('Abra a conversa que deve receber o item.');
+      if (now.input !== composer.input || now.title !== composer.title) throw new Error('A conversa mudou. Escolha o item novamente.');
+      if (now.input.textContent.replace(/\u200b/g, '').trim()) throw new Error('Há um rascunho nessa conversa. Envie ou limpe o texto e tente de novo.');
+      return now.input;
+    }
+    if (item.type === 'msg') {
+      insertTextManually(fillTemplate(item.content || '', composer.title), checkedInput());
+      return;
+    }
+    checkedInput();
     if (!item.url) throw new Error('Item sem arquivo');
     const file = await downloadAsDataUrl(item.url);
-    pasteFileManually(file, item.title || 'arquivo');
-    showToast('⚠️ Motor indisponível: arquivo colado. Confira e envie.');
+    pasteFileManually(file, item.title || 'arquivo', checkedInput());
+    showToast('Confira o anexo e clique em Enviar no WhatsApp.');
   }
 
   // ===== DOWNLOAD =====
@@ -2937,14 +3003,15 @@
 
   // ===== MODO MANUAL (fallback sem motor) =====
   function findInputBox() {
-    return document.querySelector('footer div[contenteditable="true"]') ||
-      document.querySelector('div[contenteditable="true"][data-tab="10"]') ||
-      document.querySelector('#main div[contenteditable="true"][role="textbox"]');
+    return document.querySelector('#main footer [contenteditable="true"], footer [contenteditable="true"][role="textbox"]');
   }
 
-  function pasteFileManually(file, title) {
-    const inputBox = findInputBox();
-    if (!inputBox) throw new Error('Abra uma conversa primeiro!');
+  function currentComposer() {
+    const title = document.querySelector('#main header [title]')?.getAttribute('title') || '';
+    return { input: findInputBox(), title };
+  }
+
+  function pasteFileManually(file, title, inputBox) {
     const f = new File([file.blob], buildFilename(title, file.mimeType), { type: file.mimeType });
     const dt = new DataTransfer();
     dt.items.add(f);
@@ -2953,15 +3020,11 @@
   }
 
   // Insere o texto no campo de mensagem SEM enviar: no modo manual o usuário confere e envia.
-  function insertTextManually(text) {
-    const inputBox = findInputBox();
-    if (!inputBox) { showToast('⚠️ Abra uma conversa primeiro'); return; }
+  function insertTextManually(text, inputBox) {
     inputBox.focus();
-    document.execCommand('selectAll', false, null);
-    document.execCommand('delete', false, null);
-    document.execCommand('insertText', false, text);
+    if (!document.execCommand('insertText', false, text)) throw new Error('O WhatsApp não aceitou o texto no campo da conversa.');
     inputBox.dispatchEvent(new Event('input', { bubbles: true }));
-    showToast('⚠️ Motor indisponível: mensagem colocada no campo. Confira e envie.');
+    showToast('Confira o texto e clique em Enviar no WhatsApp.');
   }
 
   async function copyToClipboard(text) {

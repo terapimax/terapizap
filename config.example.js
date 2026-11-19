@@ -2,4 +2,4 @@
    DO NOT commit config.js to your repository.
 */
 window.SUPABASE_URL = 'https://your-project.supabase.co';
-window.SUPABASE_KEY = 'your-anon-or-service-key';
+window.SUPABASE_KEY = 'your-publishable-or-anon-key';

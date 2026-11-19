@@ -1,6 +1,6 @@
-// ZapFlow v2.0 — Background Service Worker
+// ZapFlow — Background Service Worker
 chrome.runtime.onInstalled.addListener((details) => {
-    console.log('⚡ ZapFlow Extension v2.0 installed:', details.reason);
+    console.log('ZapFlow', chrome.runtime.getManifest().version, details.reason);
     if (details.reason === 'install') {
         chrome.storage.local.set({ zapflow_settings: { confirmSend: true, confirmFunnel: true, theme: 'dark', favOnly: false } });
     }

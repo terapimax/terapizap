@@ -233,7 +233,7 @@ export function BackupTools() {
                 <legend className="font-sans text-xs font-semibold text-muted uppercase tracking-wide mb-2">Como restaurar</legend>
                 {([
                   ["merge", "Juntar com o que já tenho", "Recomendado. O que já existe com o mesmo nome não é duplicado, então dá para rodar de novo se parar no meio."],
-                  ["replace", "Substituir", `Troca só ${scopeText || "o que vem no arquivo"} pelo que está no backup. O resto da conta não é tocado. Só apaga no final, depois que tudo do backup entrou; se algo falhar, nada é apagado.`],
+                  ["replace", "Substituir", `Troca ${scopeText || "os dados selecionados"} pelo conteúdo do backup. O banco confirma a troca inteira de uma vez.`],
                 ] as const).map(([id, label, hint]) => (
                   <label key={id} className={cn("flex gap-3 p-3 rounded-xl border cursor-pointer transition-colors", mode === id ? "border-fg bg-surface" : "border-line hover:border-fg")}>
                     <input type="radio" name="restore-mode" value={id} checked={mode === id} onChange={() => { setMode(id); setAgree(false); }} className="mt-0.5 accent-[var(--fg)] cursor-pointer" />
@@ -260,8 +260,9 @@ export function BackupTools() {
                   {report.ok ? <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" /> : <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />}
                   <span className="font-semibold">
                     {report.ok
-                      ? report.replaced ? "Pronto. A conta agora está igual ao backup." : "Pronto. Backup restaurado."
-                      : report.mode === "replace" ? "Não foi possível substituir. Seus dados de antes continuam como estavam." : "Restaurado com problemas. Você pode rodar de novo: o que já entrou não é duplicado."}
+                      ? "Backup restaurado."
+                      : report.confirmationPending ? "A conexão caiu durante a confirmação. Atualize o painel e confira seus dados antes de tentar novamente."
+                      : report.mode === "replace" ? "A substituição foi cancelada. Seus dados anteriores foram preservados." : "Restauração parcial. Confira os itens abaixo."}
                   </span>
                 </div>
                 {(total(report.added) > 0 || total(report.reused) > 0) && (

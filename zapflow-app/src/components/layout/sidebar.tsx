@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { ChevronsLeft, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { createClient } from "@/lib/supabase/client";
+import { logout } from "@/components/providers";
 import { useAppStore } from "@/stores/app-store";
 import { MAIN_NAV, SETTINGS_NAV, isNavActive, type NavItem } from "./nav-items";
 import { useTasks } from "@/hooks/use-tasks";
@@ -14,15 +14,6 @@ import { BrandLogo } from "@/components/brand";
 export function Sidebar() {
   const { sidebarOpen, toggleSidebar, mobileSidebarOpen, closeMobileSidebar } = useAppStore();
   const pathname = usePathname();
-  const router = useRouter();
-
-  const handleLogout = async () => {
-    try {
-      await createClient().auth.signOut();
-    } finally {
-      router.push("/auth/login");
-    }
-  };
 
   const collapsed = !sidebarOpen;
   const tasks = useTasks();
@@ -105,7 +96,7 @@ export function Sidebar() {
             </div>
             <button
               type="button"
-              onClick={handleLogout}
+              onClick={logout}
               aria-label="Sair"
               title="Sair"
               className="h-8 w-8 grid place-items-center rounded-lg text-muted hover:text-hot hover:bg-hot-soft transition-colors cursor-pointer"

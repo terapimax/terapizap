@@ -16,13 +16,11 @@ const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
 app.use('/uploads', express.static(uploadsDir));
 
-// Serve static frontend files from the parent directory
-app.use(express.static(path.join(__dirname, '../')));
-
-// Serve zapflow-painel.html at root (simulating vercel.json)
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, '../zapflow-painel.html'));
-});
+const frontendRoot = path.resolve(__dirname, '..');
+app.get(['/', '/zapflow-painel.html'], (_req, res) => res.sendFile('zapflow-painel.html', { root: frontendRoot }));
+for (const file of ['app.js', 'config.js', 'styles.css', 'zapflow.png', 'supabase.min.js']) {
+  app.get('/' + file, (_req, res) => res.sendFile(file, { root: frontendRoot }));
+}
 
 // Mantém a extensão original para que /uploads sirva o Content-Type correto (áudio/imagem/pdf)
 const upload = multer({

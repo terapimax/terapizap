@@ -27,7 +27,7 @@ async function fetchAll(db: SupabaseClient, table: TableName): Promise<Row[]> {
   const page = 1000;
   for (let from = 0; ; from += page) {
     const { data, error } = await db.from(table).select("*").order("id", { ascending: true }).range(from, from + page - 1);
-    if (error && OPTIONAL.has(table)) return out; // banco na versão antiga, sem essa tabela
+    if (error && OPTIONAL.has(table) && ["42P01", "PGRST205"].includes(error.code)) return out;
     if (error) throw new Error(`Não foi possível ler ${table}: ${error.message}`);
     out.push(...((data ?? []) as Row[]));
     if (!data || data.length < page) return out;
@@ -241,6 +241,7 @@ export interface RestoreReport {
   problems: string[];
   /** substituir: o que havia antes foi apagado? */
   replaced: boolean;
+  confirmationPending?: boolean;
 }
 
 const norm = (v: unknown) => String(v ?? "").trim().toLowerCase();
@@ -292,7 +293,8 @@ export async function restoreBackup(db: SupabaseClient, src: BackupSource, mode:
   const report: RestoreReport = { ok: false, mode, added: {}, reused: {}, problems: [], replaced: false };
   const before = await readAllTables(db, onProgress);
   const maps = Object.fromEntries(TABLES.map((t) => [t, new Map<number, number>()])) as Record<TableName, Map<number, number>>;
-  const inserted = Object.fromEntries(TABLES.map((t) => [t, [] as number[]])) as Record<TableName, number[]>;
+  // Cada id negativo aponta para a posição de uma inclusão anterior na mesma transação.
+  const plan: { table: TableName; row: Record<string, unknown> }[] = [];
   const uploaded: string[] = [];
   let failures = 0;
 
@@ -312,18 +314,25 @@ export async function restoreBackup(db: SupabaseClient, src: BackupSource, mode:
   const count = (bucket: "added" | "reused", t: TableName, n = 1) => { report[bucket][t] = (report[bucket][t] ?? 0) + n; };
   const problem = (msg: string) => { failures++; if (report.problems.length < 50) report.problems.push(msg); };
 
+  async function writeRows(t: TableName, rows: Record<string, unknown>[], check: string): Promise<Row[]> {
+    if (mode === "replace") return rows.map((row) => {
+      plan.push({ table: t, row });
+      return { ...row, id: -plan.length };
+    });
+    const { data, error } = await db.from(t).insert(rows).select(`id, ${check}`);
+    if (error) throw new Error(`Falha ao gravar ${LABEL[t]}: ${error.message}`);
+    return (data ?? []) as unknown as Row[];
+  }
+
   /** Insere em lotes e liga id antigo -> id novo pela ordem (conferida pelo campo `check`). */
   async function insertRows(t: TableName, rows: { old: number; row: Record<string, unknown> }[], check: string, label: string) {
     const size = 200;
     for (let i = 0; i < rows.length; i += size) {
       onProgress?.({ label, done: i, total: rows.length });
       const chunk = rows.slice(i, i + size);
-      const { data, error } = await db.from(t).insert(chunk.map((c) => c.row)).select(`id, ${check}`);
-      if (error) throw new Error(`Falha ao gravar ${LABEL[t]}: ${error.message}`);
-      const got = (data ?? []) as unknown as Row[];
+      const got = await writeRows(t, chunk.map((c) => c.row), check);
       if (got.length !== chunk.length) throw new Error(`Falha ao gravar ${LABEL[t]}: o banco devolveu ${got.length} de ${chunk.length}.`);
       got.forEach((g, k) => {
-        inserted[t].push(g.id);
         if (String(g[check] ?? "") !== String(chunk[k].row[check] ?? "")) throw new Error(`Falha ao ligar ${LABEL[t]} (ordem diferente do esperado).`);
         maps[t].set(chunk[k].old, g.id);
       });
@@ -388,10 +397,8 @@ export async function restoreBackup(db: SupabaseClient, src: BackupSource, mode:
         } else if (!/^https?:\/\//.test(url)) {
           throw new Error("arquivo não veio no backup");
         }
-        const { data, error } = await db.from("media_library").insert(row).select("id").single();
-        if (error) throw new Error(error.message);
-        inserted.media_library.push((data as Row).id);
-        maps.media_library.set(old, (data as Row).id);
+        const [saved] = await writeRows("media_library", [row], "title");
+        maps.media_library.set(old, saved.id);
         count("added", "media_library");
       } catch (e) {
         problem(`“${row.title}”: ${(e as Error).message}`);
@@ -503,41 +510,55 @@ export async function restoreBackup(db: SupabaseClient, src: BackupSource, mode:
     if (mode === "replace") {
       if (failures) throw new Error(`${failures} item(ns) falharam. Nada do que você tinha foi apagado.`);
       const keep = new Set(uploaded);
+      const replacing = replaceScope(T).tables;
       const newUrls = new Set([
         ...T.media_library.map((r) => storagePath(r.url as string)),
         ...T.tasks.map((r) => storagePath(r.file_url as string)),
+        ...(!replacing.has("media_library") ? before.media_library.map((r) => storagePath(r.url as string)) : []),
+        ...(!replacing.has("tasks") ? before.tasks.map((r) => storagePath(r.file_url as string)) : []),
       ]);
-      const replacing = replaceScope(T).tables;
       const oldPaths = [
         ...(replacing.has("media_library") ? before.media_library.map((r) => storagePath(r.url as string)) : []),
         ...(replacing.has("tasks") ? before.tasks.map((r) => storagePath(r.file_url as string)) : []),
-      ].filter((p): p is string => !!p && !keep.has(p) && !newUrls.has(p));
-      // só apaga o que o arquivo traz (ver REPLACE_GROUPS)
-      const scope = replaceScope(T).tables;
-      const order = (["tasks", "triggers", "funnel_items", "funnels", "card_items", "kanban_cards", "lead_tags", "leads", "owners", "tags", "kanban_columns", "kanban_boards", "campaign_items", "campaigns", "catalog_items", "appointments", "media_library", "messages"] as TableName[]).filter((t) => scope.has(t));
-      for (let i = 0; i < order.length; i++) {
-        onProgress?.({ label: "Apagando os dados antigos", done: i, total: order.length });
-        const ids = before[order[i]].map((r) => r.id).filter((id) => !reusedIds[order[i]].has(id));
-        for (let k = 0; k < ids.length; k += 200) {
-          const { error } = await db.from(order[i]).delete().in("id", ids.slice(k, k + 200));
-          if (error) throw new Error(`Falha ao apagar ${LABEL[order[i]]} antigo: ${error.message}`);
+      ].filter((p): p is string => !!p && p.startsWith(uid + "/") && !keep.has(p) && !newUrls.has(p));
+      const snapshot = Object.fromEntries([...replacing].map((t) => [t, before[t].map((r) => r.id)]));
+      const keepIds = Object.fromEntries([...replacing].map((t) => [t, [...reusedIds[t]]]));
+      onProgress?.({ label: "Confirmando a substituição no banco", done: 0, total: 1 });
+      // Sem resposta não dá para saber se houve commit. Preserve os arquivos nesse caso.
+      report.confirmationPending = true;
+      const { error, status } = await db.rpc("zf_replace_backup", { p_rows: plan, p_snapshot: snapshot, p_keep: keepIds });
+      if (error) {
+        if (error.code === "PGRST202") {
+          report.confirmationPending = false;
+          throw new Error("Atualize o banco com supabase/setup.sql para usar a substituição segura.");
+        }
+        if (status > 0 && (/^[0-9A-Z]{5}$/.test(error.code) || /^PGRST\d+$/.test(error.code))) {
+          report.confirmationPending = false;
+        }
+        throw new Error(error.message);
+      }
+      report.confirmationPending = false;
+      report.replaced = true;
+      for (let k = 0; k < oldPaths.length; k += 100) {
+        try {
+          const { error: cleanupError } = await db.storage.from(BUCKET).remove(oldPaths.slice(k, k + 100));
+          if (cleanupError) throw cleanupError;
+        } catch {
+          report.problems.push("Dados restaurados. Alguns arquivos antigos continuam no armazenamento.");
+          break;
         }
       }
-      for (let k = 0; k < oldPaths.length; k += 100) await db.storage.from(BUCKET).remove(oldPaths.slice(k, k + 100));
-      report.replaced = true;
     }
 
     report.ok = failures === 0;
     return report;
   } catch (e) {
     if (mode === "replace" && !report.replaced) {
-      // desfaz o que entrou, para não ficar metade/metade
-      onProgress?.({ label: "Desfazendo", done: 0, total: 1 });
-      for (const t of [...TABLES].reverse()) {
-        const ids = inserted[t];
-        for (let k = 0; k < ids.length; k += 200) await db.from(t).delete().in("id", ids.slice(k, k + 200));
+      if (!report.confirmationPending) {
+        for (let k = 0; k < uploaded.length; k += 100) {
+          try { await db.storage.from(BUCKET).remove(uploaded.slice(k, k + 100)); } catch { /* arquivo sem referência */ }
+        }
       }
-      for (let k = 0; k < uploaded.length; k += 100) await db.storage.from(BUCKET).remove(uploaded.slice(k, k + 100));
       report.added = {};
       report.reused = {};
     }

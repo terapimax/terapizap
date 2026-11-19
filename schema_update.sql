@@ -118,4 +118,8 @@ INSERT INTO storage.buckets (id, name, public)
 VALUES ('campaign_files', 'campaign_files', true)
 ON CONFLICT (id) DO NOTHING;
 
-CREATE POLICY "Allow public storage access" ON storage.objects FOR ALL USING ( bucket_id = 'campaign_files' ) WITH CHECK ( bucket_id = 'campaign_files' );
+DROP POLICY IF EXISTS "Public read campaign files" ON storage.objects;
+DROP POLICY IF EXISTS "Users manage own campaign files" ON storage.objects;
+CREATE POLICY "Users manage own campaign files" ON storage.objects FOR ALL TO authenticated
+  USING (bucket_id = 'campaign_files' AND (storage.foldername(name))[1] = auth.uid()::text)
+  WITH CHECK (bucket_id = 'campaign_files' AND (storage.foldername(name))[1] = auth.uid()::text);

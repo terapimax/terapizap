@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useSyncExternalStore } from "react";
-import { useRouter } from "next/navigation";
+import { logout } from "@/components/providers";
 import { useQuery } from "@tanstack/react-query";
 import { LogOut, Loader2, Monitor, Moon, Sun } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
@@ -38,7 +38,6 @@ function Section({ title, description, children }: { title: string; description?
 }
 
 export default function ConfiguracoesPage() {
-  const router = useRouter();
   const brand = useBrand();
   const pref = useSyncExternalStore(subscribeThemePref, getThemePref, getServerThemePref);
   const me = useQuery({ queryKey: ["me"], queryFn: async () => (await supabase.auth.getUser()).data.user, staleTime: 5 * 60 * 1000 });
@@ -60,10 +59,6 @@ export default function ConfiguracoesPage() {
     setPw("");
     setPw2("");
     toast.success("Senha atualizada");
-  };
-
-  const logout = async () => {
-    try { await supabase.auth.signOut(); } finally { router.push("/auth/login"); }
   };
 
   return (

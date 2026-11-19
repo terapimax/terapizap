@@ -62,7 +62,22 @@
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
     function wppReady() {
-        return typeof WPP !== 'undefined' && WPP.isReady === true && !!WPP.chat;
+        if (!window.WPP || !(WPP.isReady || (WPP.isInjected && document.querySelector('#pane-side, #main')))) return false;
+        if (typeof WPP.chat?.sendTextMessage !== 'function' || typeof WPP.chat?.sendFileMessage !== 'function') return false;
+        try {
+            const wa = WPP.whatsapp;
+            if (typeof wa.ChatStore?.get !== 'function' || typeof wa.MsgKey !== 'function' || typeof wa.MsgStore?.on !== 'function') return false;
+            try { return WPP.conn.isAuthenticated() === true; }
+            catch {
+                try { if (WPP.conn.getMyUserId()) return true; } catch { /* sessão identificada só por LID */ }
+                return !!WPP.conn.getMyUserLid();
+            }
+        } catch { return false; }
+    }
+
+    function hasSender(chatId) {
+        if (!/@(?:lid|g\.us)$/.test(chatId)) return true;
+        try { return !!WPP.conn.getMyUserLid(); } catch { return false; }
     }
 
     async function waitReady(timeoutMs) {
@@ -174,8 +189,12 @@
         const total = Math.max(0, Math.min(Number(ms) || 0, MAX_PRESENCE_MS));
         if (!total) return;
         step(requestId, mode, { presenceMs: total });
-        const mark = () => (mode === 'recording' ? WPP.chat.markIsRecording(chatId) : WPP.chat.markIsComposing(chatId))
-            .catch((e) => console.warn('ZapFlow engine: presença falhou (seguindo sem ela):', e && e.message));
+        const mark = async () => {
+            try {
+                if (mode === 'recording') await WPP.chat.markIsRecording?.(chatId);
+                else await WPP.chat.markIsComposing?.(chatId);
+            } catch (e) { console.warn('ZapFlow engine: presença indisponível', e && e.message); }
+        };
         const end = Date.now() + total;
         let nextMark = 0;
         while (Date.now() < end) {
@@ -203,9 +222,11 @@
             if (!(await waitReady(10000))) {
                 return reply(requestId, { ok: false, notReady: true, error: 'Motor do WhatsApp (WA-JS) não carregou.' });
             }
-            if (!chatId || !WPP.chat.get(chatId)) {
+            const stored = chatId && !msg.createChat ? WPP.chat.get(chatId) : null;
+            if (!chatId || (!msg.createChat && !stored)) {
                 return reply(requestId, { ok: false, error: 'Conversa de destino não encontrada.' });
             }
+            if (!hasSender(stored?.id?._serialized || chatId)) return reply(requestId, { ok: false, notReady: true, error: 'O WhatsApp está sincronizando a identidade da conta. Confira a conversa antes de tentar novamente.' });
 
             let result;
             if (kind === 'text') {
@@ -273,17 +294,28 @@
         if (!msg || typeof msg !== 'object' || !msg.requestId) return;
 
         switch (msg.type) {
-            case 'ZF_ENGINE_STATUS':
+            case 'ZF_ENGINE_STATUS': {
+                const ready = wppReady();
+                let activeReady = ready;
+                if (ready) {
+                    try { activeReady = hasSender(chatInfo(WPP.chat.getActiveChat())?.chatId); }
+                    catch { activeReady = false; }
+                }
                 reply(msg.requestId, {
-                    ok: true, ready: wppReady(),
+                    ok: true, ready, activeReady,
+                    waitingFor: window.WPP?.loader?.zapflowWaitingFor || null,
                     version: (typeof WPP !== 'undefined' && WPP.version) || null,
                     supportedWhatsappWeb: (typeof WPP !== 'undefined' && WPP.supportedWhatsappWeb) || null,
                 });
                 break;
+            }
             case 'ZF_ENGINE_ACTIVE_CHAT': {
                 if (!(await waitReady(5000))) return reply(msg.requestId, { ok: false, notReady: true, error: 'Motor do WhatsApp não carregou.' });
-                const active = chatInfo(WPP.chat.getActiveChat());
+                let active;
+                try { active = chatInfo(WPP.chat.getActiveChat()); }
+                catch { return reply(msg.requestId, { ok: false, notReady: true, error: 'A lista de conversas ainda está carregando.' }); }
                 if (!active) return reply(msg.requestId, { ok: false, error: 'Abra uma conversa primeiro.' });
+                if (!hasSender(active.chatId)) return reply(msg.requestId, { ok: false, notReady: true, error: 'A identidade da conta ainda está sincronizando.' });
                 const info = (await contactInfo(active.chatId).catch(() => null)) || active;
                 reply(msg.requestId, Object.assign({ ok: true }, info));
                 break;
@@ -459,9 +491,11 @@
         } catch (e) { console.warn('ZapFlow engine: não foi possível acompanhar as etiquetas:', e && e.message); }
     }
 
-    waitReady(120000).then((ok) => {
-        if (ok) { watchIncoming(); watchActiveChat(); watchLabels(); }
-        if (ok) console.log('✅ ZapFlow engine pronto — WA-JS', WPP.version);
-        else console.warn('⚠️ ZapFlow engine: WA-JS não ficou pronta em 120s. Versão do WhatsApp Web pode ser incompatível.');
-    });
+    function connectEvents() {
+        if (!wppReady()) { setTimeout(connectEvents, 2500); return; }
+        watchIncoming();
+        watchActiveChat();
+        watchLabels();
+    }
+    connectEvents();
 })();

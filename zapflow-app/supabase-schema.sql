@@ -199,8 +199,8 @@ CREATE POLICY "Users delete own files" ON storage.objects
     bucket_id = 'campaign_files' AND auth.uid()::text = (storage.foldername(name))[1]
   );
 
-CREATE POLICY "Public read campaign files" ON storage.objects
-  FOR SELECT USING (bucket_id = 'campaign_files');
+DROP POLICY IF EXISTS "Allow public storage access" ON storage.objects;
+DROP POLICY IF EXISTS "Public read campaign files" ON storage.objects;
 
 -- ┌──────────────────────────────────────────────┐
 -- │ 10. ÍNDICES PARA PERFORMANCE                 │

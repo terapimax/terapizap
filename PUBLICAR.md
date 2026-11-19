@@ -1,18 +1,28 @@
 # Publicar o painel do ZapFlow na Vercel
 
-Hoje o painel roda só no seu computador (`localhost:3002`). Publicando na Vercel ele ganha um
-endereço na internet (ex.: `https://zapflow-seunome.vercel.app`) e funciona de qualquer lugar.
-O plano gratuito da Vercel basta. Leva uns 10 minutos e só precisa ser feito uma vez:
-depois disso, toda atualização enviada ao GitHub é publicada sozinha.
+O painel desta instalação está em [terapizap.vercel.app](https://terapizap.vercel.app/auth/login).
+A Vercel publica a pasta `zapflow-app` ao receber uma atualização na branch `main` do GitHub.
+Para atualizar uma instalação existente, siga a seção da versão abaixo.
 
-O código já está pronto para isso. Faltam só os passos abaixo, que dependem das suas contas.
-
-## 1. Atualizar o banco (Supabase)
+## 1. Preparar o banco de uma nova instalação (Supabase)
 
 1. Abra o seu projeto em <https://supabase.com/dashboard> e entre em **SQL Editor**.
 2. Cole todo o conteúdo do arquivo `supabase/setup.sql` e clique em **Run**.
-   Pode rodar quantas vezes quiser: ele não apaga nem duplica nada.
-3. Em **Table Editor** devem aparecer **22 tabelas**.
+   O instalador também migra dados de versões anteriores e reúne leads com telefone repetido.
+3. Em **Table Editor**, o esquema atual do ZapFlow tem **26 tabelas**.
+
+### Atualizar uma instalação existente para a versão 3.18
+
+1. No projeto Supabase desta instalação, abra **SQL Editor → New query**, cole o conteúdo de
+   `supabase/atualizar_3_18.sql` e clique em **Run**. Esse arquivo ajusta as permissões e instala a
+   função que confirma a restauração de um backup inteiro em uma transação.
+2. Envie as correções para a branch `main`. No GitHub, aguarde a confirmação
+   **Vercel – terapizap** no commit e abra a tela de login do painel.
+3. No Chrome, abra `chrome://extensions`, localize o ZapFlow e clique em **Recarregar**. Confira
+   a versão **3.18.1**. Volte à aba do WhatsApp Web e pressione **Ctrl + R**.
+4. Abra a conversa com você mesmo e teste um texto e um áudio da biblioteca. **Pronto** indica
+   que a extensão pode enviar. Em **Modo manual**, escolha o item e confirme no botão **Enviar**
+   do WhatsApp. Nesse modo o áudio é preparado como anexo.
 
 ## 2. Criar o projeto na Vercel
 
