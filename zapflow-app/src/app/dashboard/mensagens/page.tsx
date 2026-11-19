@@ -5,6 +5,7 @@ import { AlertCircle, Copy, Loader2, MessageSquareText, Plus, Star, Trash2 } fro
 import { useMessages, useCreateMessage, useUpdateMessage, useDeleteMessage } from "@/hooks/use-messages";
 import { useOpenFromQuery } from "@/hooks/use-open-from-query";
 import { Modal } from "@/components/ui/modal";
+import { RichTextField } from "@/components/ui/rich-text-field";
 import { Button, EmptyState, Panel, SearchInput } from "@/components/ui/shared";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -153,13 +154,12 @@ function MessageForm({ message, saving, onClose, onSave }: {
         </div>
         <div className="flex flex-col gap-1.5">
           <label htmlFor="msg-content" className="text-xs font-medium text-muted">Texto</label>
-          <textarea
+          <RichTextField
             id="msg-content"
             value={content}
-            onChange={(e) => setContent(e.target.value)}
+            onChange={setContent}
             rows={8}
             placeholder="Escreva a mensagem como você falaria com o cliente"
-            className="w-full px-3 py-2.5 rounded-[10px] bg-card border border-line text-sm text-fg placeholder:text-muted outline-none focus:border-fg transition-colors resize-y"
           />
           <p className="text-xs text-muted tabular-nums">{content.length} caracteres · a extensão mostra “digitando…” por cerca de {Math.min(9, Math.max(1.5, content.length * 0.055)).toFixed(0)} s antes de enviar</p>
         </div>
