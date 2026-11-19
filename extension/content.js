@@ -922,6 +922,7 @@
   const TASK_STUCK_MS = 15 * 60 * 1000;
   let taskPolling = false;
   let tasksBroken = false;
+  let taskNetDown = false;
   const overdueDismissed = new Set();
   let overdueList = [];
 
@@ -1022,9 +1023,14 @@
         .lte('due_at', new Date().toISOString()).order('due_at');
       if (error) {
         if (error.code === '42P01' || error.code === 'PGRST205') tasksBroken = true;
-        console.warn('ZapFlow: não foi possível consultar os envios agendados:', error.message);
+        // Sem internet / banco inacessível: não é erro do ZapFlow. Tenta de novo no próximo ciclo
+        // e avisa só uma vez por queda, para não encher o log de erros da extensão a cada 30s.
+        const offline = /failed to fetch|networkerror|load failed|network request failed/i.test(error.message || '');
+        if (!offline || !taskNetDown) console.warn('ZapFlow: não foi possível consultar os envios agendados:', error.message);
+        if (offline) taskNetDown = true;
         return;
       }
+      taskNetDown = false;
       const now = Date.now();
       const due = [];
       overdueList = [];
