@@ -129,9 +129,13 @@ O token dá acesso à sua conta da Vercel: guarde só nas variáveis do projeto,
 **Manual.** Sem essas variáveis, o cliente salva o domínio em Configurações e você adiciona o
 mesmo domínio em **Settings → Domains** do projeto na Vercel.
 
-Nos dois casos o dono do domínio cria o registro de DNS que a tela mostra (CNAME para
-`cname.vercel-dns.com` em subdomínio, ou A para `76.76.21.21` no domínio raiz). Quando o DNS
-propagar, a tela passa para **Conectado** e o endereço já abre o login com a marca do cliente.
+No provedor do domínio, copie o CNAME ou A indicado pela Vercel para aquele projeto. Se a Vercel
+pedir confirmação de propriedade, adicione também o TXT que ela informar.
+
+Em **Configurações → Marca → Domínio próprio**, o resultado fica abaixo do campo. **Verificar
+novamente** repete a consulta. Nos dois modos, **Conectado** indica que o navegador conseguiu
+acessar esta instalação do painel pelo endereço HTTPS. Enquanto o acesso estiver pendente, a tela
+repete a consulta a cada 30 segundos.
 
 Se o cadastro usa confirmação de e-mail, inclua também `https://dominio-do-cliente/**` nas
 **Redirect URLs** do Supabase (passo 3).

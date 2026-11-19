@@ -78,20 +78,10 @@ const escapeXml = (s: string) => s.replace(/[<>&"']/g, (c) => `&#${c.charCodeAt(
  * Devolve "" para vazio e null para o que não é um domínio válido.
  */
 export function cleanDomain(input: string): string | null {
+  if (!input.trim()) return "";
   const d = input.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/[/?#].*$/, "").replace(/:\d+$/, "").replace(/\.$/, "");
-  if (!d) return "";
-  if (d.length > 253 || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(d)) return null;
+  if (d.length > 253 || !/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/.test(d)) return null;
+  if (!/[a-z]/.test(d.slice(d.lastIndexOf(".") + 1))) return null;
   if (/(^|\.)(vercel\.app|localhost)$/.test(d)) return null;
   return d;
-}
-
-/** Registro de DNS que o dono do domínio precisa criar (Vercel). */
-export function dnsRecordFor(domain: string): { type: "A" | "CNAME"; name: string; value: string } {
-  const parts = domain.split(".");
-  // domínio raiz (empresa.com ou empresa.com.br) usa A; subdomínio (painel.empresa.com.br) usa CNAME
-  const brTwoLevel = /\.(com|net|org|art|eco|blog|app|dev|adv|eng|med|odo|psc|tur|ind|inf|imb|far|srv|tv|wiki)\.br$/.test(domain);
-  const apex = parts.length === (brTwoLevel ? 3 : 2);
-  return apex
-    ? { type: "A", name: "@", value: "76.76.21.21" }
-    : { type: "CNAME", name: parts.slice(0, parts.length - (brTwoLevel ? 3 : 2)).join("."), value: "cname.vercel-dns.com" };
 }

@@ -2,12 +2,13 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, CheckCircle2, Clock, Copy, Globe, ImageUp, Loader2, Palette, RefreshCw, Trash2, TriangleAlert } from "lucide-react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Check, ImageUp, Loader2, Palette, Trash2, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { BRAND_KEY, BrandIcon, BrandLogo, MarkTile, useBrandRow } from "@/components/brand";
-import { DEFAULT_BRAND_NAME, cleanDomain, resolveBrand, type BrandRow } from "@/lib/brand";
+import { DomainSettings } from "@/components/features/domain-settings";
+import { DEFAULT_BRAND_NAME, resolveBrand, type BrandRow } from "@/lib/brand";
 import { ACCENT_PRESETS, DEFAULT_ACCENT, DEFAULT_MARK, MARKS, accentCss, accentPalette, cleanAccent, cleanMark, type MarkId } from "@/lib/brand-kit";
 import { Button } from "@/components/ui/shared";
 import { cn } from "@/lib/utils";
@@ -292,139 +293,5 @@ function AccentPicker({ value, onChange }: { value: string | null; onChange: (he
       </div>
       {light && <p className="text-xs text-muted">Cor clara: o texto sobre ela fica escuro para continuar legível.</p>}
     </fieldset>
-  );
-}
-
-// ── Domínio próprio ──────────────────────────────────────
-
-interface DomainInfo {
-  domain: string | null;
-  automatic: boolean;
-  status: "none" | "connected" | "pending" | "manual" | "error";
-  record?: { type: string; name: string; value: string };
-  verification?: { type: string; name: string; value: string }[];
-  message?: string;
-  error?: string;
-}
-
-function DomainSettings() {
-  const qc = useQueryClient();
-  const info = useQuery({
-    queryKey: ["branding-domain"],
-    queryFn: async () => {
-      const res = await fetch("/api/domain", { cache: "no-store" });
-      const data = (await res.json().catch(() => ({}))) as DomainInfo;
-      if (!res.ok) throw new Error(data.error || "Não foi possível consultar o domínio.");
-      return data;
-    },
-    // enquanto o DNS não propaga, confere sozinho de tempos em tempos
-    refetchInterval: (q) => (q.state.data?.status === "pending" ? 30_000 : false),
-    retry: false,
-  });
-  const current = info.data?.domain ?? "";
-  // null = a pessoa ainda não mexeu no campo: mostra o domínio salvo
-  const [edited, setEdited] = useState<string | null>(null);
-  const value = edited ?? current;
-  const setValue = setEdited;
-
-  const save = useMutation({
-    mutationFn: async (domain: string) => {
-      const res = await fetch("/api/domain", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ domain }) });
-      const data = (await res.json().catch(() => ({}))) as DomainInfo;
-      if (!res.ok) throw new Error(data.error || "Não foi possível salvar o domínio.");
-      return data;
-    },
-    onSuccess: (data) => {
-      qc.setQueryData(["branding-domain"], data);
-      setEdited(null);
-      qc.invalidateQueries({ queryKey: BRAND_KEY });
-      if (!data.domain) toast.success("Domínio removido");
-      else if (data.status === "connected") toast.success("Domínio conectado");
-      else if (data.status === "error") toast.error(data.message || "A hospedagem recusou o domínio.");
-      else toast.success("Domínio salvo. Falta apontar o DNS (veja abaixo).");
-    },
-    onError: (e) => toast.error((e as Error).message),
-  });
-
-  const typed = cleanDomain(value);
-  const d = info.data;
-  const copy = (text: string) => navigator.clipboard?.writeText(text).then(() => toast.success("Copiado"), () => {});
-  const records = d?.domain && d.status !== "connected" ? [...(d.record ? [d.record] : []), ...(d.verification ?? [])] : [];
-
-  return (
-    <div className="flex flex-col gap-4 pt-6 border-t border-line">
-      <div>
-        <h3 className="font-sans text-sm font-semibold tracking-normal flex items-center gap-2"><Globe className="w-4 h-4" aria-hidden="true" /> Domínio próprio</h3>
-        <p className="text-sm text-muted mt-0.5">Abra o painel pelo endereço da sua empresa (ex.: painel.suaempresa.com.br). A tela de login já aparece com a sua marca.</p>
-      </div>
-
-      {info.isError ? (
-        <p className="text-sm text-muted">{(info.error as Error).message}</p>
-      ) : (
-        <>
-          <form className="flex flex-wrap gap-2" onSubmit={(e) => { e.preventDefault(); if (typed === null) return toast.error("Domínio inválido. Exemplo: painel.suaempresa.com.br"); save.mutate(typed); }}>
-            <label htmlFor="brand-domain" className="sr-only">Domínio</label>
-            <input id="brand-domain" value={value} onChange={(e) => setValue(e.target.value)} placeholder="painel.suaempresa.com.br" inputMode="url" autoComplete="off" spellCheck={false}
-              className={cn(inputCls, "flex-1 min-w-[220px]")} disabled={info.isLoading} />
-            <Button type="submit" variant="secondary" disabled={info.isLoading || save.isPending || (typed ?? value) === current}>
-              {save.isPending && <Loader2 className="w-4 h-4 animate-spin" />} {current && !value.trim() ? "Remover domínio" : "Conectar"}
-            </Button>
-          </form>
-
-          {d?.domain && (
-            <div className="rounded-xl border border-line p-4 flex flex-col gap-3">
-              <div className="flex flex-wrap items-center gap-2 text-sm">
-                {d.status === "connected" ? (
-                  <><CheckCircle2 className="w-4 h-4 text-ok" aria-hidden="true" /><span className="font-semibold">Conectado</span><a href={`https://${d.domain}`} target="_blank" rel="noreferrer" className="text-accent-fg font-semibold hover:underline">{d.domain}</a></>
-                ) : d.status === "error" ? (
-                  <><TriangleAlert className="w-4 h-4 text-hot" aria-hidden="true" /><span className="font-semibold">{d.message}</span></>
-                ) : (
-                  <><Clock className="w-4 h-4 text-warn" aria-hidden="true" /><span className="font-semibold">{d.status === "manual" ? "Salvo. Falta ligar na hospedagem e no DNS" : "Aguardando o DNS"}</span><span className="text-muted">{d.domain}</span></>
-                )}
-                <Button size="sm" variant="ghost" className="ml-auto" onClick={() => info.refetch()} disabled={info.isFetching}>
-                  <RefreshCw className={cn("w-3.5 h-3.5", info.isFetching && "animate-spin")} /> Conferir
-                </Button>
-              </div>
-
-              {records.length > 0 && (
-                <>
-                  <p className="text-sm text-muted">
-                    {d.status === "manual" && <>1. Na Vercel, abra o projeto do painel &gt; Settings &gt; Domains e adicione <b className="text-fg">{d.domain}</b>.<br />2. </>}
-                    No site onde o domínio foi registrado (Registro.br, GoDaddy, Hostinger, Cloudflare…), crie {records.length > 1 ? "estes registros" : "este registro"} de DNS. Pode levar de minutos a algumas horas para valer.
-                  </p>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm min-w-[420px]">
-                      <thead>
-                        <tr className="text-left text-xs text-muted">
-                          <th scope="col" className="font-medium pb-1.5 pr-3">Tipo</th>
-                          <th scope="col" className="font-medium pb-1.5 pr-3">Nome</th>
-                          <th scope="col" className="font-medium pb-1.5">Valor</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {records.map((r) => (
-                          <tr key={r.type + r.name} className="border-t border-line">
-                            <td className="py-2 pr-3 font-semibold">{r.type}</td>
-                            <td className="py-2 pr-3 font-mono text-[13px] break-all">{r.name}</td>
-                            <td className="py-2">
-                              <button type="button" onClick={() => copy(r.value)} title="Copiar" className="inline-flex items-center gap-1.5 font-mono text-[13px] break-all text-left cursor-pointer hover:text-accent-fg">
-                                {r.value} <Copy className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </>
-              )}
-              {d.status === "connected" && (
-                <p className="text-xs text-muted">A extensão passa a abrir o painel por este endereço. Se você usa confirmação de e-mail no cadastro, inclua {`https://${d.domain}/**`} nas URLs de redirecionamento do Supabase (Authentication &gt; URL Configuration).</p>
-              )}
-            </div>
-          )}
-        </>
-      )}
-    </div>
   );
 }
