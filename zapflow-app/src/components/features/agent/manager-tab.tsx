@@ -6,7 +6,7 @@ import { AlertTriangle, ArrowRight, CalendarClock, Check, Film, FileText, Image 
 import ZF_AI from "@/lib/ai/zf-ai";
 import type { FunnelProposal, StaleLead } from "@/lib/ai/zf-ai";
 import { buildLibItems, libraryProgress } from "@/lib/ai/context";
-import { aiError, useAiRuntime, useLogRun } from "@/hooks/use-ai";
+import { aiError, useAiRuntime, useLogRun, useSaveProfile } from "@/hooks/use-ai";
 import {
   SUGGESTION_KIND, leadHistories, recentMoves, recentRuns, useCreateProposedFunnel, useLatestBriefing, useResolveSuggestion,
   useSaveBriefing, useScheduleFollowups, useSuggestions,
@@ -84,7 +84,9 @@ function BriefingPanel({ onFunnel, onSuggestions }: { onFunnel: (goal: string) =
   const saveBriefing = useSaveBriefing();
   const logRun = useLogRun();
   const suggestions = useSuggestions();
+  const saveProfile = useSaveProfile();
   const [busy, setBusy] = useState(false);
+  const cfg = ZF_AI.normalizeBriefing((data?.settings.profile as { briefing?: { auto?: boolean; hour?: number } } | undefined)?.briefing);
 
   if (latest.data?.oldDb) return <EmptyState icon={AlertTriangle} title="Falta atualizar o banco" description="Rode o supabase/setup.sql de novo no Supabase para ativar o Gerente." />;
 
@@ -122,12 +124,31 @@ function BriefingPanel({ onFunnel, onSuggestions }: { onFunnel: (goal: string) =
       <Section icon={Sunrise} title="Resumo do dia"
         description="O gerente olha leads, Kanban, tarefas e o que o agente fez na semana, e diz onde focar hoje."
         aside={<Button onClick={generate} disabled={busy || d.loading}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} {b ? "Gerar de novo" : "Gerar resumo"}</Button>}>
+        <div className="rounded-xl bg-surface px-4 py-3 flex flex-wrap items-center gap-x-6 gap-y-3">
+          <label htmlFor="bf-auto" className="flex items-start gap-3 cursor-pointer flex-1 basis-72">
+            <input id="bf-auto" type="checkbox" role="switch" checked={cfg.auto} disabled={saveProfile.isPending}
+              onChange={(e) => saveProfile.mutate({ briefing: { auto: e.target.checked, hour: cfg.hour } })}
+              className="w-4 h-4 mt-0.5 accent-[var(--fg)] cursor-pointer shrink-0" />
+            <span className="min-w-0">
+              <span className="block text-sm font-medium">Gerar sozinho todo dia</span>
+              <span className="block text-xs text-muted leading-relaxed mt-0.5">
+                Sem servidor: o resumo sai quando o painel ou o WhatsApp Web com a extensão estiver aberto depois da hora escolhida. Uma chamada por dia, na sua chave.
+              </span>
+            </span>
+          </label>
+          <Field label="A partir das" htmlFor="bf-hour" className="w-36">
+            <select id="bf-hour" className={inputCls} value={cfg.hour} disabled={!cfg.auto || saveProfile.isPending}
+              onChange={(e) => saveProfile.mutate({ briefing: { auto: cfg.auto, hour: Number(e.target.value) } })}>
+              {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>)}
+            </select>
+          </Field>
+        </div>
         {busy && <p className="text-sm text-muted flex items-center gap-2" role="status"><Loader2 className="w-4 h-4 animate-spin" /> Analisando a operação…</p>}
-        {!b && !busy && <p className="text-sm text-muted">Nenhum resumo ainda. Gere um ao começar o dia (usa a sua IA, uma chamada).</p>}
+        {!b && !busy && <p className="text-sm text-muted">Nenhum resumo ainda. Gere um agora ou ligue "Gerar sozinho todo dia" acima (usa a sua IA, uma chamada por resumo).</p>}
         {b && (
           <div className="flex flex-col gap-5" aria-label="Resumo">
             <div>
-              <p className="text-xs text-muted">{isToday ? "Hoje" : "Gerado em"} {when?.toLocaleString("pt-BR", { dateStyle: isToday ? undefined : "short", timeStyle: "short" })}{!isToday && " · gere de novo para atualizar"}</p>
+              <p className="text-xs text-muted">{rep?.content?.auto ? "Automático · " : ""}{isToday ? "Hoje" : "Gerado em"} {when?.toLocaleString("pt-BR", { dateStyle: isToday ? undefined : "short", timeStyle: "short" })}{!isToday && " · gere de novo para atualizar"}</p>
               <h3 className="text-lg font-semibold mt-1">{b.titulo}</h3>
               {b.resumo && <p className="text-sm text-muted mt-1 leading-relaxed">{b.resumo}</p>}
             </div>

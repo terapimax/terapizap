@@ -234,6 +234,11 @@ export interface ZfAiApi {
   staleLeads(rows: ManagerRows, opts?: { days?: number; maxDays?: number; limit?: number }): StaleLead[];
   buildManagerSnapshot(rows: ManagerRows & { runs?: unknown[]; moves?: unknown[]; suggestions?: unknown[]; library?: Record<string, number>; tz?: string }): ManagerSnapshot;
   runBriefing(o: { provider: Provider; key: string; model: string; snapshot: ManagerSnapshot; profile?: Record<string, unknown>; fetchFn?: FetchFn; signal?: AbortSignal }): Promise<BriefingResult>;
+  normalizeBriefing(c?: { auto?: unknown; hour?: unknown } | null): { auto: boolean; hour: number };
+  /** Gera o resumo do dia sozinho (uma vez por dia). `sb` = cliente Supabase da conta; `settings` = linha de ai_settings. */
+  autoBriefing(o: { sb: unknown; settings: unknown; now?: Date; tz?: string; fetchFn?: FetchFn; signal?: AbortSignal }): Promise<
+    { skipped: "off" | "early" | "done" | "old-db" } | { ok: true; titulo: string; briefing: unknown; model: string }
+  >;
   writeFollowups(o: { provider: Provider; key: string; model: string; leads: (StaleLead & { history?: HistoryMessage[] })[]; profile?: Record<string, unknown>; fetchFn?: FetchFn; signal?: AbortSignal }): Promise<{ mensagens: { lead_id: number; texto: string; motivo: string }[]; usage: Usage; model: string }>;
   proposeFunnel(o: { provider: Provider; key: string; model: string; library: LibItem[]; goal?: string; stats?: unknown; profile?: Record<string, unknown>; fetchFn?: FetchFn; signal?: AbortSignal }): Promise<FunnelProposal>;
   transcribe(o: { provider?: SttProvider; key: string; model?: string; file: Blob; filename?: string; language?: string | null; prompt?: string; fetchFn?: FetchFn; signal?: AbortSignal }): Promise<string>;

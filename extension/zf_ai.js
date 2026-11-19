@@ -1427,6 +1427,87 @@
     suggest_item: 'Sugerir novo item',
   };
 
+  /* ------------------------------------------------ resumo do dia automático */
+
+  /** Config do resumo automático (profile.briefing): liga/desliga e a hora (0–23) a partir da qual ele pode sair. */
+  function normalizeBriefing(c) {
+    c = c || {};
+    const h = Math.floor(Number(c.hour));
+    return { auto: c.auto === true, hour: Number.isFinite(h) && h >= 0 && h <= 23 ? h : 8 };
+  }
+
+  /** Lê uma tabela inteira em páginas de 1000 (limite do Supabase por consulta). Erro = devolve null. */
+  async function readAll(sb, table, select, filter) {
+    const out = [];
+    for (let from = 0; ; from += 1000) {
+      let q = sb.from(table).select(select);
+      if (filter) q = filter(q);
+      const { data, error } = await q.order('id', { ascending: true }).range(from, from + 999);
+      if (error) return null;
+      out.push(...asArray(data));
+      if (!data || data.length < 1000) return out;
+    }
+  }
+
+  /**
+   * Gera o resumo do dia sozinho, uma vez por dia, quando o painel ou a extensão estão abertos.
+   * o: { sb (cliente Supabase da conta), settings (linha de ai_settings), now?, tz?, fetchFn?, signal? }
+   * -> { skipped: 'off'|'early'|'done'|'old-db' } sem gastar nada, ou { ok: true, titulo, briefing, model }.
+   * Lança erro (ZfAiError) se a IA falhar; a reserva vence sozinha e a próxima conferência tenta de novo.
+   */
+  async function autoBriefing(o) {
+    const sb = o.sb;
+    const settings = o.settings || {};
+    const rt = resolveRuntime(settings);
+    const cfg = normalizeBriefing(settings.profile && settings.profile.briefing);
+    if (!cfg.auto || !rt.ready) return { skipped: 'off' };
+    const now = o.now || new Date();
+    if (now.getHours() < cfg.hour) return { skipped: 'early' };
+    const midnight = new Date(now); midnight.setHours(0, 0, 0, 0);
+
+    const claim = await sb.rpc('zf_briefing_claim', { p_since: midnight.toISOString(), p_mins: 15 });
+    if (claim.error) return { skipped: 'old-db' };
+    if (claim.data !== true) return { skipped: 'done' };
+
+    const t0 = Date.now();
+    const weekAgo = new Date(now.getTime() - 7 * DAY_MS).toISOString();
+    const [leads, columns, boards, tags, tasks, media, messages, runs, moves, suggestions] = await Promise.all([
+      readAll(sb, 'leads', '*, lead_tags(tag_id), kanban_cards(id,board_id,column_id,value,product,position)'),
+      readAll(sb, 'kanban_columns', '*'),
+      readAll(sb, 'kanban_boards', '*'),
+      readAll(sb, 'tags', '*'),
+      readAll(sb, 'tasks', 'id,lead_id,kind,title,status,due_at', (q) => q.in('status', ['scheduled', 'sending'])),
+      readAll(sb, 'media_library', 'id,ai_status'),
+      readAll(sb, 'messages', 'id,ai_at'),
+      readAll(sb, 'agent_runs', 'id,source,actions,feedback,created_at', (q) => q.gte('created_at', weekAgo)),
+      readAll(sb, 'kanban_card_moves', 'id,to_column_id,value,at,seeded', (q) => q.gte('at', weekAgo)),
+      readAll(sb, 'agent_suggestions', 'id,title,times,status', (q) => q.eq('status', 'pending')),
+    ]);
+    // Sem leads/etapas/etiquetas o resumo sairia vazio e enganoso: melhor falhar do que gravar um resumo errado.
+    if (!leads || !columns || !boards || !tags || !tasks) throw new ZfAiError('Não consegui ler seus leads para montar o resumo do dia.', { kind: 'network' });
+
+    const m = asArray(media), tx = asArray(messages);
+    const total = m.length + tx.length;
+    const read = m.filter((x) => x.ai_status === 'done').length + tx.filter((x) => !!x.ai_at).length;
+    const snap = buildManagerSnapshot({
+      leads, columns, boards, tags, tasks, now, tz: o.tz, runs: runs || [], moves: moves || [], suggestions: suggestions || [],
+      library: { itens: total, nao_lidos_pela_ia: total - read },
+    });
+    const r = await runBriefing({ provider: rt.provider, key: rt.key, model: rt.modelChat, snapshot: snap, profile: settings.profile, fetchFn: o.fetchFn, signal: o.signal });
+    const { usage, model, ...briefing } = r;
+    const saved = await sb.from('agent_reports').insert({
+      kind: 'briefing',
+      content: { briefing, model, auto: true, totais: Object.assign({}, snap.totais, { atrasadas: snap.tarefas.atrasadas, vendas_7d: snap.resultados_7d.vendas }) },
+    });
+    if (saved.error) throw new ZfAiError('O resumo ficou pronto, mas não consegui salvá-lo.', { kind: 'other' });
+    // o registro de uso é só estatística: se falhar, o resumo já está salvo
+    await Promise.resolve(sb.from('agent_runs').insert({
+      source: 'manager', provider: rt.provider, model, input_tokens: usage.input, output_tokens: usage.output, cache_read_tokens: usage.cacheRead,
+      duration_ms: Date.now() - t0, summary: 'Resumo do dia (automático): ' + briefing.titulo,
+    })).catch(() => {});
+    return { ok: true, titulo: briefing.titulo, briefing, model };
+  }
+
   return {
     PROVIDERS, STT, KIND_LABEL, REF_PREFIX, ACTION_LABEL,
     ZfAiError, request, parseJsonLoose, deaccent, norm, clip,
@@ -1437,5 +1518,6 @@
     enrichItem, transcribe,
     AUTO_DEFAULTS, normalizeAuto, inAutoHours, handoffWordHit, pickDelayMs, autoDecision, autoAllows,
     staleLeads, buildManagerSnapshot, runBriefing, writeFollowups, proposeFunnel,
+    normalizeBriefing, autoBriefing,
   };
 });

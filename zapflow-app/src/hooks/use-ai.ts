@@ -67,18 +67,21 @@ export function useSaveAiSettings() {
 export function useSaveProfile() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (change: { train: AgentProfile } | { auto: Partial<AutoConfig> }) => {
+    mutationFn: async (change: { train: AgentProfile } | { auto: Partial<AutoConfig> } | { briefing: NonNullable<AgentProfile["briefing"]> }) => {
       const user_id = await uid();
       const { data, error: e0 } = await supabase.from("ai_settings").select("profile").maybeSingle();
       if (e0) throw e0;
       const current = ((data?.profile as AgentProfile | null) ?? {}) as AgentProfile;
       let next: AgentProfile;
       if ("train" in change) {
-        const { auto: _drop, ...rest } = change.train;
-        void _drop;
-        next = current.auto ? { ...rest, auto: current.auto } : rest;
-      } else {
+        // o Treino não é dono das travas do automático nem do resumo: preserva o que está salvo
+        const { auto: _a, briefing: _b, ...rest } = change.train;
+        void _a; void _b;
+        next = { ...rest, ...(current.auto ? { auto: current.auto } : {}), ...(current.briefing ? { briefing: current.briefing } : {}) };
+      } else if ("auto" in change) {
         next = { ...current, auto: change.auto };
+      } else {
+        next = { ...current, briefing: change.briefing };
       }
       const { error } = await supabase.from("ai_settings").upsert({ user_id, profile: next, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
       if (error) throw error;

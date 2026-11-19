@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
+import ZF_AI from "@/lib/ai/zf-ai";
 
 const supabase = createClient();
 
@@ -78,10 +79,37 @@ export function useRealtimeSync() {
     const staleFirst = setTimeout(checkStale, 6000);
     const staleTimer = setInterval(checkStale, 10 * 60_000);
 
+    // Resumo do dia automático: também sem servidor. Se estiver ligado (Agente › Gerente) e já passou da
+    // hora escolhida, o painel gera o resumo de hoje com a chave da conta. O banco reserva a vez, então
+    // painel + extensão abertos juntos geram um só. Falhas avisam uma vez por sessão (não a cada 10 min).
+    let briefingBusy = false;
+    let briefingWarned = false;
+    const checkBriefing = async () => {
+      if (briefingBusy || document.hidden) return;
+      briefingBusy = true;
+      try {
+        const { data, error } = await supabase.from("ai_settings").select("*").maybeSingle();
+        if (error || !data) return;
+        const r = await ZF_AI.autoBriefing({ sb: supabase, settings: data, tz: Intl.DateTimeFormat().resolvedOptions().timeZone });
+        if ("ok" in r) {
+          qc.invalidateQueries({ queryKey: ["ai", "reports"] });
+          toast.success(`Resumo do dia pronto: ${r.titulo}`, { action: { label: "Ler", onClick: () => router.push("/dashboard/agente?aba=gerente") } });
+        }
+      } catch (e) {
+        if (!briefingWarned) { briefingWarned = true; toast.error(`Resumo do dia automático falhou: ${(e as Error)?.message || "tente gerar pelo Gerente."}`); }
+      } finally {
+        briefingBusy = false;
+      }
+    };
+    const briefingFirst = setTimeout(checkBriefing, 9000);
+    const briefingTimer = setInterval(checkBriefing, 10 * 60_000);
+
     return () => {
       if (timer) clearTimeout(timer);
       clearTimeout(staleFirst);
       clearInterval(staleTimer);
+      clearTimeout(briefingFirst);
+      clearInterval(briefingTimer);
       supabase.removeChannel(channel);
     };
   }, [qc, router]);

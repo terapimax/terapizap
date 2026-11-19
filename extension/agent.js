@@ -841,8 +841,36 @@
     paint(el);
   }
 
+  /* ------------------------------------------ resumo do dia automático */
+  // Sem servidor: com o WhatsApp Web aberto, a extensão confere ao abrir e a cada 10 min. Se estiver ligado
+  // (painel › Agente › Gerente) e já passou da hora escolhida, gera o resumo de hoje com a chave da conta.
+  // O banco reserva a vez (zf_briefing_claim), então painel e várias abas geram um só. Não depende de a aba
+  // estar visível: o resumo fica salvo e o painel mostra quando você abrir.
+  let briefingBusy = false;
+  let briefingWarned = false;
+  async function checkBriefing() {
+    const b = B();
+    if (briefingBusy || !b || !b.sb()) return;
+    briefingBusy = true;
+    try {
+      const sb = b.sb();
+      const { data, error } = await sb.from('ai_settings').select('*').maybeSingle();
+      if (error || !data) return;
+      const r = await Z.autoBriefing({ sb, settings: data, tz: Intl.DateTimeFormat().resolvedOptions().timeZone, fetchFn: aiFetch });
+      if (r && r.ok) b.showToast('☀️ Resumo do dia pronto: ' + r.titulo + ' · veja em Agente › Gerente no painel.');
+    } catch (e) {
+      console.warn('ZapFlow: resumo do dia automático falhou', e);
+      if (!briefingWarned) { briefingWarned = true; b.showToast('Resumo do dia automático falhou: ' + ((e && e.message) || 'tente gerar pelo painel.')); }
+    } finally {
+      briefingBusy = false;
+    }
+  }
+  setTimeout(checkBriefing, 20000);
+  setInterval(checkBriefing, 10 * 60 * 1000);
+
   window.ZF_AGENT = {
     onLeadRender,
+    checkBriefing,
     analyze,
     apply,
     reloadSettings: () => loadAi(true),

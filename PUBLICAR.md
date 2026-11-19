@@ -11,6 +11,22 @@ Para atualizar uma instalação existente, siga a seção da versão abaixo.
    O instalador também migra dados de versões anteriores e reúne leads com telefone repetido.
 3. Em **Table Editor**, o esquema atual do ZapFlow tem **26 tabelas**.
 
+### Atualizar para a versão 3.20 (resumo do dia automático)
+
+1. No SQL Editor do projeto, execute `supabase/atualizar_resumo_3_20.sql`. Ele instala a reserva que impede dois resumos no mesmo dia. Sem ele, o resumo automático não liga (o painel continua funcionando).
+2. Publique o painel pela branch `main`. Em **Agente › Gerente › Resumo do dia**, ligue **Gerar sozinho todo dia** e escolha a hora.
+3. Em `chrome://extensions`, recarregue o ZapFlow, confira a versão **3.20.0** e atualize a aba do WhatsApp Web.
+
+Como funciona: não existe servidor, então o resumo sai quando o painel ou o WhatsApp Web com a extensão estiver aberto depois da hora escolhida. É uma chamada por dia, com a chave de IA da própria conta. Com os dois abertos, só um gera. Se a IA falhar, ele tenta de novo em 15 minutos e avisa uma vez na tela.
+
+### Cuidado ao atualizar a biblioteca WA-JS
+
+O arquivo `extension/wppconnect-wa.js` **não é o pacote original**: é a WA-JS 4.8.2 com trechos ajustados para as versões atuais do WhatsApp Web (identificador da conta, chave de mensagem, espera dos módulos). Sem esses ajustes o envio falha com `getMeLidUserOrThrow is not a function`.
+
+- Nunca troque o arquivo por uma cópia nova da WA-JS. Use `node tools/prepare-wa-library.mjs <pasta extraída do pacote 4.8.2>`, que recria o arquivo com os ajustes e confere o pacote por hash.
+- Se o WhatsApp mudar de novo e o envio quebrar, o erro aparece no console da aba (F12) com o prefixo `ZapFlow engine`. O conserto é atualizar esse script e gerar o arquivo de novo, não editar o arquivo gerado à mão.
+- Depois de qualquer mudança nele, rode `node tools/tests/extension.test.cjs`.
+
 ### Atualizar os funis da versão 3.18 para a 3.19
 
 1. No SQL Editor do projeto, execute `supabase/atualizar_funis_3_19.sql`. Ele instala a função que salva a nova ordem dos passos.

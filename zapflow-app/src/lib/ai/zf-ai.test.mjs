@@ -626,6 +626,111 @@ await t('gerente: funil proposto só com itens que existem', async () => {
   await assert.rejects(Z.proposeFunnel({ provider: 'anthropic', key: 'k', model: 'm', library: lib.slice(0, 1) }), /pelo menos 2 itens/);
 });
 
+/** Supabase simulado: tabelas em memória, filtros usados pelo resumo automático e a reserva do dia. */
+function fakeSb(tables, opts = {}) {
+  const log = { inserts: [], claims: [], reads: [] };
+  const sb = {
+    log,
+    from(name) {
+      const state = { name, filters: [] };
+      const q = {
+        select() { return q; },
+        order() { return q; },
+        in(col, vals) { state.filters.push((r) => vals.includes(r[col])); return q; },
+        eq(col, v) { state.filters.push((r) => r[col] === v); return q; },
+        gte(col, v) { state.filters.push((r) => r[col] >= v); return q; },
+        range(a, b) {
+          log.reads.push(name);
+          if (opts.failTable === name) return Promise.resolve({ data: null, error: { message: 'x' } });
+          const rows = (tables[name] || []).filter((r) => state.filters.every((f) => f(r)));
+          return Promise.resolve({ data: rows.slice(a, b + 1), error: null });
+        },
+        insert(row) { log.inserts.push({ table: name, row }); return Promise.resolve({ error: opts.failInsert === name ? { message: 'x' } : null }); },
+      };
+      return q;
+    },
+    rpc(fn, args) {
+      log.claims.push({ fn, args });
+      if (opts.oldDb) return Promise.resolve({ data: null, error: { message: 'function does not exist' } });
+      return Promise.resolve({ data: opts.claim !== false, error: null });
+    },
+  };
+  return sb;
+}
+
+const briefingTables = () => ({
+  leads: [{ id: 1, name: 'Ana', status: 'hot', created_at: '2026-11-10T10:00:00Z', last_contact_at: '2026-11-14T10:00:00Z', lead_tags: [], kanban_cards: [{ column_id: 7, board_id: 1, value: 300 }], phone: '5511999990000' }],
+  kanban_columns: [{ id: 7, board_id: 1, title: 'Proposta', outcome: null }], kanban_boards: [{ id: 1, title: 'Vendas' }], tags: [], tasks: [],
+  media_library: [{ id: 1, ai_status: 'done' }, { id: 2, ai_status: null }], messages: [{ id: 1, ai_at: '2026-11-01' }],
+  agent_runs: [], kanban_card_moves: [], agent_suggestions: [],
+});
+const briefingJson = () => anth(JSON.stringify({ titulo: 'Foque na Ana', resumo: 'Poucos leads.', prioridades: [{ lead: 'L1', motivo: 'quente', acao: 'ligar' }, { lead: 'L99', motivo: 'inventado' }], alertas: [], oportunidades: [], recomendacoes: [] }));
+const aiSettings = (briefing) => ({ provider: 'anthropic', anthropic_key: 'k', mode: 'off', profile: { business_name: 'Clínica', ...(briefing ? { briefing } : {}) } });
+const noon = new Date(2026, 10, 19, 12, 0, 0);
+
+await t('resumo automático: normalizeBriefing aceita só liga/desliga e hora válida', () => {
+  assert.deepEqual(Z.normalizeBriefing(undefined), { auto: false, hour: 8 });
+  assert.deepEqual(Z.normalizeBriefing({ auto: 'sim', hour: 25 }), { auto: false, hour: 8 }, 'só true liga; hora fora de 0–23 volta ao padrão');
+  assert.deepEqual(Z.normalizeBriefing({ auto: true, hour: 6.9 }), { auto: true, hour: 6 });
+  assert.deepEqual(Z.normalizeBriefing({ auto: true, hour: 0 }), { auto: true, hour: 0 }, 'meia-noite é uma hora válida');
+});
+
+await t('resumo automático: desligado, sem chave ou cedo demais não reserva nem chama a IA', async () => {
+  const f = mockFetch([]);
+  for (const [s, now, why] of [[aiSettings(), noon, 'off'], [aiSettings({ auto: true, hour: 8 }), new Date(2026, 10, 19, 7, 59), 'early'], [{ ...aiSettings({ auto: true }), anthropic_key: '' }, noon, 'off']]) {
+    const sb = fakeSb(briefingTables());
+    const r = await Z.autoBriefing({ sb, settings: s, now, fetchFn: f });
+    assert.equal(r.skipped, why);
+    assert.equal(sb.log.claims.length, 0, 'não reserva a vez à toa');
+  }
+  assert.equal(f.calls.length, 0);
+});
+
+await t('resumo automático: outra aba já reservou ou banco antigo = nada é gasto', async () => {
+  const f = mockFetch([]);
+  const done = fakeSb(briefingTables(), { claim: false });
+  assert.equal((await Z.autoBriefing({ sb: done, settings: aiSettings({ auto: true, hour: 8 }), now: noon, fetchFn: f })).skipped, 'done');
+  const old = fakeSb(briefingTables(), { oldDb: true });
+  assert.equal((await Z.autoBriefing({ sb: old, settings: aiSettings({ auto: true, hour: 8 }), now: noon, fetchFn: f })).skipped, 'old-db');
+  assert.equal(done.log.reads.length + old.log.reads.length, 0, 'sem reserva, nenhuma leitura de dados');
+  assert.equal(f.calls.length, 0);
+});
+
+await t('resumo automático: reserva desde a meia-noite local, gera uma vez e grava resumo + registro de uso', async () => {
+  const sb = fakeSb(briefingTables());
+  const f = mockFetch([briefingJson()]);
+  const r = await Z.autoBriefing({ sb, settings: aiSettings({ auto: true, hour: 8 }), now: noon, tz: 'America/Sao_Paulo', fetchFn: f });
+  assert.equal(r.ok, true);
+  assert.equal(r.titulo, 'Foque na Ana');
+  assert.equal(sb.log.claims[0].fn, 'zf_briefing_claim');
+  assert.equal(sb.log.claims[0].args.p_since, new Date(2026, 10, 19, 0, 0, 0).toISOString(), 'a janela do "já tem resumo hoje" começa na meia-noite local');
+  assert.equal(f.calls.length, 1, 'uma única chamada à IA');
+  const rep = sb.log.inserts.find((i) => i.table === 'agent_reports').row;
+  assert.equal(rep.kind, 'briefing');
+  assert.equal(rep.content.auto, true);
+  assert.deepEqual(rep.content.briefing.prioridades.map((p) => p.lead_id), [1], 'lead inventado pela IA fica de fora');
+  assert.equal(rep.content.totais.leads, 1);
+  assert.equal(rep.content.totais.vendas_7d, 0);
+  const run = sb.log.inserts.find((i) => i.table === 'agent_runs').row;
+  assert.equal(run.source, 'manager');
+  assert.match(run.summary, /automático/);
+  const sent = JSON.stringify(f.calls[0].body);
+  assert.match(sent, /nao_lidos_pela_ia[^0-9]+1/, 'biblioteca: 3 itens, 2 lidos');
+});
+
+await t('resumo automático: falha ao ler os leads ou da IA não grava resumo errado', async () => {
+  const bad = fakeSb(briefingTables(), { failTable: 'leads' });
+  const f = mockFetch([]);
+  await assert.rejects(Z.autoBriefing({ sb: bad, settings: aiSettings({ auto: true }), now: noon, fetchFn: f }), /ler seus leads/);
+  assert.equal(bad.log.inserts.length, 0);
+  assert.equal(f.calls.length, 0, 'sem dados confiáveis a IA nem é chamada');
+  const sb = fakeSb(briefingTables());
+  await assert.rejects(Z.autoBriefing({ sb, settings: aiSettings({ auto: true }), now: noon, fetchFn: mockFetch([{ status: 401, body: { error: { message: 'bad key' } } }]) }));
+  assert.equal(sb.log.inserts.length, 0, 'IA falhou: nada gravado');
+  const nosave = fakeSb(briefingTables(), { failInsert: 'agent_reports' });
+  await assert.rejects(Z.autoBriefing({ sb: nosave, settings: aiSettings({ auto: true }), now: noon, fetchFn: mockFetch([briefingJson()]) }), /não consegui salvá-lo/);
+});
+
 await t('cópia da extensão idêntica à fonte (quando existir)', () => {
   const ext = path.resolve(here, '../../../../extension/zf_ai.js');
   if (!fs.existsSync(ext)) return;

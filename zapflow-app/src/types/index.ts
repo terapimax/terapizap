@@ -390,6 +390,8 @@ export interface AgentProfile {
   hours_text?: string;
   /** Travas do automático. Quem grava é a aba Automático; o Treino só preserva. */
   auto?: Partial<AutoConfig>;
+  /** Resumo do dia automático (aba Gerente). Quem grava é o próprio Resumo; o Treino só preserva. */
+  briefing?: { auto?: boolean; hour?: number };
 }
 
 export interface AiSettings {
@@ -455,6 +457,6 @@ export interface AgentReport {
   id: number;
   user_id: string;
   kind: "briefing";
-  content: { briefing: Briefing; totais?: Record<string, number>; model?: string };
+  content: { briefing: Briefing; totais?: Record<string, number>; model?: string; auto?: boolean };
   created_at: string;
 }
