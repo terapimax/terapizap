@@ -163,6 +163,10 @@ function zfBuildSidebar() {
         </div>
       </div>
       <div class="zf-sec">
+        <h3>Segurança</h3>
+        ${toggle('zf-s-confirm', 'Confirmar antes de disparar', 'Antes de enviar um item ou disparar um funil pelo clique, pergunta “Sim ou Não” mostrando o quê e para qual conversa. Agendados, gatilhos e o agente automático não perguntam.')}
+      </div>
+      <div class="zf-sec">
         <h3>Barra rápida</h3>
         ${toggle('zf-s-hide-bar', 'Ocultar a barra rápida', 'A faixa de itens que aparece embaixo da conversa.')}
         ${toggle('zf-s-bar-fav', 'Mostrar só favoritos na barra', '')}

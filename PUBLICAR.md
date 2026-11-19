@@ -15,7 +15,7 @@ Para atualizar uma instalação existente, siga a seção da versão abaixo.
 
 1. No SQL Editor do projeto, execute `supabase/atualizar_resumo_3_20.sql`. Ele instala a reserva que impede dois resumos no mesmo dia. Sem ele, o resumo automático não liga (o painel continua funcionando).
 2. Publique o painel pela branch `main`. Em **Agente › Gerente › Resumo do dia**, ligue **Gerar sozinho todo dia** e escolha a hora.
-3. Em `chrome://extensions`, recarregue o ZapFlow, confira a versão **3.20.0** e atualize a aba do WhatsApp Web.
+3. Em `chrome://extensions`, recarregue o ZapFlow, confira a versão **3.21.0** e atualize a aba do WhatsApp Web.
 
 Como funciona: não existe servidor, então o resumo sai quando o painel ou o WhatsApp Web com a extensão estiver aberto depois da hora escolhida. É uma chamada por dia, com a chave de IA da própria conta. Com os dois abertos, só um gera. Se a IA falhar, ele tenta de novo em 15 minutos e avisa uma vez na tela.
 

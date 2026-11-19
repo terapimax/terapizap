@@ -17,7 +17,7 @@
   let sb = null;
   let currentFilter = 'all', showFavOnly = false, searchQuery = '';
   let messagesData = [], mediaData = [], funnelsData = [], triggersData = [], funnelsError = false, loaded = false;
-  const settings = { panelUrl: '', hideBar: false, barFav: false, barFunnels: true, stopOnReply: true, keywords: true, capture: true, captureSkip: false, labelSync: true, history: false, avatars: true, theme: 'auto' };
+  const settings = { panelUrl: '', confirmSend: true, hideBar: false, barFav: false, barFunnels: true, stopOnReply: true, keywords: true, capture: true, captureSkip: false, labelSync: true, history: false, avatars: true, theme: 'auto' };
   const $ = (id) => document.getElementById(id);
   // Marca da conta (white label): a mesma escolhida no painel, em Configurações > Marca
   let brand = { name: '', logo_url: '', icon_url: '', mark: '', accent: '', custom_domain: '' };
@@ -48,6 +48,7 @@
       const r = await chrome.storage.local.get('zf_settings');
       Object.assign(settings, r.zf_settings || {});
     } catch (e) { /* sem storage: usa padrões */ }
+    if ($('zf-s-confirm')) $('zf-s-confirm').checked = settings.confirmSend !== false;
     if ($('zf-s-hide-bar')) $('zf-s-hide-bar').checked = !!settings.hideBar;
     if ($('zf-s-bar-fav')) $('zf-s-bar-fav').checked = !!settings.barFav;
     syncBarFav();
@@ -429,6 +430,7 @@
     $('zf-refresh-btn').onclick = () => { if (sb) loadAllData(); };
     $('zf-logout').onclick = async () => { if (sb) await sb.auth.signOut(); };
 
+    $('zf-s-confirm').onchange = (e) => { settings.confirmSend = e.target.checked; saveSettings(); showToast(e.target.checked ? '🔒 Trava ligada: todo disparo pede confirmação' : 'Trava desligada: um clique já envia'); };
     $('zf-s-hide-bar').onchange = (e) => { settings.hideBar = e.target.checked; saveSettings(); updateQuickBarVisibility(); };
     $('zf-s-bar-fav').onchange = (e) => { settings.barFav = e.target.checked; saveSettings(); syncBarFav(); renderQuickBar(); };
     $('zf-s-bar-funnels').onchange = (e) => { settings.barFunnels = e.target.checked; saveSettings(); renderQuickBar(); };
@@ -1618,6 +1620,7 @@
   // Depois de recarregar/atualizar a extensão, o script que ficou na aba do WhatsApp perde a ligação com ela
   // ("Extension context invalidated"). Ele não consegue mais nada: só para, sem barulho e sem anotar falha.
   const extDead = () => { try { return !(chrome.runtime && chrome.runtime.id); } catch (e) { return true; } };
+  if (extDead()) console.warn('ZapFlow: a aba abriu sem ligação com a extensão (chrome.runtime indisponível). Downloads vão direto pela página.');
 
   function fetchAvatarBlob(url) {
     return new Promise((resolve, reject) => {
@@ -2283,6 +2286,7 @@
       showToast(chat.notReady ? 'O motor de envio ainda não está pronto. Recarregue o WhatsApp Web (F5).' : (chat.error || 'Abra uma conversa primeiro.'));
       return;
     }
+    if (!(await askConfirm({ what: 'Disparar o funil', title: funnel.title, chatName: chat.name }))) return;
     try { await startFunnelRun(funnel, chat, opts); }
     catch (error) { showToast(error.message); }
   }
@@ -2695,6 +2699,47 @@
   let lastFinished = null;
   let lastFinishedTimer = null;
 
+  // ===== TRAVA DE SEGURANÇA =====
+  // Antes de um envio ou funil disparado à mão, pergunta "Sim ou Não" mostrando o quê e para quem.
+  // Só nos cliques: agendados, gatilhos e o agente automático rodam sem ninguém na tela e não perguntam.
+  // Pode ser desligada em Ajustes.
+  const CONFIRM_KIND = { msg: 'a mensagem', audio: 'o áudio', media: 'a mídia', doc: 'o documento' };
+  let confirmOpen = false;
+  function askConfirm({ what, title, chatName }) {
+    if (settings.confirmSend === false) return Promise.resolve(true);
+    if (confirmOpen) return Promise.resolve(false); // já tem uma pergunta aberta: ignora o clique repetido
+    confirmOpen = true;
+    return new Promise((resolve) => {
+      const wrap = document.createElement('div');
+      wrap.id = 'zf-confirm';
+      wrap.innerHTML = `<div class="zf-cf-box" role="alertdialog" aria-modal="true" aria-labelledby="zf-cf-title" aria-describedby="zf-cf-desc">
+        <b id="zf-cf-title">Confirmar disparo?</b>
+        <p id="zf-cf-desc">${escapeHtml(what)} <strong>“${escapeHtml(title || 'sem título')}”</strong><br>para <strong>${escapeHtml(chatName || 'a conversa aberta')}</strong></p>
+        <div class="zf-cf-actions">
+          <button type="button" class="zf-btn" data-cf="no">Não</button>
+          <button type="button" class="zf-btn-primary" data-cf="yes">Sim, enviar</button>
+        </div>
+        <small>Dá para desligar esta pergunta em Ajustes.</small>
+      </div>`;
+      const done = (ok) => {
+        document.removeEventListener('keydown', onKey, true);
+        wrap.remove();
+        confirmOpen = false;
+        resolve(ok);
+      };
+      // Esc = Não. O foco começa no "Não" para um Enter sem querer não disparar nada.
+      const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(false); } };
+      wrap.onclick = (e) => {
+        const b = e.target.closest('[data-cf]');
+        if (b) done(b.dataset.cf === 'yes');
+        else if (e.target === wrap) done(false); // clicou fora
+      };
+      document.addEventListener('keydown', onKey, true);
+      document.body.appendChild(wrap);
+      wrap.querySelector('[data-cf="no"]').focus();
+    });
+  }
+
   async function sendItem(item) {
     const composer = currentComposer();
     let chat;
@@ -2714,6 +2759,7 @@
       showToast('A conversa mudou. Escolha o item novamente.');
       return;
     }
+    if (!(await askConfirm({ what: 'Enviar ' + (CONFIRM_KIND[item.type] || 'o item'), title: item.title, chatName: chat.name }))) return;
     enqueueSend(item, chat);
   }
 
@@ -2989,10 +3035,9 @@
   // ===== DOWNLOAD =====
   async function downloadAsDataUrl(fileUrl) {
     let dataUrl, mimeType;
-    // Aba aberta antes de a extensão ser recarregada: ela perdeu a ligação com a extensão e nada mais funciona
-    // direito aqui. Em vez de um erro técnico ("reading 'sendMessage'"), diz o que fazer.
-    if (extDead()) throw new Error('A extensão foi atualizada. Recarregue a página do WhatsApp Web (Ctrl + R) e tente de novo.');
     try {
+      // Sem ligação com a extensão (chrome.runtime some): cai direto no download pela própria página.
+      if (extDead()) throw new Error('sem ligação com o segundo plano da extensão');
       const res = await new Promise((resolve, reject) => {
         chrome.runtime.sendMessage({ type: 'ZAPFLOW_DOWNLOAD_FILE', url: fileUrl }, (r) => {
           if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
@@ -3004,7 +3049,13 @@
       mimeType = res.mimeType;
     } catch (bgErr) {
       console.warn('ZapFlow: download pelo background falhou, tentando direto...', bgErr.message);
-      const r = await fetch(fileUrl);
+      let r;
+      try { r = await fetch(fileUrl); }
+      catch (netErr) {
+        // Os dois caminhos falharam. Se a aba perdeu a ligação com a extensão, diz o que fazer.
+        if (extDead()) throw new Error('A extensão foi atualizada. Recarregue a página do WhatsApp Web (Ctrl + R) e tente de novo.');
+        throw new Error('Não foi possível baixar o arquivo: ' + ((netErr && netErr.message) || 'falha de rede'));
+      }
       if (!r.ok) throw new Error('Download falhou. Status: ' + r.status);
       const b = await r.blob();
       mimeType = b.type || 'application/octet-stream';
