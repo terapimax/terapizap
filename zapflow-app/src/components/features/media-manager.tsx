@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Download, FileText, Image as ImageIcon, Loader2, Mic, Pause, Play, Plus, Star, Trash2, UploadCloud, Video } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
+import { RichTextField } from "@/components/ui/rich-text-field";
 import { Button, Chip, EmptyState, Panel, SearchInput } from "@/components/ui/shared";
 import { AudioInput, type AudioInputValue } from "@/components/features/audio-input";
 import { DocIcon, fileExt as ext, fmtSize, videoPosterSrc } from "@/components/features/media-preview";
@@ -343,7 +344,7 @@ function AddForm({ kind, onClose, upload }: { kind: MediaKind; onClose: () => vo
         {kind !== "audio" && (
           <div className="flex flex-col gap-1.5">
             <label htmlFor="media-caption" className="text-xs font-medium text-muted">Legenda (opcional)</label>
-            <input id="media-caption" value={caption} onChange={(e) => setCaption(e.target.value)} placeholder="Texto que acompanha o envio" className={inputCls} />
+            <RichTextField id="media-caption" value={caption} onChange={setCaption} placeholder="Texto que acompanha o envio" disabled={busy} />
           </div>
         )}
       </div>
@@ -409,7 +410,7 @@ function DetailForm({ item, kind, onClose, onSave, onDelete, saving }: {
         {kind !== "audio" && (
           <div className="flex flex-col gap-1.5">
             <label htmlFor="d-caption" className="text-xs font-medium text-muted">Legenda</label>
-            <input id="d-caption" value={caption} onChange={(e) => setCaption(e.target.value)} placeholder="Texto que acompanha o envio" className={inputCls} />
+            <RichTextField id="d-caption" value={caption} onChange={setCaption} placeholder="Texto que acompanha o envio" />
           </div>
         )}
       </div>

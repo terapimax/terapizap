@@ -155,7 +155,7 @@ function TaskDetail({ task, onClose, onEdit }: { task: Task; onClose: () => void
                     <img src={task.media.url} alt={task.media.title} className="max-h-48 rounded-lg object-contain self-start" />
                   )}
                   {task.media.type === "video" && <video src={task.media.url} controls className="max-h-48 rounded-lg self-start" />}
-                  {task.media.caption && <p className="text-xs text-muted">Legenda: {task.media.caption}</p>}
+                  {task.media.caption && <p className="text-xs text-muted whitespace-pre-wrap break-words">Legenda: {task.media.caption}</p>}
                 </div>
               ) : <MissingItem />
             )}

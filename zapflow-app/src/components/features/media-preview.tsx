@@ -157,7 +157,7 @@ export function MediaPreview({ item, className }: { item: LibraryItem; className
   }
 
   const caption = item.caption && item.type !== "audio" && (
-    <p className="text-xs text-muted mt-2"><span className="font-medium">Legenda:</span> {item.caption}</p>
+    <p className="text-xs text-muted mt-2 whitespace-pre-wrap break-words"><span className="font-medium">Legenda:</span> {item.caption}</p>
   );
 
   if (item.type === "image" || item.type === "video") {
