@@ -61,6 +61,155 @@
 
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+    // ── Mensagem de voz ─────────────────────────────────────
+    // O celular (principalmente o iPhone) só toca mensagem de voz em OGG/Opus. O WhatsApp Web
+    // toca qualquer formato que o Chrome entenda, então um MP3/M4A/WebM enviado como voz parece
+    // certo no computador e fica com a setinha de download para sempre no celular. Por isso o
+    // motor confere os bytes do arquivo (a extensão e o tipo informado podem mentir — ex.: WebM
+    // salvo como "audio/ogg") e converte para OGG/Opus mono 48 kHz quando precisa.
+    const VOICE_MIME = 'audio/ogg; codecs=opus';
+    const VOICE_RATE = 48000;
+    const VOICE_FRAME = 960; // 20 ms
+
+    function dataUrlBytes(dataUrl) {
+        const comma = String(dataUrl).indexOf(',');
+        if (comma < 0) throw new Error('Áudio em formato inválido.');
+        const head = dataUrl.slice(0, comma), body = dataUrl.slice(comma + 1);
+        if (!/;base64/i.test(head)) return new TextEncoder().encode(decodeURIComponent(body));
+        const bin = atob(body);
+        const out = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+        return out;
+    }
+
+    const ascii = (b, at, text) => b.length >= at + text.length && [...text].every((c, i) => b[at + i] === c.charCodeAt(0));
+
+    // OGG com Opus de verdade: página "OggS" cujo primeiro pacote é o "OpusHead".
+    function isOggOpus(b) {
+        return ascii(b, 0, 'OggS') && b.length > 27 && ascii(b, 27 + b[26], 'OpusHead');
+    }
+
+    const OGG_CRC = (() => {
+        const t = new Uint32Array(256);
+        for (let i = 0; i < 256; i++) {
+            let r = i << 24;
+            for (let j = 0; j < 8; j++) r = r & 0x80000000 ? (r << 1) ^ 0x04c11db7 : r << 1;
+            t[i] = r >>> 0;
+        }
+        return t;
+    })();
+
+    function oggPage(packets, headerType, granule, serial, seq) {
+        const lacing = [];
+        for (const p of packets) {
+            let n = p.length;
+            while (n >= 255) { lacing.push(255); n -= 255; }
+            lacing.push(n);
+        }
+        const bodyLen = packets.reduce((a, p) => a + p.length, 0);
+        const page = new Uint8Array(27 + lacing.length + bodyLen);
+        const dv = new DataView(page.buffer);
+        page.set([0x4f, 0x67, 0x67, 0x53], 0);
+        page[5] = headerType;
+        dv.setBigUint64(6, BigInt(granule), true);
+        dv.setUint32(14, serial, true);
+        dv.setUint32(18, seq, true);
+        page[26] = lacing.length;
+        page.set(lacing, 27);
+        let off = 27 + lacing.length;
+        for (const p of packets) { page.set(p, off); off += p.length; }
+        let crc = 0;
+        for (let i = 0; i < page.length; i++) crc = ((crc << 8) ^ OGG_CRC[((crc >>> 24) ^ page[i]) & 0xff]) >>> 0;
+        dv.setUint32(22, crc, true);
+        return page;
+    }
+
+    async function encodeVoice(bytes) {
+        if (typeof AudioEncoder === 'undefined' || typeof AudioData === 'undefined') {
+            throw new Error('Este navegador não converte áudio para mensagem de voz. Use o Chrome ou o Edge atualizados.');
+        }
+        // PCM mono 48 kHz
+        const ctx = new AudioContext({ sampleRate: VOICE_RATE });
+        let pcm;
+        try {
+            const decoded = await ctx.decodeAudioData(bytes.slice().buffer);
+            pcm = new Float32Array(decoded.length);
+            for (let c = 0; c < decoded.numberOfChannels; c++) {
+                const ch = decoded.getChannelData(c);
+                for (let i = 0; i < pcm.length; i++) pcm[i] += ch[i] / decoded.numberOfChannels;
+            }
+        } catch (e) {
+            throw new Error('Não foi possível ler este áudio para convertê-lo em mensagem de voz.');
+        } finally { ctx.close().catch(() => {}); }
+        if (!pcm.length) throw new Error('O áudio está vazio.');
+
+        const packets = [];
+        let preSkip = 312, failure = null;
+        const encoder = new AudioEncoder({
+            output: (chunk, meta) => {
+                const buf = new Uint8Array(chunk.byteLength);
+                chunk.copyTo(buf);
+                packets.push(buf);
+                const desc = meta && meta.decoderConfig && meta.decoderConfig.description;
+                if (desc && packets.length === 1) {
+                    const d = desc instanceof ArrayBuffer ? new Uint8Array(desc) : new Uint8Array(desc.buffer, desc.byteOffset, desc.byteLength);
+                    if (d.length >= 12 && ascii(d, 0, 'OpusHead')) preSkip = new DataView(d.buffer, d.byteOffset).getUint16(10, true);
+                }
+            },
+            error: (e) => { failure = e instanceof Error ? e : new Error(String(e)); },
+        });
+        encoder.configure({
+            codec: 'opus', sampleRate: VOICE_RATE, numberOfChannels: 1, bitrate: 32000,
+            opus: { application: 'voip', signal: 'voice', frameDuration: 20000 },
+        });
+        const frames = Math.ceil(pcm.length / VOICE_FRAME);
+        for (let f = 0; f < frames && !failure; f++) {
+            const frame = new Float32Array(VOICE_FRAME);
+            frame.set(pcm.subarray(f * VOICE_FRAME, Math.min(pcm.length, (f + 1) * VOICE_FRAME)));
+            const data = new AudioData({
+                format: 'f32-planar', sampleRate: VOICE_RATE, numberOfFrames: VOICE_FRAME, numberOfChannels: 1,
+                timestamp: Math.round((f * VOICE_FRAME * 1e6) / VOICE_RATE), data: frame,
+            });
+            encoder.encode(data);
+            data.close();
+            if (encoder.encodeQueueSize > 40) await sleep(0);
+        }
+        await encoder.flush();
+        encoder.close();
+        if (failure) throw failure;
+        if (!packets.length) throw new Error('O áudio está vazio.');
+
+        const head = new Uint8Array(19);
+        head.set([0x4f, 0x70, 0x75, 0x73, 0x48, 0x65, 0x61, 0x64, 1, 1], 0); // "OpusHead", versão 1, mono
+        new DataView(head.buffer).setUint16(10, preSkip, true);
+        new DataView(head.buffer).setUint32(12, VOICE_RATE, true);
+        const vendor = new TextEncoder().encode('ZapFlow');
+        const tags = new Uint8Array(16 + vendor.length);
+        tags.set([0x4f, 0x70, 0x75, 0x73, 0x54, 0x61, 0x67, 0x73], 0); // "OpusTags", 0 comentários
+        new DataView(tags.buffer).setUint32(8, vendor.length, true);
+        tags.set(vendor, 12);
+
+        const serial = (Math.random() * 0xffffffff) >>> 0;
+        const parts = [oggPage([head], 0x02, 0, serial, 0), oggPage([tags], 0x00, 0, serial, 1)];
+        let seq = 2;
+        const PER_PAGE = 50;
+        const endGranule = Math.min(packets.length * VOICE_FRAME, preSkip + pcm.length);
+        for (let i = 0; i < packets.length; i += PER_PAGE) {
+            const slice = packets.slice(i, i + PER_PAGE);
+            const last = i + PER_PAGE >= packets.length;
+            parts.push(oggPage(slice, last ? 0x04 : 0x00, last ? endGranule : (i + slice.length) * VOICE_FRAME, serial, seq++));
+        }
+        return parts;
+    }
+
+    // Devolve um File pronto para ir como mensagem de voz (OGG/Opus), convertendo só quando precisa.
+    async function voiceFile(dataUrl) {
+        const bytes = dataUrlBytes(dataUrl);
+        if (isOggOpus(bytes)) return new File([bytes], 'ptt.ogg', { type: VOICE_MIME });
+        console.log('ZapFlow engine: áudio não é OGG/Opus — convertendo para mensagem de voz…');
+        return new File(await encodeVoice(bytes), 'ptt.ogg', { type: VOICE_MIME });
+    }
+
     function wppReady() {
         if (!window.WPP || !(WPP.isReady || (WPP.isInjected && document.querySelector('#pane-side, #main')))) return false;
         if (typeof WPP.chat?.sendTextMessage !== 'function' || typeof WPP.chat?.sendFileMessage !== 'function') return false;
@@ -236,10 +385,11 @@
                 result = await WPP.chat.sendTextMessage(chatId, msg.text, { createChat: !!msg.createChat, waitForAck: true });
             } else if (kind === 'audio') {
                 if (!msg.dataUrl) throw new Error('Áudio sem conteúdo.');
+                const voice = await voiceFile(msg.dataUrl); // antes do "gravando", para falhar cedo
                 await holdPresence(requestId, chatId, 'recording', msg.presenceMs);
                 step(requestId, 'sending');
-                result = await WPP.chat.sendFileMessage(chatId, msg.dataUrl, {
-                    type: 'audio', isPtt: true, mimetype: msg.mimetype || undefined, createChat: !!msg.createChat, waitForAck: true,
+                result = await WPP.chat.sendFileMessage(chatId, voice, {
+                    type: 'audio', isPtt: true, waveform: true, mimetype: VOICE_MIME, createChat: !!msg.createChat, waitForAck: true,
                 });
             } else if (kind === 'file') {
                 if (!msg.dataUrl) throw new Error('Arquivo sem conteúdo.');

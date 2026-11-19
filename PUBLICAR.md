@@ -1,7 +1,7 @@
 # Publicar o painel do ZapFlow na Vercel
 
-O painel desta instalação está em [terapizap.vercel.app](https://terapizap.vercel.app/auth/login).
-A Vercel publica a pasta `zapflow-app` ao receber uma atualização na branch `main` do GitHub.
+O projeto **zapflow** publica o painel em [zapflow1.vercel.app](https://zapflow1.vercel.app/auth/login).
+A Vercel usa a pasta `zapflow-app` da branch `main` do repositório `terapimax/terapizap`.
 Para atualizar uma instalação existente, siga a seção da versão abaixo.
 
 ## 1. Preparar o banco de uma nova instalação (Supabase)
@@ -15,7 +15,7 @@ Para atualizar uma instalação existente, siga a seção da versão abaixo.
 
 1. No SQL Editor do projeto, execute `supabase/atualizar_funis_3_19.sql`. Ele instala a função que salva a nova ordem dos passos.
 2. Publique o painel pela branch `main`. Em **Funis**, clique no relógio ou no item para editar a espera. Arraste pela alça ao lado do número para mover o passo com seu intervalo.
-3. Aguarde a conclusão dos disparos que deseja manter em andamento. Em `chrome://extensions`, recarregue o ZapFlow, confira a versão **3.19.0** e atualize a aba do WhatsApp Web. Recarregar essa aba interrompe os funis que ainda estão rodando nela.
+3. Aguarde a conclusão dos disparos que deseja manter em andamento. Em `chrome://extensions`, recarregue o ZapFlow, confira a versão **3.19.0** ou posterior e atualize a aba do WhatsApp Web. Recarregar essa aba interrompe os funis que ainda estão rodando nela.
 
 ### Atualizar uma instalação existente para a versão 3.18
 
@@ -23,7 +23,7 @@ Para atualizar uma instalação existente, siga a seção da versão abaixo.
    `supabase/atualizar_3_18.sql` e clique em **Run**. Esse arquivo ajusta as permissões e instala a
    função que confirma a restauração de um backup inteiro em uma transação.
 2. Envie as correções para a branch `main`. No GitHub, aguarde a confirmação
-   **Vercel – terapizap** no commit e abra a tela de login do painel.
+   **Vercel – zapflow** no commit e abra a tela de login do painel.
 3. No Chrome, abra `chrome://extensions`, localize o ZapFlow e clique em **Recarregar**. Confira
    a versão **3.18.1**. Volte à aba do WhatsApp Web e pressione **Ctrl + R**.
 4. Abra a conversa com você mesmo e teste um texto e um áudio da biblioteca. **Pronto** indica

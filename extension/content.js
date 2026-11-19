@@ -4,7 +4,7 @@
   const SUPABASE_URL = window.SUPABASE_URL || '';
   const SUPABASE_KEY = window.SUPABASE_KEY || '';
   if (!SUPABASE_URL || !SUPABASE_KEY) console.warn('⚠️ ZapFlow: configuração do Supabase ausente (config.js)');
-  const DEFAULT_PANEL_URL = String(window.ZAPFLOW_PANEL_URL || 'https://terapizap.vercel.app').replace(/\/+$/, '');
+  const DEFAULT_PANEL_URL = String(window.ZAPFLOW_PANEL_URL || 'https://zapflow1.vercel.app').replace(/\/+$/, '');
   const cleanPanelUrl = (v) => {
     let u = String(v || '').trim().replace(/\/+$/, '');
     if (!u) return '';
